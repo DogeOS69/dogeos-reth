@@ -130,3 +130,35 @@ impl SignableTxRequest<op_alloy_consensus::OpTxEnvelope>
         Ok(signed)
     }
 }
+
+#[cfg(feature = "scroll")]
+impl SignableTxRequest<scroll_alloy_consensus::ScrollTxEnvelope>
+    for scroll_alloy_rpc_types::ScrollTransactionRequest
+{
+    async fn try_build_and_sign(
+        self,
+        signer: impl TxSigner<Signature> + Send,
+    ) -> Result<scroll_alloy_consensus::ScrollTxEnvelope, SignTxRequestError> {
+        let mut tx =
+            self.build_typed_tx().map_err(|_| SignTxRequestError::InvalidTransactionRequest)?;
+        let signature = signer.sign_transaction(&mut tx).await?;
+        let signed = match tx {
+            scroll_alloy_consensus::ScrollTypedTransaction::Legacy(tx) => {
+                scroll_alloy_consensus::ScrollTxEnvelope::Legacy(tx.into_signed(signature))
+            }
+            scroll_alloy_consensus::ScrollTypedTransaction::Eip2930(tx) => {
+                scroll_alloy_consensus::ScrollTxEnvelope::Eip2930(tx.into_signed(signature))
+            }
+            scroll_alloy_consensus::ScrollTypedTransaction::Eip1559(tx) => {
+                scroll_alloy_consensus::ScrollTxEnvelope::Eip1559(tx.into_signed(signature))
+            }
+            scroll_alloy_consensus::ScrollTypedTransaction::Eip7702(tx) => {
+                scroll_alloy_consensus::ScrollTxEnvelope::Eip7702(tx.into_signed(signature))
+            }
+            scroll_alloy_consensus::ScrollTypedTransaction::L1Message(_) => {
+                return Err(SignTxRequestError::InvalidTransactionRequest);
+            }
+        };
+        Ok(signed)
+    }
+}
