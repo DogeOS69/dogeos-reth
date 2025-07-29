@@ -158,3 +158,16 @@ pub struct ScrollNextBlockEnvAttributes {
     /// The base fee of the next block.
     pub base_fee: u64,
 }
+
+impl<H: alloy_consensus::BlockHeader> reth_rpc_eth_api::helpers::pending_block::BuildPendingEnv<H>
+    for ScrollNextBlockEnvAttributes
+{
+    fn build_pending_env(parent: &reth_primitives_traits::SealedHeader<H>) -> Self {
+        Self {
+            timestamp: parent.timestamp().saturating_add(1),
+            suggested_fee_recipient: parent.beneficiary(),
+            gas_limit: parent.gas_limit(),
+            base_fee: parent.base_fee_per_gas().unwrap_or_default(),
+        }
+    }
+}
