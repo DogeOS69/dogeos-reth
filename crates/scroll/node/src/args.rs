@@ -1,0 +1,27 @@
+use crate::builder::payload::SCROLL_DEFAULT_PAYLOAD_SIZE_LIMIT;
+
+/// Rollup arguments for the Scroll node.
+#[derive(Debug, Clone, clap::Args)]
+pub struct ScrollRollupArgs {
+    /// Endpoint for the sequencer mempool (can be both HTTP and WS)
+    #[arg(long = "scroll.sequencer")]
+    pub sequencer: Option<String>,
+
+    /// Minimum suggested priority fee (tip) in wei, default `1_000_000`
+    #[arg(long = "scroll.min-suggested-priority-fee", default_value_t = 1_000_000)]
+    pub min_suggested_priority_fee: u64,
+
+    /// Payload size limit, default to [`SCROLL_DEFAULT_PAYLOAD_SIZE_LIMIT`].
+    #[arg(long = "scroll.payload-size-limit", default_value_t = SCROLL_DEFAULT_PAYLOAD_SIZE_LIMIT)]
+    pub payload_size_limit: u64,
+}
+
+impl Default for ScrollRollupArgs {
+    fn default() -> Self {
+        Self {
+            sequencer: None,
+            min_suggested_priority_fee: 1_000_000,
+            payload_size_limit: SCROLL_DEFAULT_PAYLOAD_SIZE_LIMIT,
+        }
+    }
+}
