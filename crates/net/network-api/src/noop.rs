@@ -7,6 +7,7 @@ use core::{fmt, marker::PhantomData};
 use std::net::{IpAddr, SocketAddr};
 
 use crate::{
+    block::{EthWireBlockListenerProvider, NewBlockWithPeer},
     events::{NetworkPeersEvents, PeerEventStream},
     test_utils::{PeersHandle, PeersHandleProvider},
     BlockDownloaderProvider, DiscoveryEvent, NetworkError, NetworkEvent,
@@ -22,7 +23,7 @@ use reth_network_p2p::{sync::NetworkSyncUpdater, NoopFullBlockClient};
 use reth_network_peers::NodeRecord;
 use reth_network_types::{PeerKind, Reputation, ReputationChangeKind};
 use reth_tokio_util::{EventSender, EventStream};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, oneshot::error::RecvError};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 /// A type that implements all network trait that does nothing.
@@ -197,6 +198,16 @@ where
     fn discovery_listener(&self) -> UnboundedReceiverStream<DiscoveryEvent> {
         let (_, rx) = mpsc::unbounded_channel();
         UnboundedReceiverStream::new(rx)
+    }
+}
+
+impl<N: NetworkPrimitives> EthWireBlockListenerProvider for NoopNetwork<N> {
+    type Block = N::Block;
+
+    async fn eth_wire_block_listener(
+        &self,
+    ) -> Result<EventStream<NewBlockWithPeer<Self::Block>>, RecvError> {
+        unreachable!()
     }
 }
 
