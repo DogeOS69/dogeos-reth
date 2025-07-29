@@ -11,7 +11,7 @@ pub struct ScrollRollupArgs {
     #[arg(long = "scroll.min-suggested-priority-fee", default_value_t = 1_000_000)]
     pub min_suggested_priority_fee: u64,
 
-    /// Payload size limit, default to [`SCROLL_DEFAULT_PAYLOAD_SIZE_LIMIT`].
+    /// Payload size limit, default to `122kB`.
     #[arg(long = "scroll.payload-size-limit", default_value_t = SCROLL_DEFAULT_PAYLOAD_SIZE_LIMIT)]
     pub payload_size_limit: u64,
 }

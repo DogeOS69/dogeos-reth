@@ -157,7 +157,7 @@ impl<NetworkT> Default for ScrollAddOnsBuilder<NetworkT> {
 }
 
 impl<NetworkT, RpcMiddleWare> ScrollAddOnsBuilder<NetworkT, RpcMiddleWare> {
-    /// With a [`SequencerClient`].
+    /// With a [`reth_scroll_rpc::SequencerClient`].
     pub fn with_sequencer(mut self, sequencer_client: Option<String>) -> Self {
         self.sequencer_url = sequencer_client;
         self

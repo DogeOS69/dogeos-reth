@@ -148,9 +148,9 @@ mod tests {
         )
     }
 
-    fn transaction(typ: ScrollTxType, gas_limit: u64) -> ScrollTxEnvelope {
+    fn transaction(ty: ScrollTxType, gas_limit: u64) -> ScrollTxEnvelope {
         let pk = B256::random();
-        match typ {
+        match ty {
             ScrollTxType::Legacy => {
                 let tx = TxLegacy {
                     to: TxKind::Call(Address::ZERO),
