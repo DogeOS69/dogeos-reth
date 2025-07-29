@@ -372,3 +372,17 @@ impl<H: BlockHeader> BuildPendingEnv<H> for NextBlockEnvAttributes {
         }
     }
 }
+
+#[cfg(feature = "scroll")]
+impl<H: alloy_consensus::BlockHeader> BuildPendingEnv<H>
+    for reth_scroll_evm::ScrollNextBlockEnvAttributes
+{
+    fn build_pending_env(parent: &reth_primitives_traits::SealedHeader<H>) -> Self {
+        Self {
+            timestamp: parent.timestamp().saturating_add(1),
+            suggested_fee_recipient: parent.beneficiary(),
+            gas_limit: parent.gas_limit(),
+            base_fee: parent.base_fee_per_gas().unwrap_or_default(),
+        }
+    }
+}
