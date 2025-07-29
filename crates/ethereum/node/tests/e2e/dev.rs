@@ -5,8 +5,8 @@ use futures::StreamExt;
 use reth_chainspec::ChainSpec;
 use reth_node_api::{BlockBody, FullNodeComponents, FullNodePrimitives, NodeAddOns, NodeTypes};
 use reth_node_builder::{
-    rpc::RethRpcAddOns, DebugNodeLauncher, EngineNodeLauncher, FullNode, NodeBuilder, NodeConfig,
-    NodeHandle,
+    rpc::{RethRpcAddOns, RpcHandleProvider},
+    DebugNodeLauncher, EngineNodeLauncher, FullNode, NodeBuilder, NodeConfig, NodeHandle,
 };
 use reth_node_core::args::DevArgs;
 use reth_node_ethereum::{node::EthereumAddOns, EthereumNode};

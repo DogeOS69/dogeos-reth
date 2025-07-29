@@ -19,6 +19,7 @@ reth-network-p2p.workspace = true
 reth-eth-wire-types.workspace = true
 reth-tokio-util.workspace = true
 reth-ethereum-forks.workspace = true
+reth-primitives-traits.workspace = true
 
 # ethereum
 alloy-consensus.workspace = true
@@ -48,4 +49,5 @@ serde = [
     "reth-ethereum-forks/serde",
     "alloy-consensus/serde",
     "alloy-rpc-types-eth/serde",
+    "reth-primitives-traits/serde",
 ]

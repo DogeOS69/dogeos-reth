@@ -9,7 +9,7 @@ use crate::{
     components::{NodeComponents, NodeComponentsBuilder},
     hooks::NodeHooks,
     launch::LaunchNode,
-    rpc::{RethRpcAddOns, RethRpcServerHandles, RpcContext},
+    rpc::{RethRpcAddOns, RethRpcServerHandles, RpcContext, RpcHandleProvider},
     AddOns, ComponentsFor, FullNode,
 };
 
@@ -249,7 +249,7 @@ where
     T: FullNodeTypes,
     CB: NodeComponentsBuilder<T>,
     AO: RethRpcAddOns<NodeAdapter<T, CB::Components>>,
-    <AO as reth_node_api::NodeAddOns<
+    <AO as NodeAddOns<
         NodeAdapter<T, <CB as NodeComponentsBuilder<T>>::Components>,
     >>::Handle: RpcHandleProvider<
         NodeAdapter<T, <CB as NodeComponentsBuilder<T>>::Components>,
@@ -304,7 +304,7 @@ mod test {
     use reth_evm::noop::NoopEvmConfig;
     use reth_evm_ethereum::MockEvmConfig;
     use reth_network::EthNetworkPrimitives;
-    use reth_network_api::noop::NoopNetwork;
+    use reth_network_api::{self, noop::NoopNetwork};
     use reth_node_api::FullNodeTypesAdapter;
     use reth_node_ethereum::EthereumNode;
     use reth_payload_builder::PayloadBuilderHandle;

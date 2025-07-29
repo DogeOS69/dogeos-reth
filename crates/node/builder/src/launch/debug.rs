@@ -184,7 +184,7 @@ where
 
             let blockchain_db = handle.node.provider.clone();
             let chain_spec = config.chain.clone();
-            let beacon_engine_handle = handle.node.add_ons_handle.beacon_engine_handle.clone();
+            let beacon_engine_handle = handle.node.rpc_handle().beacon_engine_handle.clone();
             let pool = handle.node.pool.clone();
             let payload_builder_handle = handle.node.payload_builder_handle.clone();
 

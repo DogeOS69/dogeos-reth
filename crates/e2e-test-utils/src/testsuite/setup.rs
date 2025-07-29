@@ -145,6 +145,7 @@ where
         LocalPayloadAttributesBuilder<N::ChainSpec>: PayloadAttributesBuilder<
             <<N as NodeTypes>::Payload as PayloadTypes>::PayloadAttributes,
         >,
+        TmpNodeAddOnsHandle<N>: RpcHandleProvider<Adapter<N>, TmpNodeEthApi<N>>,
     {
         // Create nodes with imported chain data
         let import_result = self.create_nodes_with_import::<N>(rlp_path).await?;
@@ -251,6 +252,7 @@ where
         LocalPayloadAttributesBuilder<N::ChainSpec>: PayloadAttributesBuilder<
             <<N as NodeTypes>::Payload as PayloadTypes>::PayloadAttributes,
         >,
+        TmpNodeAddOnsHandle<N>: RpcHandleProvider<Adapter<N>, TmpNodeEthApi<N>>,
     {
         let chain_spec =
             self.chain_spec.clone().ok_or_else(|| eyre!("Chain specification is required"))?;
@@ -286,6 +288,7 @@ where
         LocalPayloadAttributesBuilder<N::ChainSpec>: PayloadAttributesBuilder<
             <<N as NodeTypes>::Payload as PayloadTypes>::PayloadAttributes,
         >,
+        TmpNodeAddOnsHandle<N>: RpcHandleProvider<Adapter<N>, TmpNodeEthApi<N>>,
     {
         move |timestamp| {
             let attributes = PayloadAttributes {
