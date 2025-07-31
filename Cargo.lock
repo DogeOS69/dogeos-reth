@@ -10476,6 +10476,7 @@ name = "reth-scroll-rpc"
 version = "1.5.0"
 dependencies = [
  "alloy-consensus",
+ "alloy-eips",
  "alloy-json-rpc",
  "alloy-primitives",
  "alloy-rpc-client",

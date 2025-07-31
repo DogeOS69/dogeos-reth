@@ -14,7 +14,7 @@ use reth_provider::{
 use reth_rpc::eth::{core::EthApiInner, DevSigner};
 use reth_rpc_eth_api::{
     helpers::{
-        AddDevSigners, EthApiSpec, EthFees, EthSigner, EthState, LoadBlock, LoadFee, LoadState,
+        AddDevSigners, EthApiSpec, EthSigner, EthState, LoadBlock, LoadFee, LoadState,
         SpawnBlocking, Trace,
     },
     EthApiTypes, FullEthApiServer, RpcConverter, RpcNodeCore, RpcNodeCoreExt,
@@ -37,6 +37,7 @@ use scroll_alloy_network::{Network, Scroll};
 
 mod block;
 mod call;
+mod fee;
 mod pending_block;
 pub mod receipt;
 pub mod transaction;
@@ -76,8 +77,18 @@ pub struct ScrollEthApi<N: ScrollNodeCore, NetworkT = Scroll> {
 
 impl<N: ScrollNodeCore, NetworkT> ScrollEthApi<N, NetworkT> {
     /// Creates a new [`ScrollEthApi`].
-    pub fn new(eth_api: EthApiNodeBackend<N>, sequencer_client: Option<SequencerClient>) -> Self {
-        let inner = Arc::new(ScrollEthApiInner { eth_api, sequencer_client });
+    pub fn new(
+        eth_api: EthApiNodeBackend<N>,
+        min_suggested_priority_fee: U256,
+        payload_size_limit: u64,
+        sequencer_client: Option<SequencerClient>,
+    ) -> Self {
+        let inner = Arc::new(ScrollEthApiInner {
+            eth_api,
+            min_suggested_priority_fee,
+            payload_size_limit,
+            sequencer_client,
+        });
         Self {
             inner: inner.clone(),
             _nt: PhantomData,
@@ -107,7 +118,7 @@ where
     }
 
     /// Return a builder for the [`ScrollEthApi`].
-    pub const fn builder() -> ScrollEthApiBuilder {
+    pub fn builder() -> ScrollEthApiBuilder {
         ScrollEthApiBuilder::new()
     }
 }
@@ -243,6 +254,16 @@ where
     fn fee_history_cache(&self) -> &FeeHistoryCache<ProviderHeader<N::Provider>> {
         self.inner.eth_api.fee_history_cache()
     }
+
+    async fn suggested_priority_fee(&self) -> Result<U256, Self::Error> {
+        let min_tip = U256::from(self.inner.min_suggested_priority_fee);
+        self.inner
+            .eth_api
+            .gas_oracle()
+            .scroll_suggest_tip_cap(min_tip, self.inner.payload_size_limit)
+            .await
+            .map_err(Into::into)
+    }
 }
 
 impl<N, NetworkT> LoadState for ScrollEthApi<N, NetworkT>
@@ -266,17 +287,6 @@ where
     fn max_proof_window(&self) -> u64 {
         self.inner.eth_api.eth_proof_window()
     }
-}
-
-impl<N, NetworkT> EthFees for ScrollEthApi<N, NetworkT>
-where
-    Self: LoadFee<
-        Provider: ChainSpecProvider<
-            ChainSpec: EthChainSpec<Header = ProviderHeader<Self::Provider>>,
-        >,
-    >,
-    N: ScrollNodeCore,
-{
 }
 
 impl<N, NetworkT> Trace for ScrollEthApi<N, NetworkT>
@@ -315,6 +325,10 @@ impl<N: ScrollNodeCore, NetworkT> fmt::Debug for ScrollEthApi<N, NetworkT> {
 pub struct ScrollEthApiInner<N: ScrollNodeCore> {
     /// Gateway to node's core components.
     pub eth_api: EthApiNodeBackend<N>,
+    /// Minimum priority fee
+    min_suggested_priority_fee: U256,
+    /// Maximum payload size
+    payload_size_limit: u64,
     /// Sequencer client, configured to forward submitted transactions to sequencer of given Scroll
     /// network.
     sequencer_client: Option<SequencerClient>,
@@ -332,18 +346,50 @@ impl<N: ScrollNodeCore> ScrollEthApiInner<N> {
     }
 }
 
+/// The default suggested priority fee for the gas price oracle.
+const DEFAULT_MIN_SUGGESTED_PRIORITY_FEE: u64 = 100;
+
+/// The default payload size limit in bytes for the sequencer.
+const DEFAULT_PAYLOAD_SIZE_LIMIT: u64 = 122_880;
+
 /// A type that knows how to build a [`ScrollEthApi`].
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ScrollEthApiBuilder {
+    /// Minimum suggested priority fee (tip)
+    min_suggested_priority_fee: u64,
+    /// Maximum payload size
+    payload_size_limit: u64,
     /// Sequencer client, configured to forward submitted transactions to sequencer of given Scroll
     /// network.
     sequencer_url: Option<String>,
 }
 
+impl Default for ScrollEthApiBuilder {
+    fn default() -> Self {
+        Self {
+            min_suggested_priority_fee: DEFAULT_MIN_SUGGESTED_PRIORITY_FEE,
+            payload_size_limit: DEFAULT_PAYLOAD_SIZE_LIMIT,
+            sequencer_url: None,
+        }
+    }
+}
+
 impl ScrollEthApiBuilder {
     /// Creates a [`ScrollEthApiBuilder`] instance.
-    pub const fn new() -> Self {
-        Self { sequencer_url: None }
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// With minimum suggested priority fee (tip)
+    pub const fn with_min_suggested_priority_fee(mut self, min: u64) -> Self {
+        self.min_suggested_priority_fee = min;
+        self
+    }
+
+    /// With payload size limit
+    pub const fn with_payload_size_limit(mut self, limit: u64) -> Self {
+        self.payload_size_limit = limit;
+        self
     }
 
     /// With a [`SequencerClient`].
@@ -361,7 +407,8 @@ where
     type EthApi = ScrollEthApi<N>;
 
     async fn build_eth_api(self, ctx: EthApiCtx<'_, N>) -> eyre::Result<Self::EthApi> {
-        let Self { sequencer_url } = self;
+        let Self { min_suggested_priority_fee, payload_size_limit, sequencer_url } = self;
+
         let eth_api = reth_rpc::EthApiBuilder::new(
             ctx.components.provider().clone(),
             ctx.components.pool().clone(),
@@ -387,6 +434,11 @@ where
             None
         };
 
-        Ok(ScrollEthApi::new(eth_api, sequencer_client))
+        Ok(ScrollEthApi::new(
+            eth_api,
+            U256::from(min_suggested_priority_fee),
+            payload_size_limit,
+            sequencer_client,
+        ))
     }
 }
