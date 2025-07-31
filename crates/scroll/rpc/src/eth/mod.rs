@@ -30,6 +30,7 @@ use std::{fmt, marker::PhantomData, sync::Arc};
 
 mod block;
 mod call;
+mod fee;
 mod pending_block;
 pub mod receipt;
 pub mod transaction;
@@ -91,7 +92,7 @@ where
     }
 
     /// Return a builder for the [`ScrollEthApi`].
-    pub const fn builder() -> ScrollEthApiBuilder {
+    pub fn builder() -> ScrollEthApiBuilder {
         ScrollEthApiBuilder::new()
     }
 }
@@ -208,6 +209,16 @@ where
     fn fee_history_cache(&self) -> &FeeHistoryCache<ProviderHeader<N::Provider>> {
         self.inner.eth_api.fee_history_cache()
     }
+
+    async fn suggested_priority_fee(&self) -> Result<U256, Self::Error> {
+        let min_tip = U256::from(self.inner.min_suggested_priority_fee);
+        self.inner
+            .eth_api
+            .gas_oracle()
+            .scroll_suggest_tip_cap(min_tip, self.inner.payload_size_limit)
+            .await
+            .map_err(Into::into)
+    }
 }
 
 impl<N, Rpc> LoadState for ScrollEthApi<N, Rpc>
@@ -226,14 +237,6 @@ where
     fn max_proof_window(&self) -> u64 {
         self.inner.eth_api.eth_proof_window()
     }
-}
-
-impl<N, Rpc> EthFees for ScrollEthApi<N, Rpc>
-where
-    N: RpcNodeCore,
-    ScrollEthApiError: FromEvmError<N::Evm>,
-    Rpc: RpcConvert<Primitives = N::Primitives, Error = ScrollEthApiError>,
-{
 }
 
 impl<N, Rpc> Trace for ScrollEthApi<N, Rpc>
@@ -297,6 +300,12 @@ pub type ScrollRpcConvert<N, NetworkT> = RpcConverter<
     ScrollTxInfoMapper<<N as FullNodeTypes>::Provider>,
 >;
 
+/// The default suggested priority fee for the gas price oracle.
+const DEFAULT_MIN_SUGGESTED_PRIORITY_FEE: u64 = 100;
+
+/// The default payload size limit in bytes for the sequencer.
+const DEFAULT_PAYLOAD_SIZE_LIMIT: u64 = 122_880;
+
 /// A type that knows how to build a [`ScrollEthApi`].
 #[derive(Debug)]
 pub struct ScrollEthApiBuilder<NetworkT = Scroll> {
@@ -315,9 +324,8 @@ impl<NetworkT> Default for ScrollEthApiBuilder<NetworkT> {
     fn default() -> Self {
         Self {
             sequencer_url: None,
-            // TODO (scroll): update default values.
-            min_suggested_priority_fee: 0,
-            payload_size_limit: 0,
+            min_suggested_priority_fee: DEFAULT_MIN_SUGGESTED_PRIORITY_FEE,
+            payload_size_limit: DEFAULT_PAYLOAD_SIZE_LIMIT,
             _nt: PhantomData,
         }
     }
@@ -325,14 +333,14 @@ impl<NetworkT> Default for ScrollEthApiBuilder<NetworkT> {
 
 impl<NetworkT> ScrollEthApiBuilder<NetworkT> {
     /// Creates a [`ScrollEthApiBuilder`] instance.
-    pub const fn new() -> Self {
-        Self {
-            // TODO (scroll): update default values.
-            min_suggested_priority_fee: 0,
-            payload_size_limit: 0,
-            sequencer_url: None,
-            _nt: PhantomData,
-        }
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// With a [`SequencerClient`].
+    pub fn with_sequencer(mut self, sequencer_url: Option<String>) -> Self {
+        self.sequencer_url = sequencer_url;
+        self
     }
 
     /// With minimum suggested priority fee (tip)
@@ -344,12 +352,6 @@ impl<NetworkT> ScrollEthApiBuilder<NetworkT> {
     /// With payload size limit
     pub const fn with_payload_size_limit(mut self, limit: u64) -> Self {
         self.payload_size_limit = limit;
-        self
-    }
-
-    /// With a [`SequencerClient`].
-    pub fn with_sequencer(mut self, sequencer_url: Option<String>) -> Self {
-        self.sequencer_url = sequencer_url;
         self
     }
 }
