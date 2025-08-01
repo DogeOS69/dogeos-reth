@@ -301,10 +301,10 @@ pub type ScrollRpcConvert<N, NetworkT> = RpcConverter<
 >;
 
 /// The default suggested priority fee for the gas price oracle.
-const DEFAULT_MIN_SUGGESTED_PRIORITY_FEE: u64 = 100;
+pub const DEFAULT_MIN_SUGGESTED_PRIORITY_FEE: u64 = 100;
 
 /// The default payload size limit in bytes for the sequencer.
-const DEFAULT_PAYLOAD_SIZE_LIMIT: u64 = 122_880;
+pub const DEFAULT_PAYLOAD_SIZE_LIMIT: u64 = 122_880;
 
 /// A type that knows how to build a [`ScrollEthApi`].
 #[derive(Debug)]

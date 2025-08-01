@@ -1,5 +1,7 @@
 use crate::builder::payload::SCROLL_DEFAULT_PAYLOAD_SIZE_LIMIT;
 
+use reth_scroll_rpc::eth::DEFAULT_MIN_SUGGESTED_PRIORITY_FEE;
+
 /// Rollup arguments for the Scroll node.
 #[derive(Debug, Clone, clap::Args)]
 pub struct ScrollRollupArgs {
@@ -7,8 +9,9 @@ pub struct ScrollRollupArgs {
     #[arg(long = "scroll.sequencer")]
     pub sequencer: Option<String>,
 
-    /// Minimum suggested priority fee (tip) in wei, default `1_000_000`
-    #[arg(long = "scroll.min-suggested-priority-fee", default_value_t = 1_000_000)]
+    /// Minimum suggested priority fee (tip) in wei, default to
+    /// [`DEFAULT_MIN_SUGGESTED_PRIORITY_FEE`].
+    #[arg(long = "scroll.min-suggested-priority-fee", default_value_t = DEFAULT_MIN_SUGGESTED_PRIORITY_FEE)]
     pub min_suggested_priority_fee: u64,
 
     /// Payload size limit, default to `122kB`.
@@ -20,7 +23,7 @@ impl Default for ScrollRollupArgs {
     fn default() -> Self {
         Self {
             sequencer: None,
-            min_suggested_priority_fee: 1_000_000,
+            min_suggested_priority_fee: DEFAULT_MIN_SUGGESTED_PRIORITY_FEE,
             payload_size_limit: SCROLL_DEFAULT_PAYLOAD_SIZE_LIMIT,
         }
     }
