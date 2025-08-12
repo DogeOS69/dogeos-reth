@@ -10453,6 +10453,7 @@ dependencies = [
  "alloy-eips",
  "alloy-evm",
  "alloy-primitives",
+ "alloy-rpc-types-engine",
  "derive_more",
  "eyre",
  "reth-chainspec",
