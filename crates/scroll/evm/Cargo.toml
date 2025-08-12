@@ -75,4 +75,5 @@ std = [
     "tracing/std",
     "scroll-alloy-hardforks/std",
     "reth-storage-api/std",
+    "alloy-rpc-types-engine/std",
 ]
