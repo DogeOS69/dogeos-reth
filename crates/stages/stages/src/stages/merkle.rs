@@ -1,4 +1,4 @@
-use alloy_consensus::BlockHeader as _;
+use alloy_consensus::{constants::KECCAK_EMPTY, BlockHeader as _};
 use reth_codecs::Compact;
 use reth_db_api::{
     tables,
@@ -11,7 +11,7 @@ use reth_provider::{
 };
 use reth_stages_api::{
     EntitiesCheckpoint, ExecInput, ExecOutput, MerkleCheckpoint, Stage, StageCheckpoint,
-    StageError, StageId, UnwindInput, UnwindOutput,
+    StageError, StageId, StorageRootMerkleCheckpoint, UnwindInput, UnwindOutput,
 };
 use reth_trie::{IntermediateStateRootState, StateRoot, StateRootProgress, StoredSubNode};
 use reth_trie_db::DatabaseStateRoot;
