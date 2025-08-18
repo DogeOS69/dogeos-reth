@@ -2,7 +2,6 @@ use crate::addons::ScrollNodeTypes;
 use std::sync::Arc;
 
 use alloy_consensus::BlockHeader;
-use alloy_primitives::U256;
 use alloy_rpc_types_engine::{ExecutionData, PayloadError};
 use reth_node_api::{
     AddOnsContext, EngineApiMessageVersion, EngineApiValidator, EngineObjectValidationError,
@@ -13,15 +12,11 @@ use reth_node_api::{
 use reth_node_builder::rpc::PayloadValidatorBuilder;
 use reth_node_types::NodeTypes;
 use reth_primitives_traits::{Block, RecoveredBlock};
+use reth_scroll_consensus::{CLIQUE_IN_TURN_DIFFICULTY, CLIQUE_NO_TURN_DIFFICULTY};
 use reth_scroll_engine_primitives::try_into_block;
 use reth_scroll_primitives::ScrollBlock;
 use scroll_alloy_hardforks::ScrollHardforks;
 use scroll_alloy_rpc_types_engine::ScrollPayloadAttributes;
-
-/// The block difficulty for in turn signing in the Clique consensus.
-const CLIQUE_IN_TURN_DIFFICULTY: U256 = U256::from_limbs([2, 0, 0, 0]);
-/// The block difficulty for out of turn signing in the Clique consensus.
-const CLIQUE_NO_TURN_DIFFICULTY: U256 = U256::from_limbs([1, 0, 0, 0]);
 
 /// Builder for [`ScrollEngineValidator`].
 #[derive(Debug, Default, Clone)]
