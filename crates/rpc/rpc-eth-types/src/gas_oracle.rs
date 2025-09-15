@@ -117,6 +117,7 @@ where
                 price: oracle_config
                     .default_suggested_fee
                     .unwrap_or_else(|| GasPriceOracleResult::default().price),
+                is_at_capacity: false,
             },
             lowest_effective_tip_cache: EffectiveTipLruCache(LruMap::new(ByLength::new(
                 cached_values,
