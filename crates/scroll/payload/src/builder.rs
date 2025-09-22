@@ -4,7 +4,7 @@ use super::ScrollPayloadBuilderError;
 use crate::config::{PayloadBuildingBreaker, ScrollBuilderConfig};
 
 use alloy_consensus::{Transaction, Typed2718};
-use alloy_primitives::{B256, U256};
+use alloy_primitives::U256;
 use alloy_rlp::Encodable;
 use core::fmt::Debug;
 use reth_basic_payload_builder::{
@@ -22,9 +22,7 @@ use reth_execution_types::ExecutionOutcome;
 use reth_payload_builder::PayloadId;
 use reth_payload_primitives::{PayloadBuilderAttributes, PayloadBuilderError};
 use reth_payload_util::{BestPayloadTransactions, NoopPayloadTransactions, PayloadTransactions};
-use reth_primitives_traits::{
-    NodePrimitives, RecoveredBlock, SealedHeader, SignedTransaction, TxTy,
-};
+use reth_primitives_traits::{RecoveredBlock, SealedHeader, SignedTransaction, TxTy};
 use reth_revm::{cancelled::CancelOnDrop, database::StateProviderDatabase, db::State};
 use reth_scroll_chainspec::{ChainConfig, ScrollChainConfig};
 use reth_scroll_engine_primitives::{ScrollBuiltPayload, ScrollPayloadBuilderAttributes};
@@ -437,6 +435,8 @@ where
         builder: &mut impl BlockBuilder<Primitives = Evm::Primitives>,
     ) -> Result<ExecutionInfo, PayloadBuilderError> {
         let mut info = ExecutionInfo::new();
+        let block_gas_limit = builder.evm().block().gas_limit;
+        let mut gas_spent_by_transactions = Vec::new();
 
         for sequencer_tx in &self.attributes().transactions {
             // A sequencer's block should never contain blob transactions.
@@ -445,7 +445,6 @@ where
                     ScrollPayloadBuilderError::BlobTransactionRejected,
                 ))
             }
-
             // Convert the transaction to a [RecoveredTx]. This is
             // purely for the purposes of utilizing the `evm_config.tx_env`` function.
             // Deposit transactions do not have signatures, so if the tx is a deposit, this
@@ -453,6 +452,18 @@ where
             let sequencer_tx = sequencer_tx.value().try_clone_into_recovered().map_err(|_| {
                 PayloadBuilderError::other(ScrollPayloadBuilderError::TransactionEcRecoverFailed)
             })?;
+
+            let tx_gas = sequencer_tx.gas_limit();
+            // check we don't go over the block gas limit
+            if info.cumulative_gas_used + tx_gas > block_gas_limit {
+                gas_spent_by_transactions.push(tx_gas);
+                return Err(PayloadBuilderError::other(
+                    ScrollPayloadBuilderError::BlockGasLimitExceededBySequencerTransactions {
+                        gas_spent_by_tx: gas_spent_by_transactions,
+                        gas: block_gas_limit,
+                    },
+                ));
+            }
 
             let gas_used = match builder.execute_transaction(sequencer_tx.clone()) {
                 Ok(gas_used) => gas_used,
@@ -469,8 +480,14 @@ where
                 }
             };
 
-            // add gas used by the transaction to cumulative gas used, before creating the receipt
+            // unspent gas is not refunded and not reallocated to other transactions for L1
+            // messages.
+            let gas_used =
+                if sequencer_tx.is_l1_message() { sequencer_tx.gas_limit() } else { gas_used };
+
+            // add gas used by the transaction to cumulative gas used
             info.cumulative_gas_used += gas_used;
+            gas_spent_by_transactions.push(gas_used);
         }
 
         Ok(info)
@@ -557,19 +574,6 @@ where
 
         Ok(None)
     }
-}
-
-/// Holds the state after execution
-#[derive(Debug)]
-pub struct ExecutedPayload<N: NodePrimitives> {
-    /// Tracked execution info
-    pub info: ExecutionInfo,
-    /// Withdrawal hash.
-    pub withdrawals_root: Option<B256>,
-    /// The transaction receipts.
-    pub receipts: Vec<N::Receipt>,
-    /// The block env used during execution.
-    pub block_env: BlockEnv,
 }
 
 /// This acts as the container for executed transactions and its byproducts (receipts, gas used)
