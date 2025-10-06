@@ -29,6 +29,7 @@ use crate::{
     peers::PeersManager,
     poll_nested_stream_with_budget,
     protocol::IntoRlpxSubProtocol,
+    required_block_filter::RequiredBlockFilter,
     session::SessionManager,
     state::NetworkState,
     swarm::{Swarm, SwarmEvent},
@@ -252,6 +253,7 @@ impl<N: NetworkPrimitives> NetworkManager<N> {
             transactions_manager_config: _,
             nat,
             handshake,
+            required_block_hashes,
             header_transform,
         } = config;
 
@@ -339,11 +341,17 @@ impl<N: NetworkPrimitives> NetworkManager<N> {
             nat,
         );
 
+        // Spawn required block peer filter if configured
+        if !required_block_hashes.is_empty() {
+            let filter = RequiredBlockFilter::new(handle.clone(), required_block_hashes);
+            filter.spawn();
+        }
+
         Ok(Self {
             swarm,
             handle,
             from_handle_rx: UnboundedReceiverStream::new(from_handle_rx),
-            block_import: EventSender::new(1000),
+            block_import,
             event_sender,
             to_transactions_manager: None,
             to_eth_request_handler: None,
