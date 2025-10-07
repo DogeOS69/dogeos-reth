@@ -160,7 +160,7 @@ where
         }
     }
 
-    async fn launch_node(self, target: Target) -> eyre::Result<NodeHandle<N, AddOns>>
+    async fn launch_node(self) -> eyre::Result<NodeHandle<N, AddOns>>
     where
         <AddOns as reth_node_api::NodeAddOns<N>>::Handle:
             RpcHandleProvider<N, <AddOns as RethRpcAddOns<N>>::EthApi>,
@@ -269,7 +269,7 @@ where
     N: FullNodeComponents<Types: DebugNode<N>>,
     AddOns: RethRpcAddOns<N> + 'static,
     <AddOns as reth_node_api::NodeAddOns<N>>::Handle:
-    RpcHandleProvider<N, <AddOns as RethRpcAddOns<N>>::EthApi>,
+        RpcHandleProvider<N, <AddOns as RethRpcAddOns<N>>::EthApi>,
     L: LaunchNode<Target, Node = NodeHandle<N, AddOns>> + 'static,
 {
     type Output = eyre::Result<NodeHandle<N, AddOns>>;
@@ -286,7 +286,7 @@ where
     N: FullNodeComponents<Types: DebugNode<N>>,
     AddOns: RethRpcAddOns<N> + 'static,
     <AddOns as reth_node_api::NodeAddOns<N>>::Handle:
-    RpcHandleProvider<N, <AddOns as RethRpcAddOns<N>>::EthApi>,
+        RpcHandleProvider<N, <AddOns as RethRpcAddOns<N>>::EthApi>,
     L: LaunchNode<Target, Node = NodeHandle<N, AddOns>> + 'static,
 {
     type Node = NodeHandle<N, AddOns>;

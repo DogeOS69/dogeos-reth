@@ -16,7 +16,10 @@ use reth_transaction_pool::{
     AddedTransactionOutcome, PoolTransaction, TransactionOrigin, TransactionPool,
 };
 use scroll_alloy_consensus::{ScrollTransactionInfo, ScrollTxEnvelope};
-use std::fmt::{Debug, Formatter};
+use std::{
+    fmt::{Debug, Formatter},
+    time::Duration,
+};
 
 impl<N, Rpc> EthTransactions for ScrollEthApi<N, Rpc>
 where
@@ -25,6 +28,10 @@ where
 {
     fn signers(&self) -> &SignersForRpc<Self::Provider, Self::NetworkTypes> {
         self.inner.eth_api.signers()
+    }
+
+    fn send_raw_transaction_sync_timeout(&self) -> Duration {
+        self.inner.eth_api.send_raw_transaction_sync_timeout()
     }
 
     /// Decodes and recovers the transaction and submits it to the pool.

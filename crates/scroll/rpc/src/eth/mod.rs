@@ -7,16 +7,17 @@ use crate::{
 use alloy_primitives::U256;
 use eyre::WrapErr;
 pub use receipt::ScrollReceiptBuilder;
+use reth_chainspec::{EthereumHardforks, Hardforks};
 use reth_evm::ConfigureEvm;
-use reth_node_api::{FullNodeComponents, FullNodeTypes, HeaderTy};
+use reth_node_api::{FullNodeComponents, FullNodeTypes, HeaderTy, NodeTypes};
 use reth_node_builder::rpc::{EthApiBuilder, EthApiCtx};
 use reth_provider::{BlockReader, ProviderHeader, ProviderTx};
 use reth_rpc::eth::{core::EthApiInner, DevSigner};
 use reth_rpc_convert::{RpcConvert, RpcConverter, RpcTypes, SignableTxRequest};
 use reth_rpc_eth_api::{
     helpers::{
-        pending_block::BuildPendingEnv, spec::SignersForApi, AddDevSigners, EthApiSpec, EthState,
-        LoadFee, LoadPendingBlock, LoadState, SpawnBlocking, Trace,
+        pending_block::BuildPendingEnv, AddDevSigners, EthApiSpec, EthState, LoadFee,
+        LoadPendingBlock, LoadState, SpawnBlocking, Trace,
     },
     EthApiTypes, FullEthApiServer, RpcNodeCore, RpcNodeCoreExt,
 };
@@ -52,10 +53,15 @@ impl<T> ScrollNodeCore for T where T: RpcNodeCore<Provider: BlockReader> {}
 ///
 /// This type implements the [`FullEthApi`](reth_rpc_eth_api::helpers::FullEthApi) by implemented
 /// all the `Eth` helper traits and prerequisite traits.
-#[derive(Clone)]
 pub struct ScrollEthApi<N: RpcNodeCore, Rpc: RpcConvert> {
     /// Gateway to node's core components.
     inner: Arc<ScrollEthApiInner<N, Rpc>>,
+}
+
+impl<N: RpcNodeCore, Rpc: RpcConvert> Clone for ScrollEthApi<N, Rpc> {
+    fn clone(&self) -> Self {
+        Self { inner: self.inner.clone() }
+    }
 }
 
 impl<N: RpcNodeCore, Rpc: RpcConvert> ScrollEthApi<N, Rpc> {
@@ -161,17 +167,9 @@ where
     N: RpcNodeCore,
     Rpc: RpcConvert<Primitives = N::Primitives>,
 {
-    type Transaction = ProviderTx<Self::Provider>;
-    type Rpc = Rpc::Network;
-
     #[inline]
     fn starting_block(&self) -> U256 {
         self.inner.eth_api.starting_block()
-    }
-
-    #[inline]
-    fn signers(&self) -> &SignersForApi<Self> {
-        self.inner.eth_api.signers()
     }
 }
 
@@ -376,7 +374,10 @@ impl<NetworkT> ScrollEthApiBuilder<NetworkT> {
 
 impl<N, NetworkT> EthApiBuilder<N> for ScrollEthApiBuilder<NetworkT>
 where
-    N: FullNodeComponents<Evm: ConfigureEvm<NextBlockEnvCtx: BuildPendingEnv<HeaderTy<N::Types>>>>,
+    N: FullNodeComponents<
+        Evm: ConfigureEvm<NextBlockEnvCtx: BuildPendingEnv<HeaderTy<N::Types>>>,
+        Types: NodeTypes<ChainSpec: Hardforks + EthereumHardforks>,
+    >,
     NetworkT: RpcTypes,
     ScrollRpcConvert<N, NetworkT>: RpcConvert<Network = NetworkT>,
     ScrollEthApi<N, ScrollRpcConvert<N, NetworkT>>:

@@ -351,7 +351,7 @@ impl<N: NetworkPrimitives> NetworkManager<N> {
             swarm,
             handle,
             from_handle_rx: UnboundedReceiverStream::new(from_handle_rx),
-            block_import,
+            block_import: EventSender::new(1000),
             event_sender,
             to_transactions_manager: None,
             to_eth_request_handler: None,

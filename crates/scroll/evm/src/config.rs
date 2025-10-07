@@ -58,7 +58,7 @@ where
         &self.block_assembler
     }
 
-    fn evm_env(&self, header: &N::BlockHeader) -> EvmEnv<ScrollSpecId> {
+    fn evm_env(&self, header: &N::BlockHeader) -> Result<EvmEnv<ScrollSpecId>, Self::Error> {
         let chain_spec = self.chain_spec();
         let spec_id = self.spec_id_at_timestamp_and_number(header.timestamp(), header.number());
 
@@ -85,7 +85,7 @@ where
             blob_excess_gas_and_price: None,
         };
 
-        EvmEnv { cfg_env, block_env }
+        Ok(EvmEnv { cfg_env, block_env })
     }
 
     fn next_evm_env(
@@ -128,16 +128,16 @@ where
     fn context_for_block<'a>(
         &self,
         block: &'a SealedBlock<BlockTy<Self::Primitives>>,
-    ) -> ExecutionCtxFor<'a, Self> {
-        ScrollBlockExecutionCtx { parent_hash: block.header().parent_hash() }
+    ) -> Result<ExecutionCtxFor<'a, Self>, Self::Error> {
+        Ok(ScrollBlockExecutionCtx { parent_hash: block.header().parent_hash() })
     }
 
     fn context_for_next_block(
         &self,
         parent: &SealedHeader<N::BlockHeader>,
         _attributes: Self::NextBlockEnvCtx,
-    ) -> ExecutionCtxFor<'_, Self> {
-        ScrollBlockExecutionCtx { parent_hash: parent.hash() }
+    ) -> Result<ExecutionCtxFor<'_, Self>, Self::Error> {
+        Ok(ScrollBlockExecutionCtx { parent_hash: parent.hash() })
     }
 }
 
@@ -157,7 +157,7 @@ where
     P: ScrollPrecompilesFactory,
     Self: Send + Sync + Unpin + Clone + 'static,
 {
-    fn evm_env_for_payload(&self, payload: &ExecutionData) -> EvmEnvFor<Self> {
+    fn evm_env_for_payload(&self, payload: &ExecutionData) -> Result<EvmEnvFor<Self>, Self::Error> {
         let timestamp = payload.payload.timestamp();
         let block_number = payload.payload.block_number();
         let chain_spec = self.chain_spec();
@@ -187,20 +187,26 @@ where
             blob_excess_gas_and_price: None,
         };
 
-        EvmEnv { cfg_env, block_env }
+        Ok(EvmEnv { cfg_env, block_env })
     }
 
-    fn context_for_payload<'a>(&self, payload: &'a ExecutionData) -> ExecutionCtxFor<'a, Self> {
-        ScrollBlockExecutionCtx { parent_hash: payload.parent_hash() }
+    fn context_for_payload<'a>(
+        &self,
+        payload: &'a ExecutionData,
+    ) -> Result<ExecutionCtxFor<'a, Self>, Self::Error> {
+        Ok(ScrollBlockExecutionCtx { parent_hash: payload.parent_hash() })
     }
 
-    fn tx_iterator_for_payload(&self, payload: &ExecutionData) -> impl ExecutableTxIterator<Self> {
-        payload.payload.transactions().clone().into_iter().map(|encoded| {
+    fn tx_iterator_for_payload(
+        &self,
+        payload: &ExecutionData,
+    ) -> Result<impl ExecutableTxIterator<Self>, Self::Error> {
+        Ok(payload.payload.transactions().clone().into_iter().map(|encoded| {
             let tx = TxTy::<Self::Primitives>::decode_2718_exact(encoded.as_ref())
                 .map_err(AnyError::new)?;
             let signer = tx.try_recover().map_err(AnyError::new)?;
             Ok::<_, AnyError>(WithEncoded::new(encoded, tx.with_signer(signer)))
-        })
+        }))
     }
 }
 
@@ -246,7 +252,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fill_cfg_env() {
+    fn test_fill_cfg_env() -> eyre::Result<()> {
         let config = ScrollEvmConfig::<_, ScrollPrimitives, _>::new(
             ScrollChainSpecBuilder::scroll_mainnet().build(ScrollChainConfig::mainnet()).into(),
             ScrollRethReceiptBuilder::default(),
@@ -256,7 +262,7 @@ mod tests {
         let curie_header = Header { number: 7096836, ..Default::default() };
 
         // fill cfg env
-        let env = config.evm_env(&curie_header);
+        let env = config.evm_env(&curie_header)?;
 
         // check correct cfg env
         assert_eq!(env.cfg_env.chain_id, Scroll as u64);
@@ -266,7 +272,7 @@ mod tests {
         let bernoulli_header = Header { number: 5220340, ..Default::default() };
 
         // fill cfg env
-        let env = config.evm_env(&bernoulli_header);
+        let env = config.evm_env(&bernoulli_header)?;
 
         // check correct cfg env
         assert_eq!(env.cfg_env.chain_id, Scroll as u64);
@@ -276,11 +282,13 @@ mod tests {
         let pre_bernoulli_header = Header { number: 0, ..Default::default() };
 
         // fill cfg env
-        let env = config.evm_env(&pre_bernoulli_header);
+        let env = config.evm_env(&pre_bernoulli_header)?;
 
         // check correct cfg env
         assert_eq!(env.cfg_env.chain_id, Scroll as u64);
         assert_eq!(env.cfg_env.spec, ScrollSpecId::SHANGHAI);
+
+        Ok(())
     }
 
     #[test]
@@ -302,7 +310,7 @@ mod tests {
         };
 
         // fill block env
-        let env = config.evm_env(&header);
+        let env = config.evm_env(&header).unwrap();
 
         // verify block env correctly updated
         let expected = BlockEnv {

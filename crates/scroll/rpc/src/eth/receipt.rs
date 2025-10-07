@@ -1,6 +1,7 @@
 //! Loads and formats Scroll receipt RPC response.
 
 use crate::{ScrollEthApi, ScrollEthApiError};
+use alloy_consensus::{Receipt, TxReceipt};
 use alloy_rpc_types_eth::{Log, TransactionReceipt};
 use reth_primitives_traits::NodePrimitives;
 use reth_rpc_convert::{
@@ -62,27 +63,32 @@ impl ScrollReceiptBuilder {
     where
         N: NodePrimitives<SignedTx = ScrollTransactionSigned, Receipt = ScrollReceipt>,
     {
-        let core_receipt =
-            build_receipt(&input, None, |receipt_with_bloom| match input.receipt.as_ref() {
-                ScrollReceipt::Legacy(_) => {
-                    ScrollReceiptEnvelope::<Log>::Legacy(receipt_with_bloom)
-                }
-                ScrollReceipt::Eip2930(_) => {
-                    ScrollReceiptEnvelope::<Log>::Eip2930(receipt_with_bloom)
-                }
-                ScrollReceipt::Eip1559(_) => {
-                    ScrollReceiptEnvelope::<Log>::Eip1559(receipt_with_bloom)
-                }
-                ScrollReceipt::Eip7702(_) => {
-                    ScrollReceiptEnvelope::<Log>::Eip7702(receipt_with_bloom)
-                }
-                ScrollReceipt::L1Message(_) => {
-                    ScrollReceiptEnvelope::<Log>::L1Message(receipt_with_bloom)
-                }
-            });
-
         let scroll_receipt_fields =
             ScrollTransactionReceiptFields { l1_fee: Some(input.receipt.l1_fee().saturating_to()) };
+        let core_receipt = build_receipt(input, None, |receipt, next_log_index, meta| {
+            let map_logs = move |receipt: alloy_consensus::Receipt| {
+                let Receipt { status, cumulative_gas_used, logs } = receipt;
+                let logs = Log::collect_for_receipt(next_log_index, meta, logs);
+                Receipt { status, cumulative_gas_used, logs }
+            };
+            match receipt {
+                ScrollReceipt::Legacy(receipt) => {
+                    ScrollReceiptEnvelope::<Log>::Legacy(map_logs(receipt.inner).into_with_bloom())
+                }
+                ScrollReceipt::Eip2930(receipt) => {
+                    ScrollReceiptEnvelope::<Log>::Eip2930(map_logs(receipt.inner).into_with_bloom())
+                }
+                ScrollReceipt::Eip1559(receipt) => {
+                    ScrollReceiptEnvelope::<Log>::Eip1559(map_logs(receipt.inner).into_with_bloom())
+                }
+                ScrollReceipt::Eip7702(receipt) => {
+                    ScrollReceiptEnvelope::<Log>::Eip7702(map_logs(receipt.inner).into_with_bloom())
+                }
+                ScrollReceipt::L1Message(receipt) => {
+                    ScrollReceiptEnvelope::<Log>::L1Message(map_logs(receipt).into_with_bloom())
+                }
+            }
+        });
 
         Ok(Self { core_receipt, scroll_receipt_fields })
     }

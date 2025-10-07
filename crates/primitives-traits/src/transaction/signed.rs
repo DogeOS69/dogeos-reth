@@ -151,26 +151,7 @@ mod scroll {
     use super::*;
     use scroll_alloy_consensus::{ScrollPooledTransaction, ScrollTxEnvelope};
 
-    impl SignedTransaction for ScrollPooledTransaction {
-        fn tx_hash(&self) -> &TxHash {
-            match self {
-                Self::Legacy(tx) => tx.hash(),
-                Self::Eip2930(tx) => tx.hash(),
-                Self::Eip1559(tx) => tx.hash(),
-                Self::Eip7702(tx) => tx.hash(),
-            }
-        }
-    }
+    impl SignedTransaction for ScrollPooledTransaction {}
 
-    impl SignedTransaction for ScrollTxEnvelope {
-        fn tx_hash(&self) -> &TxHash {
-            match self {
-                Self::Legacy(tx) => tx.hash(),
-                Self::Eip2930(tx) => tx.hash(),
-                Self::Eip1559(tx) => tx.hash(),
-                Self::Eip7702(tx) => tx.hash(),
-                Self::L1Message(tx) => tx.hash_ref(),
-            }
-        }
-    }
+    impl SignedTransaction for ScrollTxEnvelope {}
 }

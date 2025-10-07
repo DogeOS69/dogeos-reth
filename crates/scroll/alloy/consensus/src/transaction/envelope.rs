@@ -2,15 +2,16 @@ use crate::{ScrollPooledTransaction, ScrollTxType, ScrollTypedTransaction, TxL1M
 use core::hash::Hash;
 
 use alloy_consensus::{
-    error::ValueError, transaction::RlpEcdsaDecodableTx, Sealable, Sealed, Signed, Transaction,
-    TxEip1559, TxEip2930, TxEip7702, TxLegacy, Typed2718,
+    error::ValueError,
+    transaction::{RlpEcdsaDecodableTx, TxHashRef},
+    Sealable, Sealed, Signed, Transaction, TxEip1559, TxEip2930, TxEip7702, TxLegacy, Typed2718,
 };
 use alloy_eips::{
     eip2718::{Decodable2718, Eip2718Error, Eip2718Result, Encodable2718},
     eip2930::AccessList,
     eip7702::SignedAuthorization,
 };
-use alloy_primitives::{Address, Bytes, Signature, TxKind, B256, U256};
+use alloy_primitives::{Address, Bytes, Signature, TxHash, TxKind, B256, U256};
 use alloy_rlp::{Decodable, Encodable};
 #[cfg(feature = "reth-codec")]
 use reth_codecs::{
@@ -492,6 +493,18 @@ impl FromTxCompact for ScrollTxEnvelope {
                 let tx = Sealed::new(tx);
                 (Self::L1Message(tx), buf)
             }
+        }
+    }
+}
+
+impl TxHashRef for ScrollTxEnvelope {
+    fn tx_hash(&self) -> &TxHash {
+        match self {
+            Self::Legacy(tx) => tx.hash(),
+            Self::Eip2930(tx) => tx.hash(),
+            Self::Eip1559(tx) => tx.hash(),
+            Self::Eip7702(tx) => tx.hash(),
+            Self::L1Message(tx) => tx.hash_ref(),
         }
     }
 }

@@ -3,10 +3,10 @@ use alloy_genesis::Genesis;
 use alloy_primitives::{b256, hex, Address};
 use futures::StreamExt;
 use reth_chainspec::ChainSpec;
-use reth_node_api::{BlockBody, FullNodeComponents, FullNodePrimitives, NodeTypes};
+use reth_node_api::{BlockBody, FullNodeComponents, FullNodePrimitives, NodeAddOns, NodeTypes};
 use reth_node_builder::{
-    rpc::{RethRpcAddOns, RpcHandleProvider}, FullNode, NodeBuilder, NodeConfig,
-    NodeHandle,
+    rpc::{RethRpcAddOns, RpcHandleProvider},
+    FullNode, NodeBuilder, NodeConfig, NodeHandle,
 };
 use reth_node_core::args::DevArgs;
 use reth_node_ethereum::{node::EthereumAddOns, EthereumNode};

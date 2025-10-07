@@ -472,10 +472,10 @@ where
         }
 
         // constrain to the max price
-        if let Some(max_price) = self.oracle_config.max_price {
-            if suggestion > max_price {
-                suggestion = max_price;
-            }
+        if let Some(max_price) = self.oracle_config.max_price &&
+            suggestion > max_price
+        {
+            suggestion = max_price;
         }
 
         // update the cache only if it's latest block header

@@ -47,8 +47,7 @@ use reth_db_api::{
 use reth_execution_types::{Chain, ExecutionOutcome};
 use reth_node_types::{BlockTy, BodyTy, HeaderTy, NodeTypes, ReceiptTy, TxTy};
 use reth_primitives_traits::{
-    Account, Block as _, BlockBody as _, Bytecode, GotExpected, RecoveredBlock, SealedHeader,
-    StorageEntry,
+    Account, Block as _, BlockBody as _, Bytecode, RecoveredBlock, SealedHeader, StorageEntry,
 };
 use reth_prune_types::{
     PruneCheckpoint, PruneMode, PruneModes, PruneSegment, MINIMUM_PRUNING_DISTANCE,
@@ -59,7 +58,7 @@ use reth_storage_api::{
     BlockBodyIndicesProvider, BlockBodyReader, NodePrimitivesProvider, StateProvider,
     StorageChangeSetReader, TryIntoHistoricalStateProvider,
 };
-use reth_storage_errors::provider::{ProviderResult, RootMismatch};
+use reth_storage_errors::provider::ProviderResult;
 use reth_trie::{
     prefix_set::{PrefixSet, PrefixSetMut, TriePrefixSets},
     updates::{StorageTrieUpdates, TrieUpdates},

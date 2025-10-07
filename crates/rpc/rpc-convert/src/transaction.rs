@@ -999,9 +999,8 @@ where
 #[cfg(feature = "scroll")]
 pub mod scroll {
     use super::*;
-    use alloy_consensus::SignableTransaction;
+    use alloy_consensus::{transaction::TxHashRef, SignableTransaction};
     use alloy_primitives::{Address, Bytes, Signature};
-    use reth_primitives_traits::SignedTransaction;
     use reth_scroll_primitives::ScrollReceipt;
     use reth_storage_api::{errors::ProviderError, ReceiptProvider};
     use revm_scroll::l1block::TX_L1_FEE_PRECISION_U256;
@@ -1029,9 +1028,14 @@ pub mod scroll {
 
     impl FromConsensusTx<ScrollTxEnvelope> for scroll_alloy_rpc_types::Transaction {
         type TxInfo = ScrollTransactionInfo;
+        type Err = Infallible;
 
-        fn from_consensus_tx(tx: ScrollTxEnvelope, signer: Address, tx_info: Self::TxInfo) -> Self {
-            Self::from_transaction(Recovered::new_unchecked(tx, signer), tx_info)
+        fn from_consensus_tx(
+            tx: ScrollTxEnvelope,
+            signer: Address,
+            tx_info: Self::TxInfo,
+        ) -> Result<Self, Self::Err> {
+            Ok(Self::from_transaction(Recovered::new_unchecked(tx, signer), tx_info))
         }
     }
 
