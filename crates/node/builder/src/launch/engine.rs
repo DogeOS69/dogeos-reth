@@ -77,10 +77,13 @@ impl EngineNodeLauncher {
             + EngineValidatorAddOn<NodeAdapter<T, CB::Components>>,
         <AO as reth_node_api::NodeAddOns<
             NodeAdapter<T, <CB as NodeComponentsBuilder<T>>::Components>,
-        >>::Handle: RpcHandleProvider<
-            NodeAdapter<T, <CB as NodeComponentsBuilder<T>>::Components>,
-            <AO as RethRpcAddOns<NodeAdapter<T, <CB as NodeComponentsBuilder<T>>::Components>>>::EthApi,
-        >,
+        >>::Handle:
+            RpcHandleProvider<
+                NodeAdapter<T, <CB as NodeComponentsBuilder<T>>::Components>,
+                <AO as RethRpcAddOns<
+                    NodeAdapter<T, <CB as NodeComponentsBuilder<T>>::Components>,
+                >>::EthApi,
+            >,
     {
         let Self { ctx, engine_tree_config } = self;
         let NodeBuilderWithComponents {

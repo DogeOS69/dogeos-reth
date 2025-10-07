@@ -635,7 +635,7 @@ impl<N: NetworkPrimitives> NetworkConfigBuilder<N> {
             nat,
             handshake,
             required_block_hashes,
-            header_transform
+            header_transform,
         } = self;
 
         let head = head.unwrap_or_else(|| Head {

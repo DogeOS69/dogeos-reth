@@ -44,7 +44,6 @@ alloy-primitives = { workspace = true, features = ["rand", "arbitrary"] }
 reth-codecs = { workspace = true, features = ["test-utils"] }
 proptest-arbitrary-interop.workspace = true
 proptest.workspace = true
-test-fuzz.workspace = true
 
 [features]
 default = ["std"]
