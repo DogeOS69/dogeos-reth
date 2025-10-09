@@ -4,7 +4,7 @@
 use crate::{ScrollTxEnvelope, ScrollTxType};
 use alloy_consensus::{
     error::ValueError,
-    transaction::{RlpEcdsaDecodableTx, TxEip1559, TxEip2930, TxLegacy},
+    transaction::{RlpEcdsaDecodableTx, TxEip1559, TxEip2930, TxHashRef, TxLegacy},
     SignableTransaction, Signed, Transaction, TxEip7702, TxEnvelope, Typed2718,
 };
 use alloy_eips::{
@@ -467,6 +467,17 @@ impl alloy_consensus::transaction::SignerRecoverable for ScrollPooledTransaction
             self.signature(),
             signature_hash,
         )
+    }
+}
+
+impl TxHashRef for ScrollPooledTransaction {
+    fn tx_hash(&self) -> &TxHash {
+        match self {
+            Self::Legacy(tx) => tx.hash(),
+            Self::Eip2930(tx) => tx.hash(),
+            Self::Eip1559(tx) => tx.hash(),
+            Self::Eip7702(tx) => tx.hash(),
+        }
     }
 }
 

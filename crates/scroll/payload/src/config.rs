@@ -61,17 +61,17 @@ impl PayloadBuildingBreaker {
         }
 
         // Check gas limit if configured
-        if let Some(gas_limit) = self.gas_limit {
-            if cumulative_gas_used > gas_limit.saturating_sub(MIN_TRANSACTION_GAS) {
-                return true;
-            }
+        if let Some(gas_limit) = self.gas_limit &&
+            cumulative_gas_used > gas_limit.saturating_sub(MIN_TRANSACTION_GAS)
+        {
+            return true;
         }
 
         // Check data availability size limit if configured
-        if let Some(max_size) = self.max_da_block_size {
-            if cumulative_da_size_used > max_size.saturating_sub(MIN_TRANSACTION_DATA_SIZE) {
-                return true;
-            }
+        if let Some(max_size) = self.max_da_block_size &&
+            cumulative_da_size_used > max_size.saturating_sub(MIN_TRANSACTION_DATA_SIZE)
+        {
+            return true;
         }
 
         false

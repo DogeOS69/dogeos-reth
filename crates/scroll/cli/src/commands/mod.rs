@@ -6,7 +6,7 @@ use clap::Subcommand;
 use reth_cli::chainspec::ChainSpecParser;
 use reth_cli_commands::{
     config_cmd, db, dump_genesis, import, init_cmd, init_state, node, node::NoArgs, p2p, prune,
-    recover, stage,
+    stage,
 };
 use reth_scroll_chainspec::ScrollChainSpec;
 use std::{fmt, sync::Arc};
@@ -44,9 +44,6 @@ pub enum Commands<
     /// Write config to stdout
     #[command(name = "config")]
     Config(config_cmd::Command),
-    /// Scripts for node recovery
-    #[command(name = "recover")]
-    Recover(recover::Command<Spec>),
     /// Prune according to the configuration without any limits
     #[command(name = "prune")]
     Prune(prune::PruneCommand<Spec>),
@@ -71,7 +68,6 @@ impl<C: ChainSpecParser<ChainSpec = ScrollChainSpec>, Ext: clap::Args + fmt::Deb
             Self::Stage(cmd) => cmd.chain_spec(),
             Self::P2P(cmd) => cmd.chain_spec(),
             Self::Config(_) => None,
-            Self::Recover(cmd) => cmd.chain_spec(),
             Self::Prune(cmd) => cmd.chain_spec(),
             #[cfg(feature = "dev")]
             Self::TestVectors(_) => None,

@@ -104,7 +104,7 @@ impl<B: Block> RecoveredBlock<B> {
         Self { block, senders }
     }
 
-    /// A safer variant of [`Self::new_unhashed`] that checks if the number of senders is equal to
+    /// A safer variant of [`Self::new`] that checks if the number of senders is equal to
     /// the number of transactions in the block and recovers the senders from the transactions, if
     /// not using [`SignedTransaction::recover_signer`](crate::transaction::signed::SignedTransaction)
     /// to recover the senders.
@@ -217,7 +217,7 @@ impl<B: Block> RecoveredBlock<B> {
         Ok(Self::new(block, senders, hash))
     }
 
-    /// A safer variant of [`Self::new_unhashed`] that checks if the number of senders is equal to
+    /// A safer variant of [`Self::new_sealed`] that checks if the number of senders is equal to
     /// the number of transactions in the block and recovers the senders from the transactions, if
     /// not using [`SignedTransaction::recover_signer_unchecked`](crate::transaction::signed::SignedTransaction)
     /// to recover the senders.
@@ -231,7 +231,7 @@ impl<B: Block> RecoveredBlock<B> {
         Self::try_new(block, senders, hash)
     }
 
-    /// A safer variant of [`Self::new`] that checks if the number of senders is equal to
+    /// A safer variant of [`Self::new_sealed`] that checks if the number of senders is equal to
     /// the number of transactions in the block and recovers the senders from the transactions, if
     /// not using [`SignedTransaction::recover_signer_unchecked`](crate::transaction::signed::SignedTransaction)
     /// to recover the senders.
@@ -459,9 +459,7 @@ impl<B: Block> Eq for RecoveredBlock<B> {}
 
 impl<B: Block> PartialEq for RecoveredBlock<B> {
     fn eq(&self, other: &Self) -> bool {
-        self.hash_ref().eq(other.hash_ref()) &&
-            self.block.eq(&other.block) &&
-            self.senders.eq(&other.senders)
+        self.block.eq(&other.block) && self.senders.eq(&other.senders)
     }
 }
 
@@ -660,7 +658,8 @@ mod rpc_compat {
     use crate::{block::error::BlockRecoveryError, SealedHeader};
     use alloc::vec::Vec;
     use alloy_consensus::{
-        transaction::Recovered, Block as CBlock, BlockBody, BlockHeader, Sealable,
+        transaction::{Recovered, TxHashRef},
+        Block as CBlock, BlockBody, BlockHeader, Sealable,
     };
     use alloy_rpc_types_eth::{Block, BlockTransactions, BlockTransactionsKind, TransactionInfo};
 

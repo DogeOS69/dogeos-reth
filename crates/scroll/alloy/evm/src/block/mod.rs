@@ -20,14 +20,14 @@ use alloy_eips::Encodable2718;
 use alloy_evm::{
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockExecutorFactory,
-        BlockExecutorFor, BlockValidationError, CommitChanges, ExecutableTx, OnStateHook,
+        BlockExecutorFor, BlockValidationError, ExecutableTx, OnStateHook,
     },
     Database, Evm, EvmFactory, FromRecoveredTx, FromTxWithEncoded,
 };
 use alloy_primitives::{B256, U256};
 use revm::{
     context::{
-        result::{ExecutionResult, InvalidTransaction, ResultAndState},
+        result::{InvalidTransaction, ResultAndState},
         TxEnv,
     },
     database::State,
@@ -161,6 +161,7 @@ where
             .map_err(BlockExecutionError::other)?;
 
         // apply gas oracle predeploy upgrade at Curie transition block.
+        #[allow(clippy::collapsible_if)]
         if self
             .spec
             .scroll_fork_activation(ScrollHardfork::Curie)
@@ -174,6 +175,7 @@ where
         }
 
         // apply gas oracle predeploy upgrade at Feynman transition block.
+        #[allow(clippy::collapsible_if)]
         if self
             .spec
             .scroll_fork_activation(ScrollHardfork::Feynman)
@@ -192,11 +194,10 @@ where
         Ok(())
     }
 
-    fn execute_transaction_with_commit_condition(
+    fn execute_transaction_without_commit(
         &mut self,
         tx: impl ExecutableTx<Self>,
-        f: impl FnOnce(&ExecutionResult<<Self::Evm as Evm>::HaltReason>) -> CommitChanges,
-    ) -> Result<Option<u64>, BlockExecutionError> {
+    ) -> Result<ResultAndState<<Self::Evm as Evm>::HaltReason>, BlockExecutionError> {
         let chain_spec = &self.spec;
         let is_l1_message = tx.tx().ty() == L1_MESSAGE_TRANSACTION_TYPE;
         // The sum of the transaction’s gas limit and the gas utilized in this block prior,
@@ -249,13 +250,17 @@ where
         self.evm.with_base_fee_check(!is_l1_message);
         self.evm.with_nonce_check(!is_l1_message);
 
-        // execute the transaction and commit the result to the database
-        let ResultAndState { result, state } =
-            self.evm.transact(&tx).map_err(move |err| BlockExecutionError::evm(err, hash))?;
+        // execute and return the result.
+        self.evm.transact(&tx).map_err(move |err| BlockExecutionError::evm(err, hash))
+    }
 
-        if !f(&result).should_commit() {
-            return Ok(None)
-        };
+    fn commit_transaction(
+        &mut self,
+        output: ResultAndState<<Self::Evm as Evm>::HaltReason>,
+        tx: impl ExecutableTx<Self>,
+    ) -> Result<u64, BlockExecutionError> {
+        let ResultAndState { result, state } = output;
+        let is_l1_message = tx.tx().ty() == L1_MESSAGE_TRANSACTION_TYPE;
 
         let l1_fee = if is_l1_message {
             U256::ZERO
@@ -277,7 +282,7 @@ where
 
         self.evm.db_mut().commit(state);
 
-        Ok(Some(gas_used))
+        Ok(gas_used)
     }
 
     fn finish(self) -> Result<(Self::Evm, BlockExecutionResult<R::Receipt>), BlockExecutionError> {

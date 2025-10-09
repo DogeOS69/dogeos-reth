@@ -146,7 +146,8 @@ mod tests {
         let block: Block<ScrollTxEnvelope, _> = Block { header, body: BlockBody::default() };
 
         // initiate the evm and apply the block hashes contract call.
-        let mut evm = evm_config.evm_for_block(state, &block.header);
+        let mut evm =
+            evm_config.evm_for_block(state, &block.header).expect("failed to get evm for block");
         system_caller.apply_blockhashes_contract_call(block.parent_hash, &mut evm).unwrap();
 
         // assert the storage slot remains unchanged.
@@ -192,7 +193,8 @@ mod tests {
         let block: Block<ScrollTxEnvelope, _> = Block { header, body: BlockBody::default() };
 
         // initiate the evm and apply the block hashes contract call.
-        let mut evm = evm_config.evm_for_block(state, &block.header);
+        let mut evm =
+            evm_config.evm_for_block(state, &block.header).expect("failed to get evm for block");
         system_caller.apply_blockhashes_contract_call(block.parent_hash, &mut evm).unwrap();
 
         // assert the hash is written to storage.

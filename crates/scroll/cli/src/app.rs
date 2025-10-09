@@ -95,9 +95,6 @@ where
                 .run_command_until_exit(|ctx| command.execute::<ScrollNode, _>(ctx, components)),
             Commands::P2P(command) => runner.run_until_ctrl_c(command.execute::<ScrollNode>()),
             Commands::Config(command) => runner.run_until_ctrl_c(command.execute()),
-            Commands::Recover(command) => {
-                runner.run_command_until_exit(|ctx| command.execute::<ScrollNode>(ctx))
-            }
             Commands::Prune(command) => runner.run_until_ctrl_c(command.execute::<ScrollNode>()),
             #[cfg(feature = "dev")]
             Commands::TestVectors(command) => runner.run_until_ctrl_c(command.execute()),

@@ -118,7 +118,8 @@ mod tests {
             Arc::new(ScrollChainSpecBuilder::scroll_mainnet().build(ScrollChainConfig::mainnet()));
         let evm_config = ScrollEvmConfig::scroll(chain_spec.clone());
 
-        let evm = evm_config.evm_for_block(state, block.header());
+        let evm =
+            evm_config.evm_for_block(state, block.header()).expect("failed to get evm for block");
         let receipt_builder = ScrollRethReceiptBuilder::default();
         ScrollBlockExecutor::new(
             evm,

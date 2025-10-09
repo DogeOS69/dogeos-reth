@@ -62,6 +62,7 @@ impl<
         }
 
         // verify the receipts logs bloom and root
+        #[allow(clippy::collapsible_if)]
         if self.chain_spec.is_byzantium_active_at_block(block.header().number()) {
             if let Err(error) = reth_ethereum_consensus::verify_receipts(
                 block.header().receipts_root(),
