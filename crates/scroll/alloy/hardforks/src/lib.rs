@@ -4,7 +4,8 @@
 #[cfg(not(feature = "std"))]
 extern crate alloc as std;
 
-use alloy_hardforks::{EthereumHardfork, EthereumHardforks, ForkCondition};
+pub use alloy_hardforks::ForkCondition;
+use alloy_hardforks::{EthereumHardfork, EthereumHardforks};
 use std::vec::Vec;
 
 pub use hardfork::ScrollHardfork;
@@ -56,6 +57,12 @@ pub trait ScrollHardforks: EthereumHardforks {
     /// Returns `true` if [`Galileo`](ScrollHardfork::Galileo) is active at given block timestamp.
     fn is_galileo_active_at_timestamp(&self, timestamp: u64) -> bool {
         self.scroll_fork_activation(ScrollHardfork::Galileo).active_at_timestamp(timestamp)
+    }
+
+    /// Returns `true` if [`GalileoV2`](ScrollHardfork::GalileoV2) is active at given block
+    /// timestamp.
+    fn is_galileo_v2_active_at_timestamp(&self, timestamp: u64) -> bool {
+        self.scroll_fork_activation(ScrollHardfork::GalileoV2).active_at_timestamp(timestamp)
     }
 }
 

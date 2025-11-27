@@ -78,15 +78,11 @@ mod tests {
     use scroll_alloy_consensus::{ScrollTransactionReceipt, ScrollTxEnvelope, ScrollTxType};
     use scroll_alloy_evm::{
         compute_compressed_size, compute_compression_ratio,
-        curie::{
-            BLOB_SCALAR_SLOT, COMMIT_SCALAR_SLOT, CURIE_L1_GAS_PRICE_ORACLE_BYTECODE,
-            CURIE_L1_GAS_PRICE_ORACLE_STORAGE, IS_CURIE_SLOT, L1_BLOB_BASE_FEE_SLOT,
-            L1_GAS_PRICE_ORACLE_ADDRESS,
-        },
-        feynman::{IS_FEYNMAN_SLOT, PENALTY_FACTOR_SLOT, PENALTY_THRESHOLD_SLOT},
+        curie::{CURIE_L1_GAS_PRICE_ORACLE_BYTECODE, CURIE_L1_GAS_PRICE_ORACLE_STORAGE},
+        gas_price_oracle::*,
         ScrollBlockExecutionCtx, ScrollBlockExecutor, ScrollEvm, ScrollTxCompressionInfos,
     };
-    use scroll_alloy_hardforks::ScrollHardforks;
+    use scroll_alloy_hardforks::{ForkCondition, ScrollHardfork, ScrollHardforks};
 
     const BLOCK_GAS_LIMIT: u64 = 10_000_000;
     const SCROLL_CHAIN_ID: u64 = 534352;
@@ -95,10 +91,7 @@ mod tests {
     const EUCLID_V2_BLOCK_NUMBER: u64 = 14907015;
     const EUCLID_V2_BLOCK_TIMESTAMP: u64 = 1745305200;
     const FEYNMAN_BLOCK_TIMESTAMP: u64 = 1755576000;
-
-    const L1_BASE_FEE_SLOT: U256 = U256::from_limbs([1, 0, 0, 0]);
-    const OVER_HEAD_SLOT: U256 = U256::from_limbs([2, 0, 0, 0]);
-    const SCALAR_SLOT: U256 = U256::from_limbs([3, 0, 0, 0]);
+    const GALILEO_BLOCK_TIMESTAMP: u64 = 1755576001; // TODO(thegaram): update to actual timestamp
 
     fn state() -> State<EmptyDBTyped<Infallible>> {
         let db = EmptyDBTyped::<Infallible>::new();
@@ -114,8 +107,10 @@ mod tests {
         ScrollRethReceiptBuilder,
         Arc<ScrollChainSpec>,
     > {
-        let chain_spec =
-            Arc::new(ScrollChainSpecBuilder::scroll_mainnet().build(ScrollChainConfig::mainnet()));
+        // build chain spec based on mainnet config, with some fork overrides
+        let spec_builder = ScrollChainSpecBuilder::scroll_mainnet()
+            .with_fork(ScrollHardfork::Galileo, ForkCondition::Timestamp(GALILEO_BLOCK_TIMESTAMP));
+        let chain_spec = Arc::new(spec_builder.build(ScrollChainConfig::mainnet()));
         let evm_config = ScrollEvmConfig::scroll(chain_spec.clone());
 
         let evm =
@@ -231,34 +226,48 @@ mod tests {
 
         // determine l1 gas oracle storage
         let l1_gas_oracle_storage =
-            if strategy.spec().is_feynman_active_at_timestamp(block_timestamp) {
+            if strategy.spec().is_galileo_active_at_timestamp(block_timestamp) {
                 vec![
-                    (L1_BLOB_BASE_FEE_SLOT, U256::from(1000)),
-                    (OVER_HEAD_SLOT, U256::from(1000)),
-                    (SCALAR_SLOT, U256::from(1000)),
-                    (L1_BLOB_BASE_FEE_SLOT, U256::from(10000)),
-                    (COMMIT_SCALAR_SLOT, U256::from(1000)),
-                    (BLOB_SCALAR_SLOT, U256::from(10000)),
-                    (IS_CURIE_SLOT, U256::from(1)),
-                    (PENALTY_THRESHOLD_SLOT, U256::from(1_000_000_000u64)),
-                    (PENALTY_FACTOR_SLOT, U256::from(1_000_000_000u64)),
-                    (IS_FEYNMAN_SLOT, U256::from(1)),
+                    (GPO_L1_BLOB_BASE_FEE_SLOT, U256::from(1000)),
+                    (GPO_OVERHEAD_SLOT, U256::from(1000)),
+                    (GPO_SCALAR_SLOT, U256::from(1000)),
+                    (GPO_L1_BLOB_BASE_FEE_SLOT, U256::from(10000)),
+                    (GPO_COMMIT_SCALAR_SLOT, U256::from(1000)),
+                    (GPO_BLOB_SCALAR_SLOT, U256::from(10000)),
+                    (GPO_IS_CURIE_SLOT, U256::from(1)),
+                    (GPO_PENALTY_THRESHOLD_SLOT, U256::from(1_000_000_000u64)),
+                    (GPO_PENALTY_FACTOR_SLOT, U256::from(5u64)), // apply high penalty
+                    (GPO_IS_FEYNMAN_SLOT, U256::from(1)),
+                    (GPO_IS_GALILEO_SLOT, U256::from(0)), // only activated in `GalileoV2`
+                ]
+            } else if strategy.spec().is_feynman_active_at_timestamp(block_timestamp) {
+                vec![
+                    (GPO_L1_BLOB_BASE_FEE_SLOT, U256::from(1000)),
+                    (GPO_OVERHEAD_SLOT, U256::from(1000)),
+                    (GPO_SCALAR_SLOT, U256::from(1000)),
+                    (GPO_L1_BLOB_BASE_FEE_SLOT, U256::from(10000)),
+                    (GPO_COMMIT_SCALAR_SLOT, U256::from(1000)),
+                    (GPO_BLOB_SCALAR_SLOT, U256::from(10000)),
+                    (GPO_IS_CURIE_SLOT, U256::from(1)),
+                    (GPO_PENALTY_THRESHOLD_SLOT, U256::from(1_000_000_000u64)),
+                    (GPO_PENALTY_FACTOR_SLOT, U256::from(1_000_000_000u64)),
+                    (GPO_IS_FEYNMAN_SLOT, U256::from(1)),
                 ]
             } else if strategy.spec().is_curie_active_at_block(block_number) {
                 vec![
-                    (L1_BLOB_BASE_FEE_SLOT, U256::from(1000)),
-                    (OVER_HEAD_SLOT, U256::from(1000)),
-                    (SCALAR_SLOT, U256::from(1000)),
-                    (L1_BLOB_BASE_FEE_SLOT, U256::from(10000)),
-                    (COMMIT_SCALAR_SLOT, U256::from(1000)),
-                    (BLOB_SCALAR_SLOT, U256::from(10000)),
-                    (IS_CURIE_SLOT, U256::from(1)),
+                    (GPO_L1_BLOB_BASE_FEE_SLOT, U256::from(1000)),
+                    (GPO_OVERHEAD_SLOT, U256::from(1000)),
+                    (GPO_SCALAR_SLOT, U256::from(1000)),
+                    (GPO_L1_BLOB_BASE_FEE_SLOT, U256::from(10000)),
+                    (GPO_COMMIT_SCALAR_SLOT, U256::from(1000)),
+                    (GPO_BLOB_SCALAR_SLOT, U256::from(10000)),
+                    (GPO_IS_CURIE_SLOT, U256::from(1)),
                 ]
             } else {
                 vec![
-                    (L1_BASE_FEE_SLOT, U256::from(1000)),
-                    (OVER_HEAD_SLOT, U256::from(1000)),
-                    (SCALAR_SLOT, U256::from(1000)),
+                    (GPO_L1_BASE_FEE_SLOT, U256::from(1000)),
+                    (GPO_OVERHEAD_SLOT, U256::from(1000)),
+                    (GPO_SCALAR_SLOT, U256::from(1000)),
                 ]
             }
             .into_iter()
@@ -304,34 +313,49 @@ mod tests {
 
         // determine l1 gas oracle storage
         let l1_gas_oracle_storage =
-            if strategy.spec().is_feynman_active_at_timestamp(block_timestamp) {
+            if strategy.spec().is_galileo_active_at_timestamp(block_timestamp) {
                 vec![
-                    (L1_BLOB_BASE_FEE_SLOT, U256::from(1000)),
-                    (OVER_HEAD_SLOT, U256::from(1000)),
-                    (SCALAR_SLOT, U256::from(1000)),
-                    (L1_BLOB_BASE_FEE_SLOT, U256::from(10000)),
-                    (COMMIT_SCALAR_SLOT, U256::from(1000)),
-                    (BLOB_SCALAR_SLOT, U256::from(10000)),
-                    (IS_CURIE_SLOT, U256::from(1)),
-                    (PENALTY_THRESHOLD_SLOT, U256::from(2_000_000_000u64)), // penalty if <2x
-                    (PENALTY_FACTOR_SLOT, U256::from(10_000_000_000u64)),   // 10x penalty
-                    (IS_FEYNMAN_SLOT, U256::from(1)),
+                    (GPO_L1_BLOB_BASE_FEE_SLOT, U256::from(1000)),
+                    (GPO_OVERHEAD_SLOT, U256::from(1000)),
+                    (GPO_SCALAR_SLOT, U256::from(1000)),
+                    (GPO_L1_BLOB_BASE_FEE_SLOT, U256::from(10000)),
+                    (GPO_COMMIT_SCALAR_SLOT, U256::from(1000)),
+                    (GPO_BLOB_SCALAR_SLOT, U256::from(10000)),
+                    (GPO_IS_CURIE_SLOT, U256::from(1)),
+                    (GPO_PENALTY_THRESHOLD_SLOT, U256::from(2_000_000_000u64)), // penalty if <2x
+                    (GPO_PENALTY_FACTOR_SLOT, U256::from(5u64)),                /* apply high
+                                                                                 * penalty */
+                    (GPO_IS_FEYNMAN_SLOT, U256::from(1)),
+                    (GPO_IS_GALILEO_SLOT, U256::from(0)), // only activated in `GalileoV2`
+                ]
+            } else if strategy.spec().is_feynman_active_at_timestamp(block_timestamp) {
+                vec![
+                    (GPO_L1_BLOB_BASE_FEE_SLOT, U256::from(1000)),
+                    (GPO_OVERHEAD_SLOT, U256::from(1000)),
+                    (GPO_SCALAR_SLOT, U256::from(1000)),
+                    (GPO_L1_BLOB_BASE_FEE_SLOT, U256::from(10000)),
+                    (GPO_COMMIT_SCALAR_SLOT, U256::from(1000)),
+                    (GPO_BLOB_SCALAR_SLOT, U256::from(10000)),
+                    (GPO_IS_CURIE_SLOT, U256::from(1)),
+                    (GPO_PENALTY_THRESHOLD_SLOT, U256::from(2_000_000_000u64)), // penalty if <2x
+                    (GPO_PENALTY_FACTOR_SLOT, U256::from(10_000_000_000u64)),   // 10x penalty
+                    (GPO_IS_FEYNMAN_SLOT, U256::from(1)),
                 ]
             } else if strategy.spec().is_curie_active_at_block(block_number) {
                 vec![
-                    (L1_BLOB_BASE_FEE_SLOT, U256::from(1000)),
-                    (OVER_HEAD_SLOT, U256::from(1000)),
-                    (SCALAR_SLOT, U256::from(1000)),
-                    (L1_BLOB_BASE_FEE_SLOT, U256::from(10000)),
-                    (COMMIT_SCALAR_SLOT, U256::from(1000)),
-                    (BLOB_SCALAR_SLOT, U256::from(10000)),
-                    (IS_CURIE_SLOT, U256::from(1)),
+                    (GPO_L1_BLOB_BASE_FEE_SLOT, U256::from(1000)),
+                    (GPO_OVERHEAD_SLOT, U256::from(1000)),
+                    (GPO_SCALAR_SLOT, U256::from(1000)),
+                    (GPO_L1_BLOB_BASE_FEE_SLOT, U256::from(10000)),
+                    (GPO_COMMIT_SCALAR_SLOT, U256::from(1000)),
+                    (GPO_BLOB_SCALAR_SLOT, U256::from(10000)),
+                    (GPO_IS_CURIE_SLOT, U256::from(1)),
                 ]
             } else {
                 vec![
-                    (L1_BASE_FEE_SLOT, U256::from(1000)),
-                    (OVER_HEAD_SLOT, U256::from(1000)),
-                    (SCALAR_SLOT, U256::from(1000)),
+                    (GPO_L1_BASE_FEE_SLOT, U256::from(1000)),
+                    (GPO_OVERHEAD_SLOT, U256::from(1000)),
+                    (GPO_SCALAR_SLOT, U256::from(1000)),
                 ]
             }
             .into_iter()
@@ -500,6 +524,20 @@ mod tests {
     }
 
     #[test]
+    fn test_execute_transaction_l1_message_galileo_fork() -> eyre::Result<()> {
+        // Execute L1 message on galileo block
+        let expected_l1_fee = U256::ZERO;
+        execute_transaction(
+            ScrollTxType::L1Message,
+            CURIE_BLOCK_NUMBER + 1,
+            GALILEO_BLOCK_TIMESTAMP,
+            expected_l1_fee,
+            None,
+        )?;
+        Ok(())
+    }
+
+    #[test]
     fn test_execute_transactions_legacy_curie_fork() -> eyre::Result<()> {
         // Execute legacy transaction on curie block
         let expected_l1_fee = U256::from(10);
@@ -529,6 +567,20 @@ mod tests {
             ScrollTxType::Legacy,
             CURIE_BLOCK_NUMBER + 1,
             FEYNMAN_BLOCK_TIMESTAMP,
+            expected_l1_fee,
+            None,
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_execute_transactions_legacy_galileo_fork() -> eyre::Result<()> {
+        // Execute legacy transaction on galileo block
+        let expected_l1_fee = U256::from(182);
+        execute_transaction(
+            ScrollTxType::Legacy,
+            CURIE_BLOCK_NUMBER + 1,
+            GALILEO_BLOCK_TIMESTAMP,
             expected_l1_fee,
             None,
         )?;

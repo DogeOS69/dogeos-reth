@@ -6,10 +6,12 @@
 
 mod block;
 pub use block::{
-    curie, feynman, EvmExt, ReceiptBuilderCtx, ScrollBlockExecutionCtx, ScrollBlockExecutor,
-    ScrollBlockExecutorFactory, ScrollReceiptBuilder, ScrollTxCompressionInfo,
+    curie, feynman, galileo_v2, EvmExt, ReceiptBuilderCtx, ScrollBlockExecutionCtx,
+    ScrollBlockExecutor, ScrollBlockExecutorFactory, ScrollReceiptBuilder, ScrollTxCompressionInfo,
     ScrollTxCompressionInfos,
 };
+
+pub mod gas_price_oracle;
 
 mod tx;
 pub use tx::{
