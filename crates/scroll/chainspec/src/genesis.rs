@@ -126,6 +126,8 @@ pub struct ScrollChainConfig {
     /// The L1 configuration.
     /// This field encapsulates specific settings and parameters required for L1
     pub l1_config: L1Config,
+    /// Whether the buffer check for L1 data fee is enabled.
+    pub l1_data_fee_buffer_check: bool,
 }
 
 impl ScrollChainConfig {
@@ -141,6 +143,7 @@ impl ScrollChainConfig {
             fee_vault_address: Some(SCROLL_FEE_VAULT_ADDRESS),
             max_tx_payload_bytes_per_block: MAX_TX_PAYLOAD_BYTES_PER_BLOCK,
             l1_config: SCROLL_MAINNET_L1_CONFIG,
+            l1_data_fee_buffer_check: false,
         }
     }
 
@@ -150,6 +153,7 @@ impl ScrollChainConfig {
             fee_vault_address: Some(SCROLL_FEE_VAULT_ADDRESS),
             max_tx_payload_bytes_per_block: MAX_TX_PAYLOAD_BYTES_PER_BLOCK,
             l1_config: SCROLL_SEPOLIA_L1_CONFIG,
+            l1_data_fee_buffer_check: false,
         }
     }
 
@@ -159,6 +163,7 @@ impl ScrollChainConfig {
             fee_vault_address: Some(SCROLL_FEE_VAULT_ADDRESS),
             max_tx_payload_bytes_per_block: MAX_TX_PAYLOAD_BYTES_PER_BLOCK,
             l1_config: SCROLL_DEV_L1_CONFIG,
+            l1_data_fee_buffer_check: false,
         }
     }
 }
@@ -232,6 +237,7 @@ mod tests {
           "scroll": {
             "feeVaultAddress": "0x5300000000000000000000000000000000000005",
             "maxTxPayloadBytesPerBlock": 122880,
+            "l1DataFeeBufferCheck": false,
             "l1Config": {
                 "l1ChainId": 1,
                 "l1MessageQueueAddress": "0x0d7E906BD9cAFa154b048cFa766Cc1E54E39AF9B",
@@ -273,6 +279,7 @@ mod tests {
                     scroll_chain_address: address!("a13BAF47339d63B743e7Da8741db5456DAc1E556"),
                     num_l1_messages_per_block: 10,
                 },
+                l1_data_fee_buffer_check: false,
             },
         };
         assert_eq!(chain_info, expected);
