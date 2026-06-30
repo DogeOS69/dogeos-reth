@@ -3,11 +3,14 @@ use revm::{database::State, Database};
 
 const L2_MESSAGE_QUEUE_ADDRESS: Address = address!("0x5300000000000000000000000000000000000000");
 const WITHDRAW_TRIE_ROOT_SLOT: U256 = U256::ZERO;
+const NEXT_MESSAGE_INDEX_SLOT: U256 = U256::from_limbs([1, 0, 0, 0]);
 
 /// Instance that implements the trait can load the `L2MessageQueue` withdraw root in state.
 pub trait LoadWithdrawRoot<DB: Database> {
     /// Load the withdrawal root.
     fn load_withdraw_root(&mut self) -> Result<(), DB::Error>;
+    /// Load the withdrawal root.
+    fn load_next_message_index(&mut self) -> Result<(), DB::Error>;
 }
 
 impl<DB: Database> LoadWithdrawRoot<DB> for State<DB> {
@@ -16,6 +19,15 @@ impl<DB: Database> LoadWithdrawRoot<DB> for State<DB> {
         // loaded from database if it is not already know.
         self.load_cache_account(L2_MESSAGE_QUEUE_ADDRESS)?;
         let _ = revm::Database::storage(self, L2_MESSAGE_QUEUE_ADDRESS, WITHDRAW_TRIE_ROOT_SLOT);
+
+        Ok(())
+    }
+
+    fn load_next_message_index(&mut self) -> Result<(), DB::Error> {
+        // we load the account in cache and query the storage slot. The storage slot will only be
+        // loaded from database if it is not already know.
+        self.load_cache_account(L2_MESSAGE_QUEUE_ADDRESS)?;
+        let _ = revm::Database::storage(self, L2_MESSAGE_QUEUE_ADDRESS, NEXT_MESSAGE_INDEX_SLOT);
 
         Ok(())
     }

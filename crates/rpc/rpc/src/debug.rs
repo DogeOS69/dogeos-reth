@@ -45,7 +45,7 @@ use revm::{context::Block, context_interface::Transaction, state::EvmState, Data
 use revm_inspectors::tracing::{
     FourByteInspector, MuxInspector, TracingInspector, TracingInspectorConfig, TransactionContext,
 };
-use std::sync::Arc;
+use std::{mem, sync::Arc};
 use tokio::sync::{AcquireError, OwnedSemaphorePermit};
 
 /// `debug` API implementation.
@@ -642,6 +642,9 @@ where
         let this = self.clone();
         let block_number = block.header().number();
 
+        #[cfg(feature = "scroll")]
+        let chain_spec = self.provider().chain_spec();
+
         let (mut exec_witness, lowest_block_number) = self
             .eth_api()
             .spawn_with_state_at_block(block.parent_hash().into(), move |state_provider| {
@@ -650,18 +653,28 @@ where
 
                 let mut witness_record = ExecutionWitnessRecord::default();
 
-                let mut withdraw_root_res: Result<_, reth_errors::ProviderError> = Ok(());
+                let mut extra_loads_result: Result<_, reth_errors::ProviderError> = Ok(());
                 let _ = block_executor
                     .execute_with_state_closure(&block, |statedb: &mut State<_>| {
                         #[cfg(feature = "scroll")]
                         {
-                            use reth_scroll_evm::LoadWithdrawRoot;
-                            withdraw_root_res = statedb.load_withdraw_root();
+                            use reth_chainspec::Hardforks;
+                            use reth_scroll_evm::{LoadWithdrawRoot, ScrollHardfork};
+
+                            extra_loads_result = statedb.load_withdraw_root();
+
+                            if chain_spec.is_fork_active_at_timestamp(
+                                ScrollHardfork::Tsuki,
+                                block.timestamp(),
+                            ) && extra_loads_result.is_ok()
+                            {
+                                extra_loads_result = statedb.load_next_message_index();
+                            }
                         }
                         witness_record.record_executed_state(statedb);
                     })
                     .map_err(|err| EthApiError::Internal(err.into()))?;
-                withdraw_root_res?;
+                extra_loads_result?;
 
                 let ExecutionWitnessRecord { hashed_state, codes, keys, lowest_block_number } =
                     witness_record;
