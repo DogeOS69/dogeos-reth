@@ -120,6 +120,11 @@ pub fn spec_id_at_timestamp_and_number(
     chain_spec: impl ScrollHardforks,
 ) -> ScrollSpecId {
     if chain_spec
+        .scroll_fork_activation(ScrollHardfork::Tsuki)
+        .active_at_timestamp_or_number(timestamp, number)
+    {
+        ScrollSpecId::TSUKI
+    } else if chain_spec
         .scroll_fork_activation(ScrollHardfork::GalileoV2)
         .active_at_timestamp_or_number(timestamp, number) ||
         chain_spec

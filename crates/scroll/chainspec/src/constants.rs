@@ -120,3 +120,56 @@ pub const SCROLL_EIP1559_BASE_FEE_MAX_CHANGE_DENOMINATOR_FEYNMAN: u128 = 8;
 
 /// The scroll EIP1559 default elasticity multiplier for Feynman.
 pub const SCROLL_EIP1559_DEFAULT_ELASTICITY_MULTIPLIER_FEYNMAN: u128 = 2;
+
+/// The maximum allowed l1 messages per block for Dogeos mainnet.
+pub const DOGEOS_MAINNET_MAX_L1_MESSAGES: u64 = 10;
+
+/// The L1 configuration for Dogeos mainnet.
+/// FIXME
+pub const DOGEOS_MAINNET_L1_CONFIG: L1Config = L1Config {
+    l1_chain_id: alloy_chains::NamedChain::Goerli as u64,
+    l1_message_queue_address: SCROLL_DEV_L1_MESSAGE_QUEUE_ADDRESS,
+    l1_message_queue_v2_address: SCROLL_DEV_L1_MESSAGE_QUEUE_V2_ADDRESS,
+    scroll_chain_address: SCROLL_DEV_L1_PROXY_ADDRESS,
+    l2_system_config_address: SCROLL_DEV_L2_SYSTEM_CONFIG_CONTRACT_ADDRESS,
+    num_l1_messages_per_block: DOGEOS_MAINNET_MAX_L1_MESSAGES,
+};
+
+/// The Dogeos Mainnet genesis hash
+/// FIXME
+pub const DOGEOS_MAINNET_GENESIS_HASH: B256 =
+    b256!("0000000000000000000000000000000000000000000000000000000000000000");
+
+/// The L1 message queue address for Dogeos Chikyū.
+pub const DOGEOS_CHIKYU_L1_MESSAGE_QUEUE_ADDRESS: Address =
+    address!("3396BeD5adB7d83CC6C424264d229478556d3C02");
+
+/// The L1 message queue v2 address for Dogeos Chikyū.
+pub const DOGEOS_CHIKYU_L1_MESSAGE_QUEUE_V2_ADDRESS: Address =
+    address!("6B72155A3aC485Ea8C4CCacF243F6e634D4869bD");
+
+/// The L1 proxy address for Dogeos Chikyū.
+pub const DOGEOS_CHIKYU_L1_PROXY_ADDRESS: Address =
+    address!("8cB645a973e0C595aaAb55361fe917915b4E656c");
+
+/// The system contract on Dogeos Chikyū.
+pub const DOGEOS_CHIKYU_L2_SYSTEM_CONFIG_CONTRACT_ADDRESS: Address =
+    address!("2669B071E88e272CBDA1e12182D8C754CB737400");
+
+/// The maximum allowed l1 messages per block for Dogeos Chikyū.
+pub const DOGEOS_CHIKYU_MAX_L1_MESSAGES: u64 = 10;
+
+/// The L1 configuration for Dogeos Chikyū testnet.
+/// FIXME
+pub const DOGEOS_CHIKYU_L1_CONFIG: L1Config = L1Config {
+    l1_chain_id: alloy_chains::NamedChain::Goerli as u64,
+    l1_message_queue_address: DOGEOS_CHIKYU_L1_MESSAGE_QUEUE_ADDRESS,
+    l1_message_queue_v2_address: DOGEOS_CHIKYU_L1_MESSAGE_QUEUE_V2_ADDRESS,
+    scroll_chain_address: DOGEOS_CHIKYU_L1_PROXY_ADDRESS,
+    l2_system_config_address: DOGEOS_CHIKYU_L2_SYSTEM_CONFIG_CONTRACT_ADDRESS,
+    num_l1_messages_per_block: DOGEOS_CHIKYU_MAX_L1_MESSAGES,
+};
+
+/// The Dogeos Chikyū genesis hash
+pub const DOGEOS_CHIKYU_GENESIS_HASH: B256 =
+    b256!("931467859726d2ca9b4401919bb54e3fffb41e24a0a3ec9ba9141e2d38a6357e");

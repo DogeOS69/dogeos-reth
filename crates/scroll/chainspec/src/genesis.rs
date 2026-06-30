@@ -2,8 +2,8 @@
 
 use crate::{
     constants::{
-        MAX_TX_PAYLOAD_BYTES_PER_BLOCK, SCROLL_FEE_VAULT_ADDRESS, SCROLL_MAINNET_L1_CONFIG,
-        SCROLL_SEPOLIA_L1_CONFIG,
+        DOGEOS_CHIKYU_L1_CONFIG, DOGEOS_MAINNET_L1_CONFIG, MAX_TX_PAYLOAD_BYTES_PER_BLOCK,
+        SCROLL_FEE_VAULT_ADDRESS, SCROLL_MAINNET_L1_CONFIG, SCROLL_SEPOLIA_L1_CONFIG,
     },
     SCROLL_DEV_L1_CONFIG,
 };
@@ -73,6 +73,8 @@ pub struct ScrollHardforkInfo {
     pub galileo_time: Option<u64>,
     /// galileoV2 hardfork timestamp
     pub galileo_v2_time: Option<u64>,
+    /// tsuki hardfork timestamp
+    pub tsuki_time: Option<u64>,
 }
 
 impl ScrollHardforkInfo {
@@ -166,6 +168,26 @@ impl ScrollChainConfig {
             l1_data_fee_buffer_check: false,
         }
     }
+
+    /// Returns the [`ScrollChainConfig`] for Dogeos mainnet.
+    pub const fn dogeos_mainnet() -> Self {
+        Self {
+            fee_vault_address: Some(SCROLL_FEE_VAULT_ADDRESS),
+            max_tx_payload_bytes_per_block: MAX_TX_PAYLOAD_BYTES_PER_BLOCK,
+            l1_config: DOGEOS_MAINNET_L1_CONFIG,
+            l1_data_fee_buffer_check: false,
+        }
+    }
+
+    /// Returns the [`ScrollChainConfig`] for Dogeos Chikyū.
+    pub const fn dogeos_chikyu() -> Self {
+        Self {
+            fee_vault_address: Some(SCROLL_FEE_VAULT_ADDRESS),
+            max_tx_payload_bytes_per_block: MAX_TX_PAYLOAD_BYTES_PER_BLOCK,
+            l1_config: DOGEOS_CHIKYU_L1_CONFIG,
+            l1_data_fee_buffer_check: false,
+        }
+    }
 }
 
 impl TryFrom<&OtherFields> for ScrollChainConfig {
@@ -198,7 +220,8 @@ mod tests {
           "euclidTime": 11,
           "feynmanTime": 100,
           "galileoTime": 110,
-          "galileoV2Time": 120
+          "galileoV2Time": 120,
+          "tsukiTime": 130
         }
         "#;
 
@@ -218,6 +241,7 @@ mod tests {
                 feynman_time: Some(100),
                 galileo_time: Some(110),
                 galileo_v2_time: Some(120),
+                tsuki_time: Some(130),
             }
         );
     }
@@ -234,6 +258,7 @@ mod tests {
           "feynmanTime": 100,
           "galileoTime": 110,
           "galileoV2Time": 120,
+          "tsukiTime": 130,
           "scroll": {
             "feeVaultAddress": "0x5300000000000000000000000000000000000005",
             "maxTxPayloadBytesPerBlock": 122880,
@@ -265,6 +290,7 @@ mod tests {
                 feynman_time: Some(100),
                 galileo_time: Some(110),
                 galileo_v2_time: Some(120),
+                tsuki_time: Some(130),
             }),
             scroll_chain_config: ScrollChainConfig {
                 fee_vault_address: Some(address!("5300000000000000000000000000000000000005")),

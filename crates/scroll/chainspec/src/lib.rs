@@ -35,6 +35,10 @@ extern crate alloc;
 
 mod constants;
 pub use constants::{
+    DOGEOS_CHIKYU_GENESIS_HASH, DOGEOS_CHIKYU_L1_CONFIG, DOGEOS_CHIKYU_L1_MESSAGE_QUEUE_ADDRESS,
+    DOGEOS_CHIKYU_L1_MESSAGE_QUEUE_V2_ADDRESS, DOGEOS_CHIKYU_L1_PROXY_ADDRESS,
+    DOGEOS_CHIKYU_L2_SYSTEM_CONFIG_CONTRACT_ADDRESS, DOGEOS_CHIKYU_MAX_L1_MESSAGES,
+    DOGEOS_MAINNET_GENESIS_HASH, DOGEOS_MAINNET_L1_CONFIG, DOGEOS_MAINNET_MAX_L1_MESSAGES,
     MAX_TX_PAYLOAD_BYTES_PER_BLOCK, SCROLL_BASE_FEE_PARAMS_FEYNMAN, SCROLL_DEV_L1_CONFIG,
     SCROLL_DEV_L1_MESSAGE_QUEUE_ADDRESS, SCROLL_DEV_L1_MESSAGE_QUEUE_V2_ADDRESS,
     SCROLL_DEV_L1_PROXY_ADDRESS, SCROLL_DEV_L2_SYSTEM_CONFIG_CONTRACT_ADDRESS,
@@ -56,13 +60,19 @@ pub use genesis::{ScrollChainConfig, ScrollChainInfo};
 
 // convenience re-export of the chain spec provider.
 pub use reth_chainspec::ChainSpecProvider;
-use reth_scroll_forks::SCROLL_MAINNET_HARDFORKS;
+use reth_scroll_forks::DOGEOS_MAINNET_HARDFORKS;
 
 mod scroll;
 pub use scroll::SCROLL_MAINNET;
 
 mod scroll_sepolia;
 pub use scroll_sepolia::SCROLL_SEPOLIA;
+
+mod dogeos;
+pub use dogeos::DOGEOS_MAINNET;
+
+mod chikyu;
+pub use chikyu::DOGEOS_CHIKYU;
 
 /// Chain spec builder for a Scroll chain.
 #[derive(Debug, Default, From)]
@@ -89,6 +99,26 @@ impl ScrollChainSpecBuilder {
                 .chain(SCROLL_SEPOLIA.chain)
                 .genesis(SCROLL_SEPOLIA.genesis.clone())
                 .with_forks(SCROLL_SEPOLIA.hardforks.clone()),
+        }
+    }
+
+    /// Construct a new builder from the dogeos mainnet chain spec.
+    pub fn dogeos_mainnet() -> Self {
+        Self {
+            inner: ChainSpecBuilder::default()
+                .chain(DOGEOS_MAINNET.chain)
+                .genesis(DOGEOS_MAINNET.genesis.clone())
+                .with_forks(DOGEOS_MAINNET.hardforks.clone()),
+        }
+    }
+
+    /// Construct a new builder from the dogeos chikyu chain spec.
+    pub fn dogeos_chikyu() -> Self {
+        Self {
+            inner: ChainSpecBuilder::default()
+                .chain(DOGEOS_CHIKYU.chain)
+                .genesis(DOGEOS_CHIKYU.genesis.clone())
+                .with_forks(DOGEOS_CHIKYU.hardforks.clone()),
         }
     }
 }
@@ -192,6 +222,13 @@ impl ScrollChainSpecBuilder {
     pub fn galileo_v2_activated(mut self) -> Self {
         self = self.galileo_activated();
         self.inner = self.inner.with_fork(ScrollHardfork::GalileoV2, ForkCondition::Timestamp(0));
+        self
+    }
+
+    /// Enable `Tsuki` at genesis
+    pub fn tsuki_activated(mut self) -> Self {
+        self = self.galileo_v2_activated();
+        self.inner = self.inner.with_fork(ScrollHardfork::Tsuki, ForkCondition::Timestamp(0));
         self
     }
 
@@ -454,6 +491,7 @@ impl From<Genesis> for ScrollChainSpec {
             (ScrollHardfork::Feynman.boxed(), hard_fork_info.feynman_time),
             (ScrollHardfork::Galileo.boxed(), hard_fork_info.galileo_time),
             (ScrollHardfork::GalileoV2.boxed(), hard_fork_info.galileo_v2_time),
+            (ScrollHardfork::Tsuki.boxed(), hard_fork_info.tsuki_time),
         ];
 
         let mut time_hardforks = time_hardfork_opts
@@ -466,7 +504,7 @@ impl From<Genesis> for ScrollChainSpec {
         block_hardforks.append(&mut time_hardforks);
 
         // Ordered Hardforks
-        let mainnet_hardforks = SCROLL_MAINNET_HARDFORKS.clone();
+        let mainnet_hardforks = DOGEOS_MAINNET_HARDFORKS.clone();
         let mainnet_order = mainnet_hardforks.forks_iter();
 
         let mut ordered_hardforks = Vec::with_capacity(block_hardforks.len());
@@ -530,6 +568,26 @@ mod tests {
         assert_eq!(
             b256!("04414a71425e8ef2632e99a4b148c69d69bab8ffa47ee814231331a33d073df2"),
             scroll_sepolia.genesis_hash()
+        );
+    }
+
+    #[test]
+    fn dogeos_mainnet_genesis_hash() {
+        let dogeos_mainnet =
+            ScrollChainSpecBuilder::dogeos_mainnet().build(ScrollChainConfig::dogeos_mainnet());
+        assert_eq!(
+            b256!("0000000000000000000000000000000000000000000000000000000000000000"), // FIXME
+            dogeos_mainnet.genesis_hash()
+        );
+    }
+
+    #[test]
+    fn dogeos_chikyu_genesis_hash() {
+        let dogeos_mainnet =
+            ScrollChainSpecBuilder::dogeos_chikyu().build(ScrollChainConfig::dogeos_chikyu());
+        assert_eq!(
+            b256!("931467859726d2ca9b4401919bb54e3fffb41e24a0a3ec9ba9141e2d38a6357e"), // FIXME
+            dogeos_mainnet.genesis_hash()
         );
     }
 
@@ -757,6 +815,7 @@ mod tests {
               "feynmanTime": 34,
               "galileoTime": 35,
               "galileoV2Time": 36,
+              "tsukiTime": 37,
               "scroll": {
                   "feeVaultAddress": "0x5300000000000000000000000000000000000005",
                   "maxTxPayloadBytesPerBlock": 122880,
@@ -792,6 +851,8 @@ mod tests {
         assert_eq!(actual_galileo_timestamp, Some(serde_json::Value::from(35)).as_ref());
         let actual_galileo_v2_timestamp = genesis.config.extra_fields.get("galileoV2Time");
         assert_eq!(actual_galileo_v2_timestamp, Some(serde_json::Value::from(36)).as_ref());
+        let actual_tsuki_timestamp = genesis.config.extra_fields.get("tsukiTime");
+        assert_eq!(actual_tsuki_timestamp, Some(serde_json::Value::from(37)).as_ref());
 
         let scroll_object = genesis.config.extra_fields.get("scroll").unwrap();
         assert_eq!(
@@ -822,6 +883,7 @@ mod tests {
         assert!(!chain_spec.is_fork_active_at_timestamp(ScrollHardfork::Feynman, 0));
         assert!(!chain_spec.is_fork_active_at_timestamp(ScrollHardfork::Galileo, 0));
         assert!(!chain_spec.is_fork_active_at_timestamp(ScrollHardfork::GalileoV2, 0));
+        assert!(!chain_spec.is_fork_active_at_timestamp(ScrollHardfork::Tsuki, 0));
 
         assert!(chain_spec.is_fork_active_at_block(ScrollHardfork::Bernoulli, 10));
         assert!(chain_spec.is_fork_active_at_block(ScrollHardfork::Curie, 20));
@@ -832,6 +894,7 @@ mod tests {
         assert!(chain_spec.is_fork_active_at_timestamp(ScrollHardfork::Feynman, 34));
         assert!(chain_spec.is_fork_active_at_timestamp(ScrollHardfork::Galileo, 35));
         assert!(chain_spec.is_fork_active_at_timestamp(ScrollHardfork::GalileoV2, 36));
+        assert!(chain_spec.is_fork_active_at_timestamp(ScrollHardfork::Tsuki, 37));
     }
 
     #[test]
@@ -861,6 +924,7 @@ mod tests {
                     (String::from("feynmanTime"), 0.into()),
                     (String::from("galileoTime"), 0.into()),
                     (String::from("galileoV2Time"), 0.into()),
+                    (String::from("tsukiTime"), 0.into()),
                     (
                         String::from("scroll"),
                         serde_json::json!({
@@ -907,6 +971,7 @@ mod tests {
             ScrollHardfork::Feynman.boxed(),
             ScrollHardfork::Galileo.boxed(),
             ScrollHardfork::GalileoV2.boxed(),
+            ScrollHardfork::Tsuki.boxed(),
         ];
 
         assert!(expected_hardforks

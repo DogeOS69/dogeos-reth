@@ -64,6 +64,12 @@ pub trait ScrollHardforks: EthereumHardforks {
     fn is_galileo_v2_active_at_timestamp(&self, timestamp: u64) -> bool {
         self.scroll_fork_activation(ScrollHardfork::GalileoV2).active_at_timestamp(timestamp)
     }
+
+    /// Returns `true` if [`Tsuki`](ScrollHardfork::Tsuki) is active at given block
+    /// timestamp.
+    fn is_tsuki_active_at_timestamp(&self, timestamp: u64) -> bool {
+        self.scroll_fork_activation(ScrollHardfork::Tsuki).active_at_timestamp(timestamp)
+    }
 }
 
 /// A type allowing to configure activation [`ForkCondition`]s for a given list of
@@ -90,6 +96,16 @@ impl ScrollChainHardforks {
     /// Creates a new [`ScrollChainHardforks`] with Scroll Sepolia configuration.
     pub fn scroll_sepolia() -> Self {
         Self::new(ScrollHardfork::scroll_sepolia())
+    }
+
+    /// Creates a new [`ScrollChainHardforks`] with Dogeos Chikyū testnet configuration.
+    pub fn dogeos_chikyu() -> Self {
+        Self::new(ScrollHardfork::dogeos_chikyu())
+    }
+
+    /// Creates a new [`ScrollChainHardforks`] with Dogeos mainnet configuration.
+    pub fn dogeos_mainnet() -> Self {
+        Self::new(ScrollHardfork::dogeos_mainnet())
     }
 }
 

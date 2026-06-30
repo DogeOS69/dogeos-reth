@@ -252,6 +252,18 @@ mod tests {
     }
 
     #[test]
+    fn test_spec_at_tsuki_head() {
+        let config = ScrollEvmConfig::<_, ScrollPrimitives, _>::new(
+            ScrollChainSpecBuilder::dogeos_mainnet()
+                .build(ScrollChainConfig::dogeos_mainnet())
+                .into(),
+            ScrollRethReceiptBuilder::default(),
+        );
+
+        assert_eq!(config.spec_id_at_timestamp_and_number(0, 0), ScrollSpecId::TSUKI);
+    }
+
+    #[test]
     fn test_fill_cfg_env() -> eyre::Result<()> {
         let config = ScrollEvmConfig::<_, ScrollPrimitives, _>::new(
             ScrollChainSpecBuilder::scroll_mainnet().build(ScrollChainConfig::mainnet()).into(),
