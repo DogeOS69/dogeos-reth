@@ -1,7 +1,10 @@
 use alloy_primitives::U256;
 
-/// The maximum value Rollup fee.
-pub const MAX_ROLLUP_FEE: U256 = U256::from_limbs([u64::MAX, 0, 0, 0]);
+/// The maximum value Rollup fee before the Tsuki hardfork.
+pub const MAX_ROLLUP_FEE_PRE_TSUKI: U256 = U256::from_limbs([u64::MAX, 0, 0, 0]);
+
+/// The maximum value Rollup fee after the Tsuki hardfork.
+pub const MAX_ROLLUP_FEE_TSUKI: U256 = U256::from_limbs([u64::MAX, u32::MAX as u64, 0, 0]);
 
 /// The block difficulty for in turn signing in the Clique consensus.
 pub const CLIQUE_IN_TURN_DIFFICULTY: U256 = U256::from_limbs([2, 0, 0, 0]);

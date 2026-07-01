@@ -6,7 +6,7 @@ use reth_primitives_traits::{
     transaction::error::InvalidTransactionError, Block, GotExpected, SealedBlock,
 };
 use reth_revm::database::StateProviderDatabase;
-use reth_scroll_consensus::MAX_ROLLUP_FEE;
+use reth_scroll_consensus::{MAX_ROLLUP_FEE_PRE_TSUKI, MAX_ROLLUP_FEE_TSUKI};
 use reth_scroll_evm::{
     compute_compressed_size, compute_compression_ratio, spec_id_at_timestamp_and_number,
     RethL1BlockInfo,
@@ -218,8 +218,15 @@ where
                     return TransactionValidationOutcome::Error(*valid_tx.hash(), Box::new(err))
                 }
             };
-            // Check rollup fee is under u64::MAX.
-            if l1_data_fee >= MAX_ROLLUP_FEE {
+
+            let max_rollup_fee =
+                if self.chain_spec().is_tsuki_active_at_timestamp(self.block_timestamp()) {
+                    MAX_ROLLUP_FEE_TSUKI
+                } else {
+                    MAX_ROLLUP_FEE_PRE_TSUKI
+                };
+            // Check rollup fee is under max_rollup_fee.
+            if l1_data_fee >= max_rollup_fee {
                 return TransactionValidationOutcome::Invalid(
                     valid_tx.into_transaction(),
                     InvalidTransactionError::GasUintOverflow.into(),
