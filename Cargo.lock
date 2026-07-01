@@ -11464,7 +11464,7 @@ dependencies = [
 [[package]]
 name = "revm-scroll"
 version = "0.1.0"
-source = "git+https://github.com/DogeOS69/dogeos-revm?rev=f6250e2#f6250e2147f54a5a2ad78e707bafe2e3f7978767"
+source = "git+https://github.com/DogeOS69/dogeos-revm?rev=0b53fea#0b53fea127862c994193d64a3e4ecb88aa4d3321"
 dependencies = [
  "auto_impl",
  "enumn",
