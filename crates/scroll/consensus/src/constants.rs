@@ -1,9 +1,9 @@
 use alloy_primitives::U256;
 
-/// The maximum value Rollup fee before the Tsuki hardfork.
+/// Rollup fees greater than or equal to this pre-Tsuki u64 saturation ceiling overflow.
 pub const MAX_ROLLUP_FEE_PRE_TSUKI: U256 = U256::from_limbs([u64::MAX, 0, 0, 0]);
 
-/// The maximum value Rollup fee after the Tsuki hardfork.
+/// Rollup fees greater than or equal to this Tsuki u96 saturation ceiling overflow.
 pub const MAX_ROLLUP_FEE_TSUKI: U256 = U256::from_limbs([u64::MAX, u32::MAX as u64, 0, 0]);
 
 /// The block difficulty for in turn signing in the Clique consensus.
