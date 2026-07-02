@@ -154,17 +154,21 @@ mod tests {
         noop::NoopProvider,
         test_utils::{ExtendedAccount, MockEthProvider},
     };
-    use reth_scroll_chainspec::{ScrollChainSpec, SCROLL_DEV, SCROLL_MAINNET};
+    use reth_scroll_chainspec::{
+        ScrollChainConfig, ScrollChainSpec, ScrollChainSpecBuilder, SCROLL_DEV, SCROLL_MAINNET,
+    };
     use reth_scroll_primitives::{ScrollBlock, ScrollPrimitives};
     use reth_scroll_txpool::ScrollPooledTransaction;
     use reth_tasks::TaskManager;
     use reth_transaction_pool::{
         blobstore::NoopBlobStore,
-        error::{InvalidPoolTransactionError, PoolErrorKind},
+        error::{InvalidPoolTransactionError, PoolErrorKind, PoolResult},
+        pool::AddedTransactionOutcome,
         PoolConfig, TransactionOrigin, TransactionPool,
     };
     use scroll_alloy_consensus::{ScrollTxEnvelope, TxL1Message};
     use scroll_alloy_evm::gas_price_oracle::L1_GAS_PRICE_ORACLE_ADDRESS;
+    use std::sync::Arc;
 
     async fn pool() -> (
         ScrollTransactionPool<NoopProvider<ScrollChainSpec, ScrollPrimitives>, DiskFileBlobStore>,
@@ -191,6 +195,75 @@ mod tests {
             config,
         );
         (pool_builder.build_pool(&ctx).await.unwrap(), manager)
+    }
+
+    fn galileo_v2_chain_spec(tsuki_active: bool) -> Arc<ScrollChainSpec> {
+        let builder = if tsuki_active {
+            ScrollChainSpecBuilder::scroll_mainnet().tsuki_activated()
+        } else {
+            ScrollChainSpecBuilder::scroll_mainnet().galileo_v2_activated()
+        };
+        Arc::new(builder.build(ScrollChainConfig::mainnet()))
+    }
+
+    fn rollup_fee_between_u64_and_u96_cap_storage() -> impl Iterator<Item = (B256, U256)> {
+        [
+            // fee_per_byte = exec_scalar * l1_base_fee = 1e27.
+            (1u64, U256::from(1_000_000_000u64)),
+            (5, U256::ZERO),
+            (6, U256::from(1_000_000_000_000_000_000u128)),
+            (7, U256::ZERO),
+            // Keep the Galileo penalty term at zero so the raw fee stays below u96::MAX.
+            (10, U256::MAX),
+        ]
+        .into_iter()
+        .map(|(slot, value)| (B256::from(U256::from(slot)), value))
+    }
+
+    async fn add_rollup_fee_cap_boundary_transaction(
+        chain_spec: Arc<ScrollChainSpec>,
+    ) -> PoolResult<AddedTransactionOutcome> {
+        let handle = tokio::runtime::Handle::current();
+        let manager = TaskManager::new(handle);
+        let blob_store = NoopBlobStore::default();
+        let signer = Default::default();
+        let client = MockEthProvider::<ScrollPrimitives, _>::new().with_chain_spec(chain_spec);
+        let hash = B256::random();
+
+        client.add_header(hash, Header::default());
+        client.add_block(hash, ScrollBlock::default());
+        client.add_account(signer, ExtendedAccount::new(0, U256::MAX));
+        client.add_account(
+            L1_GAS_PRICE_ORACLE_ADDRESS,
+            ExtendedAccount::new(0, U256::ZERO)
+                .extend_storage(rollup_fee_between_u64_and_u96_cap_storage()),
+        );
+
+        let validator = TransactionValidationTaskExecutor::eth_builder(client)
+            .no_eip4844()
+            .build_with_tasks(manager.executor(), blob_store)
+            .map(|validator| {
+                ScrollTransactionValidator::new(validator).require_l1_data_gas_fee(true)
+            });
+
+        let pool = ScrollTransactionPool::new(
+            validator,
+            CoinbaseTipOrdering::<ScrollPooledTransaction>::default(),
+            NoopBlobStore::default(),
+            PoolConfig::default(),
+        );
+
+        let input = Bytes::from((0..1024).map(|i| ((i * 31 + 17) % 251) as u8).collect::<Vec<_>>());
+        let tx = ScrollTxEnvelope::Legacy(Signed::new_unchecked(
+            TxLegacy { gas_limit: 100_000, gas_price: 7, input, ..Default::default() },
+            Signature::new(U256::ZERO, U256::ZERO, false),
+            Default::default(),
+        ));
+        let pool_tx = ScrollPooledTransaction::new(Recovered::new_unchecked(tx, signer), 1200);
+        let result = pool.add_transaction(TransactionOrigin::Local, pool_tx).await;
+
+        drop(manager);
+        result
     }
 
     #[tokio::test]
@@ -221,6 +294,29 @@ mod tests {
         // explicitly drop the manager here otherwise the `TransactionValidationTaskExecutor` will
         // drop all validation tasks.
         drop(manager);
+    }
+
+    #[tokio::test]
+    async fn test_rollup_fee_cap_switches_at_tsuki() {
+        let pre_tsuki_err = add_rollup_fee_cap_boundary_transaction(galileo_v2_chain_spec(false))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                pre_tsuki_err.kind,
+                PoolErrorKind::InvalidTransaction(InvalidPoolTransactionError::Consensus(
+                    InvalidTransactionError::GasUintOverflow
+                ))
+            ),
+            "expected pre-Tsuki fee to exceed the u64 rollup fee cap, got: {pre_tsuki_err:?}"
+        );
+
+        let tsuki_result =
+            add_rollup_fee_cap_boundary_transaction(galileo_v2_chain_spec(true)).await;
+        assert!(
+            tsuki_result.is_ok(),
+            "expected the same fee to pass after Tsuki raises the rollup fee cap, got: {tsuki_result:?}"
+        );
     }
 
     #[tokio::test]
