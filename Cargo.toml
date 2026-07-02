@@ -498,7 +498,7 @@ revm-context = { git = "https://github.com/scroll-tech/revm", tag = "scroll-v91.
 revm-context-interface = { git = "https://github.com/scroll-tech/revm", tag = "scroll-v91.1", default-features = false }
 revm-database-interface = { git = "https://github.com/scroll-tech/revm", tag = "scroll-v91.1", default-features = false }
 op-revm = { git = "https://github.com/scroll-tech/revm", tag = "scroll-v91.1", default-features = false }
-revm-scroll = { git = "https://github.com/DogeOS69/dogeos-revm", rev = "0b53fea", default-features = false } # FIXME when merged and tagged
+revm-scroll = { git = "https://github.com/DogeOS69/dogeos-revm", rev = "206c5095f04acec5c0c1eaace0a8a4e832c88e40", default-features = false } # FIXME when merged and tagged
 revm-inspectors = "0.31.0"
 
 # eth
