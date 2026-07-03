@@ -173,7 +173,10 @@ impl ScrollChainConfig {
             max_tx_payload_bytes_per_block: MAX_TX_PAYLOAD_BYTES_PER_BLOCK,
             l1_config: SCROLL_DEV_L1_CONFIG,
             l1_data_fee_buffer_check: false,
-            allowed_transfer_precompile_caller: None,
+            // The dev chainspec activates Tsuki from genesis, so the transfer precompile
+            // requires an allowed caller. Use the zero address as a placeholder (matching the
+            // dogeos mainnet/chikyu configs); dev workloads do not exercise the precompile.
+            allowed_transfer_precompile_caller: Some(Address::ZERO),
         }
     }
 
