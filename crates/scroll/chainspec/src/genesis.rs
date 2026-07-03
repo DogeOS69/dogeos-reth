@@ -2,8 +2,10 @@
 
 use crate::{
     constants::{
-        DOGEOS_CHIKYU_L1_CONFIG, DOGEOS_MAINNET_L1_CONFIG, MAX_TX_PAYLOAD_BYTES_PER_BLOCK,
-        SCROLL_FEE_VAULT_ADDRESS, SCROLL_MAINNET_L1_CONFIG, SCROLL_SEPOLIA_L1_CONFIG,
+        DOGEOS_CHIKYU_ALLOWED_TRANSFER_PRECOMPILE_CALLER, DOGEOS_CHIKYU_L1_CONFIG,
+        DOGEOS_MAINNET_ALLOWED_TRANSFER_PRECOMPILE_CALLER, DOGEOS_MAINNET_L1_CONFIG,
+        MAX_TX_PAYLOAD_BYTES_PER_BLOCK, SCROLL_FEE_VAULT_ADDRESS, SCROLL_MAINNET_L1_CONFIG,
+        SCROLL_SEPOLIA_L1_CONFIG,
     },
     SCROLL_DEV_L1_CONFIG,
 };
@@ -130,6 +132,9 @@ pub struct ScrollChainConfig {
     pub l1_config: L1Config,
     /// Whether the buffer check for L1 data fee is enabled.
     pub l1_data_fee_buffer_check: bool,
+    /// The allowed transfer precompile caller addresses. Required after the Tsuki hardfork.
+    #[serde(default)]
+    pub allowed_transfer_precompile_caller: Option<Address>,
 }
 
 impl ScrollChainConfig {
@@ -146,6 +151,7 @@ impl ScrollChainConfig {
             max_tx_payload_bytes_per_block: MAX_TX_PAYLOAD_BYTES_PER_BLOCK,
             l1_config: SCROLL_MAINNET_L1_CONFIG,
             l1_data_fee_buffer_check: false,
+            allowed_transfer_precompile_caller: None,
         }
     }
 
@@ -156,6 +162,7 @@ impl ScrollChainConfig {
             max_tx_payload_bytes_per_block: MAX_TX_PAYLOAD_BYTES_PER_BLOCK,
             l1_config: SCROLL_SEPOLIA_L1_CONFIG,
             l1_data_fee_buffer_check: false,
+            allowed_transfer_precompile_caller: None,
         }
     }
 
@@ -166,6 +173,7 @@ impl ScrollChainConfig {
             max_tx_payload_bytes_per_block: MAX_TX_PAYLOAD_BYTES_PER_BLOCK,
             l1_config: SCROLL_DEV_L1_CONFIG,
             l1_data_fee_buffer_check: false,
+            allowed_transfer_precompile_caller: None,
         }
     }
 
@@ -176,6 +184,9 @@ impl ScrollChainConfig {
             max_tx_payload_bytes_per_block: MAX_TX_PAYLOAD_BYTES_PER_BLOCK,
             l1_config: DOGEOS_MAINNET_L1_CONFIG,
             l1_data_fee_buffer_check: false,
+            allowed_transfer_precompile_caller: Some(
+                DOGEOS_MAINNET_ALLOWED_TRANSFER_PRECOMPILE_CALLER,
+            ),
         }
     }
 
@@ -186,6 +197,9 @@ impl ScrollChainConfig {
             max_tx_payload_bytes_per_block: MAX_TX_PAYLOAD_BYTES_PER_BLOCK,
             l1_config: DOGEOS_CHIKYU_L1_CONFIG,
             l1_data_fee_buffer_check: false,
+            allowed_transfer_precompile_caller: Some(
+                DOGEOS_CHIKYU_ALLOWED_TRANSFER_PRECOMPILE_CALLER,
+            ),
         }
     }
 }
@@ -306,6 +320,7 @@ mod tests {
                     num_l1_messages_per_block: 10,
                 },
                 l1_data_fee_buffer_check: false,
+                allowed_transfer_precompile_caller: None,
             },
         };
         assert_eq!(chain_info, expected);

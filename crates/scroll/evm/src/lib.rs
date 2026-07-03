@@ -49,7 +49,7 @@ pub struct ScrollEvmConfig<
     P = ScrollDefaultPrecompilesFactory,
 > {
     /// Executor factory.
-    executor_factory: ScrollBlockExecutorFactory<R, Arc<ChainSpec>, P>,
+    executor_factory: ScrollBlockExecutorFactory<R, ChainSpec, P>,
     /// Block assembler.
     block_assembler: ScrollBlockAssembler<ChainSpec>,
     /// Node primitives marker.
@@ -99,8 +99,8 @@ impl<
             block_assembler: ScrollBlockAssembler::new(chain_spec.clone()),
             executor_factory: ScrollBlockExecutorFactory::new(
                 receipt_builder,
-                chain_spec,
-                ScrollEvmFactory::default(),
+                chain_spec.clone(),
+                ScrollEvmFactory::new(chain_spec),
             ),
             _pd: core::marker::PhantomData,
         }

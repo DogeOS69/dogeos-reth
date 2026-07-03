@@ -1,5 +1,4 @@
 use crate::{build::ScrollBlockAssembler, ScrollEvmConfig, ScrollNextBlockEnvAttributes};
-use alloc::sync::Arc;
 
 use alloy_consensus::{BlockHeader, Header};
 use alloy_evm::{FromRecoveredTx, FromTxWithEncoded};
@@ -55,7 +54,7 @@ where
     type Primitives = N;
     type Error = Infallible;
     type NextBlockEnvCtx = ScrollNextBlockEnvAttributes;
-    type BlockExecutorFactory = ScrollBlockExecutorFactory<R, Arc<ChainSpec>, P>;
+    type BlockExecutorFactory = ScrollBlockExecutorFactory<R, ChainSpec, P>;
     type BlockAssembler = ScrollBlockAssembler<ChainSpec>;
 
     fn block_executor_factory(&self) -> &Self::BlockExecutorFactory {
