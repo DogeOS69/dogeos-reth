@@ -11309,7 +11309,7 @@ dependencies = [
 [[package]]
 name = "revm-scroll"
 version = "0.1.0"
-source = "git+https://github.com/DogeOS69/dogeos-revm?tag=tsuki-v0.3#ef4c5194f8f5c543174f01a2d7feb8f002b57c65"
+source = "git+https://github.com/DogeOS69/dogeos-revm?tag=tsuki-v0.4#d415a9e3ff44bfefd1efbe090a6df70404fe4426"
 dependencies = [
  "alloy-evm",
  "auto_impl",
