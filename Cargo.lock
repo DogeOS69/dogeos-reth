@@ -11464,7 +11464,7 @@ dependencies = [
 [[package]]
 name = "revm-scroll"
 version = "0.1.0"
-source = "git+https://github.com/DogeOS69/dogeos-revm?rev=206c5095f04acec5c0c1eaace0a8a4e832c88e40#206c5095f04acec5c0c1eaace0a8a4e832c88e40"
+source = "git+https://github.com/DogeOS69/dogeos-revm?tag=tsuki-v0.1#0ef5e46f3bc0b9da06ca9e0c8aa96a75847004cc"
 dependencies = [
  "auto_impl",
  "enumn",
