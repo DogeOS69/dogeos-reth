@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 use alloy_consensus::Transaction;
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{map::AddressMap, Address, B256, U256};
 use criterion::{criterion_group, criterion_main, BatchSize, Criterion};
 use proptest::{prelude::*, strategy::ValueTree, test_runner::TestRunner};
 use rand::prelude::SliceRandom;
@@ -12,7 +12,7 @@ use reth_transaction_pool::{
     BlockInfo, CanonicalStateUpdate, PoolConfig, PoolTransaction, PoolUpdateKind, SubPoolLimit,
     TransactionOrigin, TransactionPool, TransactionPoolExt,
 };
-use std::{collections::HashMap, time::Duration};
+use std::time::Duration;
 /// Generates a set of transactions for multiple senders
 fn generate_transactions(num_senders: usize, txs_per_sender: usize) -> Vec<MockTransaction> {
     let mut runner = TestRunner::deterministic();
@@ -21,7 +21,7 @@ fn generate_transactions(num_senders: usize, txs_per_sender: usize) -> Vec<MockT
     for sender_idx in 0..num_senders {
         // Create a unique sender address
         let sender_bytes = sender_idx.to_be_bytes();
-        let addr_slice = [0u8; 12].into_iter().chain(sender_bytes.into_iter()).collect::<Vec<_>>();
+        let addr_slice = [0u8; 12].into_iter().chain(sender_bytes).collect::<Vec<_>>();
         let sender = Address::from_slice(&addr_slice);
 
         // Generate transactions for this sender
@@ -47,8 +47,8 @@ fn generate_transactions(num_senders: usize, txs_per_sender: usize) -> Vec<MockT
 }
 
 /// Fill the pool with transactions
-async fn fill_pool(pool: &TestPoolBuilder, txs: Vec<MockTransaction>) -> HashMap<Address, u64> {
-    let mut sender_nonces = HashMap::new();
+async fn fill_pool(pool: &TestPoolBuilder, txs: Vec<MockTransaction>) -> AddressMap<u64> {
+    let mut sender_nonces = AddressMap::default();
 
     // Add transactions one by one
     for tx in txs {

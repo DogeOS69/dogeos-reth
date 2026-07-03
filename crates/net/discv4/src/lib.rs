@@ -459,7 +459,7 @@ pub struct Discv4Service {
     ingress: IngressReceiver,
     /// Sender for sending outgoing messages
     ///
-    /// Sends outgoind messages to the UDP task.
+    /// Sends outgoing messages to the UDP task.
     egress: EgressSender,
     /// Buffered pending pings to apply backpressure.
     ///
@@ -479,7 +479,7 @@ pub struct Discv4Service {
     pending_find_nodes: HashMap<PeerId, FindNodeRequest>,
     /// Currently active ENR requests
     pending_enr_requests: HashMap<PeerId, EnrRequestState>,
-    /// Copy of he sender half of the commands channel for [Discv4]
+    /// Copy of the sender half of the commands channel for [Discv4]
     to_service: mpsc::UnboundedSender<Discv4Command>,
     /// Receiver half of the commands channel for [Discv4]
     commands_rx: mpsc::UnboundedReceiver<Discv4Command>,
@@ -625,10 +625,13 @@ impl Discv4Service {
         self.lookup_interval = tokio::time::interval(duration);
     }
 
-    /// Sets the external Ip to the configured external IP if [`NatResolver::ExternalIp`].
+    /// Sets the external Ip to the configured external IP if [`NatResolver::ExternalIp`] or
+    /// [`NatResolver::ExternalAddr`]. In the case of [`NatResolver::ExternalAddr`], it will return
+    /// the first IP address found for the domain associated with the discv4 UDP port.
     fn resolve_external_ip(&mut self) {
         if let Some(r) = &self.resolve_external_ip_interval &&
-            let Some(external_ip) = r.resolver().as_external_ip()
+            let Some(external_ip) =
+                r.resolver().clone().as_external_ip(self.local_node_record.udp_port)
         {
             self.set_external_ip_addr(external_ip);
         }
@@ -952,10 +955,8 @@ impl Discv4Service {
 
         // Check if ENR was updated
         match (last_enr_seq, old_enr) {
-            (Some(new), Some(old)) => {
-                if new > old {
-                    self.send_enr_request(record);
-                }
+            (Some(new), Some(old)) if new > old => {
+                self.send_enr_request(record);
             }
             (Some(_), None) => {
                 // got an ENR
@@ -1192,10 +1193,8 @@ impl Discv4Service {
         } else {
             // Request ENR if included in the ping
             match (ping.enr_sq, old_enr) {
-                (Some(new), Some(old)) => {
-                    if new > old {
-                        self.send_enr_request(record);
-                    }
+                (Some(new), Some(old)) if new > old => {
+                    self.send_enr_request(record);
                 }
                 (Some(_), None) => {
                     self.send_enr_request(record);
@@ -1352,10 +1351,8 @@ impl Discv4Service {
                     _ => return,
                 };
                 match (fork_id, old_fork_id) {
-                    (Some(new), Some(old)) => {
-                        if new != old {
-                            self.notify(DiscoveryUpdate::EnrForkId(record, new))
-                        }
+                    (Some(new), Some(old)) if new != old => {
+                        self.notify(DiscoveryUpdate::EnrForkId(record, new))
                     }
                     (Some(new), None) => self.notify(DiscoveryUpdate::EnrForkId(record, new)),
                     _ => {}
@@ -3042,7 +3039,7 @@ mod tests {
 
         // Poll for events for a reasonable time
         let mut bootnode_appeared = false;
-        let timeout = tokio::time::sleep(Duration::from_secs(1));
+        let timeout = tokio::time::sleep(Duration::from_secs(5));
         tokio::pin!(timeout);
 
         loop {

@@ -2,21 +2,16 @@ use crate::{build::ScrollBlockAssembler, ScrollEvmConfig, ScrollNextBlockEnvAttr
 use alloc::sync::Arc;
 
 use alloy_consensus::{BlockHeader, Header};
-use alloy_eips::{eip2718::WithEncoded, Decodable2718};
 use alloy_evm::{FromRecoveredTx, FromTxWithEncoded};
 use alloy_primitives::B256;
-use alloy_rpc_types_engine::ExecutionData;
 use core::convert::Infallible;
 use reth_chainspec::EthChainSpec;
-use reth_evm::{
-    ConfigureEngineEvm, ConfigureEvm, EvmEnv, EvmEnvFor, ExecutableTxIterator, ExecutionCtxFor,
-};
+use reth_evm::{ConfigureEvm, EvmEnv};
 use reth_primitives_traits::{
-    BlockTy, NodePrimitives, SealedBlock, SealedHeader, SignedTransaction, TxTy,
+    BlockTy, NodePrimitives, SealedBlock, SealedHeader, SignedTransaction,
 };
 use reth_scroll_chainspec::{ChainConfig, ScrollChainConfig};
 use reth_scroll_primitives::ScrollReceipt;
-use reth_storage_api::errors::any::AnyError;
 use revm::{
     context::{BlockEnv, CfgEnv, TxEnv},
     primitives::U256,
@@ -27,6 +22,19 @@ use scroll_alloy_evm::{
     ScrollReceiptBuilder, ScrollTransactionIntoTxEnv,
 };
 use scroll_alloy_hardforks::ScrollHardforks;
+
+#[cfg(feature = "std")]
+use alloy_eips::{eip2718::WithEncoded, Decodable2718};
+#[cfg(feature = "std")]
+use alloy_primitives::Bytes;
+#[cfg(feature = "std")]
+use alloy_rpc_types_engine::ExecutionData;
+#[cfg(feature = "std")]
+use reth_evm::{ConfigureEngineEvm, EvmEnvFor, ExecutableTxIterator};
+#[cfg(feature = "std")]
+use reth_primitives_traits::TxTy;
+#[cfg(feature = "std")]
+use reth_storage_api::errors::any::AnyError;
 
 impl<ChainSpec, N, R, P> ConfigureEvm for ScrollEvmConfig<ChainSpec, N, R, P>
 where
@@ -63,7 +71,7 @@ where
         let spec_id = self.spec_id_at_timestamp_and_number(header.timestamp(), header.number());
 
         let cfg_env = CfgEnv::<ScrollSpecId>::default()
-            .with_spec(spec_id)
+            .with_spec_and_mainnet_gas_params(spec_id)
             .with_chain_id(chain_spec.chain().id());
 
         // get coinbase from chain spec
@@ -102,7 +110,7 @@ where
         // configure evm env based on parent block
         let cfg_env = CfgEnv::<ScrollSpecId>::default()
             .with_chain_id(chain_spec.chain().id())
-            .with_spec(spec_id);
+            .with_spec_and_mainnet_gas_params(spec_id);
 
         // get coinbase from chain spec
         let coinbase = if let Some(vault_address) = chain_spec.chain_config().fee_vault_address {
@@ -125,10 +133,10 @@ where
         Ok(EvmEnv { cfg_env, block_env })
     }
 
-    fn context_for_block<'a>(
+    fn context_for_block(
         &self,
-        block: &'a SealedBlock<BlockTy<Self::Primitives>>,
-    ) -> Result<ExecutionCtxFor<'a, Self>, Self::Error> {
+        block: &SealedBlock<BlockTy<Self::Primitives>>,
+    ) -> Result<ScrollBlockExecutionCtx, Self::Error> {
         Ok(ScrollBlockExecutionCtx { parent_hash: block.header().parent_hash() })
     }
 
@@ -136,11 +144,12 @@ where
         &self,
         parent: &SealedHeader<N::BlockHeader>,
         _attributes: Self::NextBlockEnvCtx,
-    ) -> Result<ExecutionCtxFor<'_, Self>, Self::Error> {
+    ) -> Result<ScrollBlockExecutionCtx, Self::Error> {
         Ok(ScrollBlockExecutionCtx { parent_hash: parent.hash() })
     }
 }
 
+#[cfg(feature = "std")]
 impl<ChainSpec, N, R, P> ConfigureEngineEvm<ExecutionData> for ScrollEvmConfig<ChainSpec, N, R, P>
 where
     ChainSpec: EthChainSpec + ChainConfig<Config = ScrollChainConfig> + ScrollHardforks,
@@ -164,9 +173,9 @@ where
 
         let spec_id = self.spec_id_at_timestamp_and_number(timestamp, block_number);
 
-        let cfg_env = CfgEnv::<ScrollSpecId>::default()
+        let cfg_env = CfgEnv::new()
             .with_chain_id(chain_spec.chain().id())
-            .with_spec(spec_id);
+            .with_spec_and_mainnet_gas_params(spec_id);
 
         // get coinbase from chain config.
         let coinbase =
@@ -190,10 +199,10 @@ where
         Ok(EvmEnv { cfg_env, block_env })
     }
 
-    fn context_for_payload<'a>(
+    fn context_for_payload(
         &self,
-        payload: &'a ExecutionData,
-    ) -> Result<ExecutionCtxFor<'a, Self>, Self::Error> {
+        payload: &ExecutionData,
+    ) -> Result<ScrollBlockExecutionCtx, Self::Error> {
         Ok(ScrollBlockExecutionCtx { parent_hash: payload.parent_hash() })
     }
 
@@ -201,12 +210,14 @@ where
         &self,
         payload: &ExecutionData,
     ) -> Result<impl ExecutableTxIterator<Self>, Self::Error> {
-        Ok(payload.payload.transactions().clone().into_iter().map(|encoded| {
+        let txs = payload.payload.transactions().clone();
+        let convert = |encoded: Bytes| {
             let tx = TxTy::<Self::Primitives>::decode_2718_exact(encoded.as_ref())
                 .map_err(AnyError::new)?;
             let signer = tx.try_recover().map_err(AnyError::new)?;
             Ok::<_, AnyError>(WithEncoded::new(encoded, tx.with_signer(signer)))
-        }))
+        };
+        Ok((txs, convert))
     }
 }
 
