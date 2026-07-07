@@ -156,7 +156,9 @@ mod tests {
         transaction::error::InvalidTransactionError, GotExpected, GotExpectedBoxed,
     };
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
-    use reth_scroll_chainspec::{ScrollChainSpec, SCROLL_DEV, SCROLL_MAINNET};
+    use reth_scroll_chainspec::{
+        ScrollChainSpec, ScrollChainSpecBuilder, SCROLL_DEV, SCROLL_MAINNET,
+    };
     use reth_scroll_evm::ScrollEvmConfig;
     use reth_scroll_primitives::{ScrollBlock, ScrollPrimitives};
     use reth_scroll_txpool::ScrollPooledTransaction;
@@ -226,10 +228,12 @@ mod tests {
         chain_spec: Arc<ScrollChainSpec>,
     ) -> PoolResult<AddedTransactionOutcome> {
         let handle = tokio::runtime::Handle::current();
-        let manager = TaskManager::new(handle);
+        let executor =
+            TaskExecutor::with_existing_handle(handle).expect("failed to create task executor");
         let blob_store = NoopBlobStore::default();
         let signer = Default::default();
-        let client = MockEthProvider::<ScrollPrimitives, _>::new().with_chain_spec(chain_spec);
+        let client =
+            MockEthProvider::<ScrollPrimitives, _>::new().with_chain_spec(chain_spec.clone());
         let hash = B256::random();
 
         client.add_header(hash, Header::default());
@@ -241,12 +245,13 @@ mod tests {
                 .extend_storage(rollup_fee_between_u64_and_u96_cap_storage()),
         );
 
-        let validator = TransactionValidationTaskExecutor::eth_builder(client)
-            .no_eip4844()
-            .build_with_tasks(manager.executor(), blob_store)
-            .map(|validator| {
-                ScrollTransactionValidator::new(validator).require_l1_data_gas_fee(true)
-            });
+        let validator = TransactionValidationTaskExecutor::eth_builder(
+            client,
+            ScrollEvmConfig::scroll(chain_spec.clone()),
+        )
+        .no_eip4844()
+        .build_with_tasks(executor.clone(), blob_store)
+        .map(|validator| ScrollTransactionValidator::new(validator).require_l1_data_gas_fee(true));
 
         let pool = ScrollTransactionPool::new(
             validator,
@@ -264,7 +269,7 @@ mod tests {
         let pool_tx = ScrollPooledTransaction::new(Recovered::new_unchecked(tx, signer), 1200);
         let result = pool.add_transaction(TransactionOrigin::Local, pool_tx).await;
 
-        drop(manager);
+        drop(executor);
         result
     }
 

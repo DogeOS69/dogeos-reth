@@ -218,7 +218,7 @@ impl<ChainSpec, P> Clone for ScrollEvmFactory<ChainSpec, P> {
 
 impl<ChainSpec, P> ScrollEvmFactory<ChainSpec, P> {
     /// Creates a new instance of [`ScrollEvmFactory`] with the given chain spec.
-    pub fn new(chain_spec: Arc<ChainSpec>) -> Self {
+    pub const fn new(chain_spec: Arc<ChainSpec>) -> Self {
         Self { chain_spec, _precompiles_factory: core::marker::PhantomData }
     }
 }
