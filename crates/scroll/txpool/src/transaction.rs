@@ -226,16 +226,22 @@ mod tests {
     use alloy_consensus::{transaction::Recovered, Header, Signed, TxLegacy};
     use alloy_eips::eip2718::Encodable2718;
     use alloy_primitives::{private::rand::random_iter, Bytes, Signature, B256, U256};
+    use reth_primitives_traits::{
+        constants::MAX_TX_GAS_LIMIT_OSAKA, transaction::error::InvalidTransactionError,
+    };
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
-    use reth_scroll_chainspec::{SCROLL_DEV, SCROLL_MAINNET};
+    use reth_scroll_chainspec::{
+        ScrollChainConfig, ScrollChainSpecBuilder, SCROLL_DEV, SCROLL_MAINNET,
+    };
     use reth_scroll_evm::ScrollEvmConfig;
     use reth_scroll_primitives::{ScrollBlock, ScrollPrimitives, ScrollTransactionSigned};
     use reth_transaction_pool::{
-        blobstore::InMemoryBlobStore, validate::EthTransactionValidatorBuilder, TransactionOrigin,
-        TransactionValidationOutcome,
+        blobstore::InMemoryBlobStore, error::InvalidPoolTransactionError,
+        validate::EthTransactionValidatorBuilder, TransactionOrigin, TransactionValidationOutcome,
     };
     use scroll_alloy_consensus::{ScrollTxEnvelope, ScrollTypedTransaction, TxL1Message};
     use scroll_alloy_evm::gas_price_oracle::L1_GAS_PRICE_ORACLE_ADDRESS;
+    use std::sync::Arc;
 
     fn scroll_test_evm_config() -> ScrollEvmConfig {
         ScrollEvmConfig::scroll_mainnet()
@@ -312,6 +318,78 @@ mod tests {
             Default::default(),
         ));
         ScrollPooledTransaction::new(Recovered::new_unchecked(tx, signer), 200)
+    }
+
+    fn create_test_legacy_tx_with_gas_limit(
+        signer: alloy_primitives::Address,
+        gas_limit: u64,
+    ) -> ScrollPooledTransaction {
+        let tx = ScrollTxEnvelope::Legacy(Signed::new_unchecked(
+            TxLegacy { gas_limit, gas_price: 1, ..Default::default() },
+            Signature::new(U256::ZERO, U256::ZERO, false),
+            Default::default(),
+        ));
+        ScrollPooledTransaction::new(Recovered::new_unchecked(tx, signer), 120)
+    }
+
+    #[test]
+    fn test_tsuki_rejects_tx_over_eip7825_gas_limit() {
+        let signer = Default::default();
+        let client =
+            MockEthProvider::<ScrollPrimitives, _>::new().with_chain_spec(SCROLL_DEV.clone());
+        let hash = B256::random();
+        client.add_header(hash, Header::default());
+        client.add_block(hash, ScrollBlock::default());
+        client.add_account(signer, ExtendedAccount::new(0, U256::MAX));
+
+        let validator = EthTransactionValidatorBuilder::new(
+            client,
+            ScrollEvmConfig::scroll(SCROLL_DEV.clone()),
+        )
+        .no_eip4844()
+        .build(InMemoryBlobStore::default());
+        let validator = ScrollTransactionValidator::new(validator).require_l1_data_gas_fee(false);
+
+        let tx = create_test_legacy_tx_with_gas_limit(signer, MAX_TX_GAS_LIMIT_OSAKA + 1);
+        let outcome = validator.validate_one(TransactionOrigin::External, tx);
+
+        match outcome {
+            TransactionValidationOutcome::Invalid(_, err) => assert!(matches!(
+                err,
+                InvalidPoolTransactionError::Consensus(InvalidTransactionError::GasLimitTooHigh)
+            )),
+            _ => panic!("Expected GasLimitTooHigh invalid outcome, got: {outcome:?}"),
+        }
+    }
+
+    #[test]
+    fn test_pre_tsuki_allows_tx_over_eip7825_gas_limit() {
+        let signer = Default::default();
+        let chain_spec = Arc::new(
+            ScrollChainSpecBuilder::scroll_mainnet()
+                .galileo_v2_activated()
+                .build(ScrollChainConfig::mainnet()),
+        );
+        let client =
+            MockEthProvider::<ScrollPrimitives, _>::new().with_chain_spec(chain_spec.clone());
+        let hash = B256::random();
+        client.add_header(hash, Header::default());
+        client.add_block(hash, ScrollBlock::default());
+        client.add_account(signer, ExtendedAccount::new(0, U256::MAX));
+
+        let validator =
+            EthTransactionValidatorBuilder::new(client, ScrollEvmConfig::scroll(chain_spec))
+                .no_eip4844()
+                .build(InMemoryBlobStore::default());
+        let validator = ScrollTransactionValidator::new(validator).require_l1_data_gas_fee(false);
+
+        let tx = create_test_legacy_tx_with_gas_limit(signer, MAX_TX_GAS_LIMIT_OSAKA + 1);
+        let outcome = validator.validate_one(TransactionOrigin::External, tx);
+
+        assert!(
+            matches!(outcome, TransactionValidationOutcome::Valid { .. }),
+            "Expected pre-Tsuki transaction to remain valid, got: {outcome:?}"
+        );
     }
 
     #[test]

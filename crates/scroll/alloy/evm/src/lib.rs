@@ -41,7 +41,7 @@ use revm::{
 use revm_scroll::{
     builder::{
         DefaultScrollContext, EuclidEipActivations, FeynmanEipActivations, ScrollBuilder,
-        ScrollContext,
+        ScrollContext, TsukiEipActivations,
     },
     instructions::ScrollInstructions,
     precompile::ScrollPrecompileProvider,
@@ -251,6 +251,7 @@ impl<
                 .with_cfg(input.cfg_env)
                 .maybe_with_eip_7702()
                 .maybe_with_eip_7623()
+                .maybe_with_eip_7825()
                 .build_scroll_with_inspector(
                     NoOpInspector {},
                     config.allowed_transfer_precompile_caller,
@@ -275,6 +276,7 @@ impl<
                 .with_cfg(input.cfg_env)
                 .maybe_with_eip_7702()
                 .maybe_with_eip_7623()
+                .maybe_with_eip_7825()
                 .build_scroll_with_inspector(inspector, config.allowed_transfer_precompile_caller)
                 .with_precompiles(P::with_spec(spec_id, config)),
             inspect: true,

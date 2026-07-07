@@ -15,7 +15,10 @@ use revm::{
     context::{BlockEnv, CfgEnv, TxEnv},
     primitives::U256,
 };
-use revm_scroll::ScrollSpecId;
+use revm_scroll::{
+    builder::{EuclidEipActivations, FeynmanEipActivations, TsukiEipActivations},
+    ScrollSpecId,
+};
 use scroll_alloy_evm::{
     ScrollBlockExecutionCtx, ScrollBlockExecutorFactory, ScrollPrecompilesFactory,
     ScrollReceiptBuilder, ScrollTransactionIntoTxEnv,
@@ -71,7 +74,10 @@ where
 
         let cfg_env = CfgEnv::<ScrollSpecId>::default()
             .with_spec_and_mainnet_gas_params(spec_id)
-            .with_chain_id(chain_spec.chain().id());
+            .with_chain_id(chain_spec.chain().id())
+            .maybe_with_eip_7702()
+            .maybe_with_eip_7623()
+            .maybe_with_eip_7825();
 
         // get coinbase from chain spec
         let coinbase = if let Some(vault_address) = chain_spec.chain_config().fee_vault_address {
@@ -174,7 +180,10 @@ where
 
         let cfg_env = CfgEnv::new()
             .with_chain_id(chain_spec.chain().id())
-            .with_spec_and_mainnet_gas_params(spec_id);
+            .with_spec_and_mainnet_gas_params(spec_id)
+            .maybe_with_eip_7702()
+            .maybe_with_eip_7623()
+            .maybe_with_eip_7825();
 
         // get coinbase from chain config.
         let coinbase =
@@ -229,7 +238,7 @@ mod tests {
     use reth_scroll_chainspec::{ScrollChainConfig, ScrollChainSpecBuilder};
     use reth_scroll_primitives::ScrollPrimitives;
     use revm::primitives::B256;
-    use revm_primitives::Address;
+    use revm_primitives::{eip7825, Address};
 
     #[test]
     fn test_spec_at_head() {
@@ -271,6 +280,41 @@ mod tests {
         );
 
         assert_eq!(config.spec_id_at_timestamp_and_number(0, 0), ScrollSpecId::TSUKI);
+    }
+
+    #[test]
+    fn test_tsuki_sets_tx_gas_limit_cap() -> eyre::Result<()> {
+        let config = ScrollEvmConfig::<_, ScrollPrimitives, _>::new(
+            ScrollChainSpecBuilder::dogeos_mainnet()
+                .build(ScrollChainConfig::dogeos_mainnet())
+                .into(),
+            ScrollRethReceiptBuilder::default(),
+        );
+
+        let env = config.evm_env(&Header::default())?;
+
+        assert_eq!(env.cfg_env.spec, ScrollSpecId::TSUKI);
+        assert_eq!(env.cfg_env.tx_gas_limit_cap, Some(eip7825::TX_GAS_LIMIT_CAP));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_pre_tsuki_leaves_tx_gas_limit_uncapped() -> eyre::Result<()> {
+        let config = ScrollEvmConfig::<_, ScrollPrimitives, _>::new(
+            ScrollChainSpecBuilder::scroll_mainnet()
+                .galileo_v2_activated()
+                .build(ScrollChainConfig::mainnet())
+                .into(),
+            ScrollRethReceiptBuilder::default(),
+        );
+
+        let env = config.evm_env(&Header::default())?;
+
+        assert_eq!(env.cfg_env.spec, ScrollSpecId::GALILEO);
+        assert_eq!(env.cfg_env.tx_gas_limit_cap, None);
+
+        Ok(())
     }
 
     #[test]

@@ -47,4 +47,4 @@ tracing.workspace = true
 reth-scroll-chainspec.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-scroll-primitives = { workspace = true, features = ["reth-codec"] }
-scroll-alloy-evm.workspace = true
+scroll-alloy-evm = { workspace = true, features = ["zstd_compression"] }
