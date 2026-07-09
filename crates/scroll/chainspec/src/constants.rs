@@ -135,10 +135,6 @@ pub const DOGEOS_MAINNET_L1_CONFIG: L1Config = L1Config {
     num_l1_messages_per_block: DOGEOS_MAINNET_MAX_L1_MESSAGES,
 };
 
-/// The address of
-pub const DOGEOS_MAINNET_ALLOWED_TRANSFER_PRECOMPILE_CALLER: Address =
-    address!("0000000000000000000000000000000000000000");
-
 /// The Dogeos Mainnet genesis hash
 /// FIXME
 pub const DOGEOS_MAINNET_GENESIS_HASH: B256 =
@@ -173,10 +169,6 @@ pub const DOGEOS_CHIKYU_L1_CONFIG: L1Config = L1Config {
     l2_system_config_address: DOGEOS_CHIKYU_L2_SYSTEM_CONFIG_CONTRACT_ADDRESS,
     num_l1_messages_per_block: DOGEOS_CHIKYU_MAX_L1_MESSAGES,
 };
-
-/// FIXME
-pub const DOGEOS_CHIKYU_ALLOWED_TRANSFER_PRECOMPILE_CALLER: Address =
-    address!("0000000000000000000000000000000000000000");
 
 /// The Dogeos Chikyū genesis hash
 pub const DOGEOS_CHIKYU_GENESIS_HASH: B256 =

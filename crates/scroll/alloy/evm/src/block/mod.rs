@@ -1,6 +1,7 @@
 pub mod curie;
 pub mod feynman;
 pub mod galileo_v2;
+pub mod tsuki;
 
 pub use receipt_builder::{ReceiptBuilderCtx, ScrollReceiptBuilder};
 mod receipt_builder;
@@ -8,7 +9,7 @@ mod receipt_builder;
 use crate::{
     block::{
         curie::apply_curie_hard_fork, feynman::apply_feynman_hard_fork,
-        galileo_v2::apply_galileo_v2_hard_fork,
+        galileo_v2::apply_galileo_v2_hard_fork, tsuki::apply_tsuki_hard_fork,
     },
     gas_price_oracle::L1_GAS_PRICE_ORACLE_ADDRESS,
     system_caller::ScrollSystemCaller,
@@ -16,7 +17,7 @@ use crate::{
     ScrollPrecompilesFactory, ScrollTransactionIntoTxEnv, ToTxWithCompressionInfo,
 };
 
-use alloc::{boxed::Box, format, sync::Arc, vec::Vec};
+use alloc::{boxed::Box, format, vec::Vec};
 use alloy_consensus::{Transaction, TxReceipt, Typed2718};
 use alloy_eips::Encodable2718;
 use alloy_evm::{
@@ -226,6 +227,20 @@ where
             };
         }
 
+        // inject NativeDogeToken predeploy at Tsuki transition block.
+        #[allow(clippy::collapsible_if)]
+        if self
+            .spec
+            .scroll_fork_activation(ScrollHardfork::Tsuki)
+            .active_at_timestamp(self.evm.block().timestamp().to())
+        {
+            if let Err(err) = apply_tsuki_hard_fork(self.evm.db_mut()) {
+                return Err(BlockExecutionError::msg(format!(
+                    "error occurred at Tsuki fork: {err:?}"
+                )));
+            };
+        }
+
         // apply eip-2935.
         self.system_caller.apply_blockhashes_contract_call(self.ctx.parent_hash, &mut self.evm)?;
 
@@ -399,34 +414,20 @@ where
 }
 
 /// Scroll block executor factory.
-#[derive(Debug)]
+#[derive(Debug, Clone, Default, Copy)]
 pub struct ScrollBlockExecutorFactory<R, Spec, P = ScrollDefaultPrecompilesFactory> {
     /// Receipt builder.
     receipt_builder: R,
     /// Chain specification.
-    spec: Arc<Spec>,
+    spec: Spec,
     /// EVM factory.
-    evm_factory: ScrollEvmFactory<Spec, P>,
-}
-
-impl<R: Clone, Spec, P: Clone> Clone for ScrollBlockExecutorFactory<R, Spec, P> {
-    fn clone(&self) -> Self {
-        Self {
-            receipt_builder: self.receipt_builder.clone(),
-            spec: self.spec.clone(),
-            evm_factory: self.evm_factory.clone(),
-        }
-    }
+    evm_factory: ScrollEvmFactory<P>,
 }
 
 impl<R, Spec, P> ScrollBlockExecutorFactory<R, Spec, P> {
     /// Creates a new [`ScrollBlockExecutorFactory`] with the given receipt builder, spec and
     /// factory.
-    pub const fn new(
-        receipt_builder: R,
-        spec: Arc<Spec>,
-        evm_factory: ScrollEvmFactory<Spec, P>,
-    ) -> Self {
+    pub const fn new(receipt_builder: R, spec: Spec, evm_factory: ScrollEvmFactory<P>) -> Self {
         Self { receipt_builder, spec, evm_factory }
     }
 
@@ -436,12 +437,12 @@ impl<R, Spec, P> ScrollBlockExecutorFactory<R, Spec, P> {
     }
 
     /// Exposes the chain specification.
-    pub const fn spec(&self) -> &Arc<Spec> {
+    pub const fn spec(&self) -> &Spec {
         &self.spec
     }
 
     /// Exposes the EVM factory.
-    pub const fn evm_factory(&self) -> &ScrollEvmFactory<Spec, P> {
+    pub const fn evm_factory(&self) -> &ScrollEvmFactory<P> {
         &self.evm_factory
     }
 }
@@ -449,13 +450,13 @@ impl<R, Spec, P> ScrollBlockExecutorFactory<R, Spec, P> {
 impl<R, Spec, P> BlockExecutorFactory for ScrollBlockExecutorFactory<R, Spec, P>
 where
     R: ScrollReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
-    Spec: ScrollHardforks + ChainConfig<Config = ScrollChainConfig>,
+    Spec: ScrollHardforks + ChainConfig<Config = ScrollChainConfig> + Clone,
     P: ScrollPrecompilesFactory,
     ScrollTransactionIntoTxEnv<TxEnv>:
         FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction>,
     Self: 'static,
 {
-    type EvmFactory = ScrollEvmFactory<Spec, P>;
+    type EvmFactory = ScrollEvmFactory<P>;
     type ExecutionCtx<'a> = ScrollBlockExecutionCtx;
     type Transaction = R::Transaction;
     type Receipt = R::Receipt;

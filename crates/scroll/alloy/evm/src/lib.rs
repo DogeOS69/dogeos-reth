@@ -6,7 +6,7 @@
 
 mod block;
 pub use block::{
-    curie, feynman, galileo_v2, EvmExt, ReceiptBuilderCtx, ScrollBlockExecutionCtx,
+    curie, feynman, galileo_v2, tsuki, EvmExt, ReceiptBuilderCtx, ScrollBlockExecutionCtx,
     ScrollBlockExecutor, ScrollBlockExecutorFactory, ScrollReceiptBuilder, ScrollTxCompressionInfo,
     ScrollTxCompressionInfos,
 };
@@ -23,7 +23,6 @@ mod system_caller;
 
 extern crate alloc;
 
-use alloc::sync::Arc;
 use alloy_evm::{precompiles::PrecompilesMap, Database, Evm, EvmEnv, EvmFactory};
 use alloy_primitives::{Address, Bytes};
 use core::{
@@ -48,10 +47,8 @@ use revm_scroll::{
     ScrollSpecId,
 };
 
-use reth_scroll_chainspec::{ChainConfig, ScrollChainConfig};
 /// Re-export `TX_L1_FEE_PRECISION_U256` from `revm-scroll` for convenience.
 pub use revm_scroll::l1block::TX_L1_FEE_PRECISION_U256;
-use scroll_alloy_hardforks::ScrollHardforks;
 
 /// Scroll EVM implementation.
 #[allow(missing_debug_implementations)]
@@ -200,34 +197,13 @@ where
 }
 
 /// Factory producing [`ScrollEvm`]s.
-#[derive(Debug)]
+#[derive(Debug, Default, Clone, Copy)]
 #[non_exhaustive]
-pub struct ScrollEvmFactory<ChainSpec, P = ScrollDefaultPrecompilesFactory> {
-    chain_spec: Arc<ChainSpec>,
+pub struct ScrollEvmFactory<P = ScrollDefaultPrecompilesFactory> {
     _precompiles_factory: core::marker::PhantomData<P>,
 }
 
-impl<ChainSpec, P> Clone for ScrollEvmFactory<ChainSpec, P> {
-    fn clone(&self) -> Self {
-        Self {
-            chain_spec: self.chain_spec.clone(),
-            _precompiles_factory: core::marker::PhantomData,
-        }
-    }
-}
-
-impl<ChainSpec, P> ScrollEvmFactory<ChainSpec, P> {
-    /// Creates a new instance of [`ScrollEvmFactory`] with the given chain spec.
-    pub const fn new(chain_spec: Arc<ChainSpec>) -> Self {
-        Self { chain_spec, _precompiles_factory: core::marker::PhantomData }
-    }
-}
-
-impl<
-        ChainSpec: ScrollHardforks + ChainConfig<Config = ScrollChainConfig>,
-        P: ScrollPrecompilesFactory,
-    > EvmFactory for ScrollEvmFactory<ChainSpec, P>
-{
+impl<P: ScrollPrecompilesFactory> EvmFactory for ScrollEvmFactory<P> {
     type Evm<DB: Database, I: Inspector<ScrollContext<DB>>> = ScrollEvm<DB, I, Self::Precompiles>;
     type Context<DB: Database> = ScrollContext<DB>;
     type Tx = ScrollTransactionIntoTxEnv<TxEnv>;
@@ -243,7 +219,6 @@ impl<
         input: EvmEnv<ScrollSpecId>,
     ) -> Self::Evm<DB, NoOpInspector> {
         let spec_id = input.cfg_env.spec;
-        let config = self.chain_spec.chain_config();
         ScrollEvm {
             inner: Context::scroll()
                 .with_db(db)
@@ -252,11 +227,8 @@ impl<
                 .maybe_with_eip_7702()
                 .maybe_with_eip_7623()
                 .maybe_with_eip_7825()
-                .build_scroll_with_inspector(
-                    NoOpInspector {},
-                    config.allowed_transfer_precompile_caller,
-                )
-                .with_precompiles(P::with_spec(spec_id, config)),
+                .build_scroll_with_inspector(NoOpInspector {})
+                .with_precompiles(P::with_spec(spec_id)),
             inspect: false,
         }
     }
@@ -268,7 +240,6 @@ impl<
         inspector: I,
     ) -> Self::Evm<DB, I> {
         let spec_id = input.cfg_env.spec;
-        let config = self.chain_spec.chain_config();
         ScrollEvm {
             inner: Context::scroll()
                 .with_db(db)
@@ -277,8 +248,8 @@ impl<
                 .maybe_with_eip_7702()
                 .maybe_with_eip_7623()
                 .maybe_with_eip_7825()
-                .build_scroll_with_inspector(inspector, config.allowed_transfer_precompile_caller)
-                .with_precompiles(P::with_spec(spec_id, config)),
+                .build_scroll_with_inspector(inspector)
+                .with_precompiles(P::with_spec(spec_id)),
             inspect: true,
         }
     }
@@ -287,7 +258,7 @@ impl<
 /// A factory trait for creating precompiles for Scroll EVM.
 pub trait ScrollPrecompilesFactory: Default + fmt::Debug {
     /// Creates a new instance of precompiles for the given Scroll specification ID.
-    fn with_spec(spec: ScrollSpecId, chain_config: &ScrollChainConfig) -> PrecompilesMap;
+    fn with_spec(spec: ScrollSpecId) -> PrecompilesMap;
 }
 
 /// Default implementation of the Scroll precompiles factory.
@@ -295,11 +266,7 @@ pub trait ScrollPrecompilesFactory: Default + fmt::Debug {
 pub struct ScrollDefaultPrecompilesFactory;
 
 impl ScrollPrecompilesFactory for ScrollDefaultPrecompilesFactory {
-    fn with_spec(spec_id: ScrollSpecId, chain_config: &ScrollChainConfig) -> PrecompilesMap {
-        ScrollPrecompileProvider::new_with_spec(
-            spec_id,
-            chain_config.allowed_transfer_precompile_caller,
-        )
-        .into_precompiles_map()
+    fn with_spec(spec_id: ScrollSpecId) -> PrecompilesMap {
+        ScrollPrecompileProvider::new_with_spec(spec_id).into_precompiles_map()
     }
 }
