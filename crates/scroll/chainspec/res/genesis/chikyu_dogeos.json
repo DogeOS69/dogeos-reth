@@ -21,6 +21,8 @@
         "euclidTime": 0,
         "euclidV2Time": 0,
         "feynmanTime": 0,
+        "galileoTime": 0,
+        "galileoV2Time": 0,
         "tsukiTime": 0,
         "clique": {
             "period": 3,

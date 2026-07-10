@@ -592,6 +592,29 @@ mod tests {
     }
 
     #[test]
+    fn dogeos_genesis_resources_have_complete_timestamp_schedules() {
+        let resources = [
+            ("dogeos.json", include_str!("../res/genesis/dogeos.json")),
+            ("chikyu_dogeos.json", include_str!("../res/genesis/chikyu_dogeos.json")),
+        ];
+        let timestamp_fields =
+            ["euclidV2Time", "feynmanTime", "galileoTime", "galileoV2Time", "tsukiTime"];
+
+        for (resource, json) in resources {
+            let genesis: Genesis = serde_json::from_str(json)
+                .unwrap_or_else(|err| panic!("failed to parse {resource}: {err}"));
+
+            for field in timestamp_fields {
+                assert_eq!(
+                    genesis.config.extra_fields.get(field).and_then(serde_json::Value::as_u64),
+                    Some(0),
+                    "{resource} must configure {field} at timestamp 0"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn scroll_mainnet_forkids_deref() {
         test_fork_ids(
             &SCROLL_MAINNET,
