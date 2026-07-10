@@ -79,7 +79,7 @@ mod tests {
     use super::*;
     use crate::{ScrollEvmFactory, ScrollTransactionIntoTxEnv, TX_L1_FEE_PRECISION_U256};
     use alloy_evm::{Evm, EvmEnv, EvmFactory};
-    use alloy_primitives::{address, TxKind};
+    use alloy_primitives::{address, Address, TxKind};
     use revm::{
         context::{
             result::{ExecutionResult, Output},
@@ -93,6 +93,36 @@ mod tests {
         state::{AccountInfo, Bytecode},
     };
     use revm_scroll::ScrollSpecId;
+
+    fn native_doge_token_tx(
+        caller: Address,
+        nonce: u64,
+        data: Bytes,
+    ) -> ScrollTransactionIntoTxEnv<TxEnv> {
+        ScrollTransactionIntoTxEnv::new(
+            TxEnv {
+                caller,
+                nonce,
+                kind: TxKind::Call(NATIVE_DOGE_TOKEN_ADDRESS),
+                gas_limit: 1_000_000,
+                data,
+                ..Default::default()
+            },
+            Some(Bytes::new()),
+            Some(TX_L1_FEE_PRECISION_U256),
+            Some(0),
+        )
+    }
+
+    fn transfer_calldata(recipient: Address, amount: U256) -> Bytes {
+        // transfer(address,uint256)
+        let mut calldata = Vec::with_capacity(68);
+        calldata.extend_from_slice(&[0xa9, 0x05, 0x9c, 0xbb]);
+        calldata.extend_from_slice(&[0; 12]);
+        calldata.extend_from_slice(recipient.as_slice());
+        calldata.extend_from_slice(&amount.to_be_bytes::<32>());
+        calldata.into()
+    }
 
     #[test]
     fn test_apply_tsuki_fork_inserts_native_doge_token() -> eyre::Result<()> {
@@ -158,25 +188,19 @@ mod tests {
         let evm_factory: ScrollEvmFactory = ScrollEvmFactory::default();
         let mut evm = evm_factory.create_evm(&mut state, evm_env);
 
-        // transfer(address,uint256)
-        let mut calldata = Vec::with_capacity(68);
-        calldata.extend_from_slice(&[0xa9, 0x05, 0x9c, 0xbb]);
-        calldata.extend_from_slice(&[0; 12]);
-        calldata.extend_from_slice(recipient.as_slice());
-        calldata.extend_from_slice(&transfer_amount.to_be_bytes::<32>());
+        // totalSupply()
+        let result = evm.transact_commit(native_doge_token_tx(sender, 0, bytes!("18160ddd")))?;
+        match result {
+            ExecutionResult::Success { output: Output::Call(output), .. } => {
+                assert_eq!(
+                    output.as_ref(),
+                    TSUKI_NATIVE_DOGE_TOKEN_TOTAL_SUPPLY.to_be_bytes::<32>()
+                );
+            }
+            result => panic!("NativeDogeToken totalSupply failed: {result:?}"),
+        }
 
-        let tx = ScrollTransactionIntoTxEnv::new(
-            TxEnv {
-                caller: sender,
-                kind: TxKind::Call(NATIVE_DOGE_TOKEN_ADDRESS),
-                gas_limit: 1_000_000,
-                data: calldata.into(),
-                ..Default::default()
-            },
-            Some(Bytes::new()),
-            Some(TX_L1_FEE_PRECISION_U256),
-            Some(0),
-        );
+        let tx = native_doge_token_tx(sender, 1, transfer_calldata(recipient, transfer_amount));
         let result = evm.transact_commit(tx)?;
 
         match result {
@@ -191,6 +215,37 @@ mod tests {
             initial_balance - transfer_amount
         );
         assert_eq!(evm.db_mut().basic(recipient)?.unwrap_or_default().balance, transfer_amount);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_native_doge_token_transfer_reverts_for_insufficient_balance() -> eyre::Result<()> {
+        let sender = address!("0000000000000000000000000000000000001001");
+        let recipient = address!("0000000000000000000000000000000000001002");
+        let initial_balance = U256::from(1_000);
+
+        let db = EmptyDB::new();
+        let mut state =
+            State::builder().with_database(db).with_bundle_update().without_state_clear().build();
+        state
+            .insert_account(sender, AccountInfo { balance: initial_balance, ..Default::default() });
+        apply_tsuki_hard_fork(&mut state)?;
+
+        let evm_env = EvmEnv::new(CfgEnv::new_with_spec(ScrollSpecId::TSUKI), BlockEnv::default());
+        let evm_factory: ScrollEvmFactory = ScrollEvmFactory::default();
+        let mut evm = evm_factory.create_evm(&mut state, evm_env);
+
+        let transfer_amount = initial_balance + U256::from(1);
+        let tx = native_doge_token_tx(sender, 0, transfer_calldata(recipient, transfer_amount));
+        let result = evm.transact_commit(tx)?;
+
+        assert!(
+            matches!(&result, ExecutionResult::Revert { .. }),
+            "expected insufficient-balance transfer to revert, got {result:?}"
+        );
+        assert_eq!(evm.db_mut().basic(sender)?.unwrap_or_default().balance, initial_balance);
+        assert_eq!(evm.db_mut().basic(recipient)?.unwrap_or_default().balance, U256::ZERO);
 
         Ok(())
     }
