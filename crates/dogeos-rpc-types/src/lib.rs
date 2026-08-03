@@ -4,6 +4,8 @@
 
 extern crate alloc;
 
+mod network;
+pub use network::Scroll;
 mod receipt;
 pub use receipt::{ScrollTransactionReceipt, ScrollTransactionReceiptFields};
 mod transaction;

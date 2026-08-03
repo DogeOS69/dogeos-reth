@@ -38,6 +38,7 @@ reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth.git", rev =
 alloy-consensus = { version = "=1.8.2", default-features = false }
 alloy-chains = { version = "0.2.34", default-features = false }
 alloy-eips = { version = "1.8.2", default-features = false }
+alloy-network = { version = "1.8.2", default-features = false }
 alloy-network-primitives = { version = "1.8.2", default-features = false }
 alloy-genesis = { version = "1.8.2", default-features = false }
 alloy-evm = { version = "=0.30.0", default-features = false }
