@@ -1,6 +1,6 @@
 [workspace]
-members = ["crates/dogeos-chainspec", "crates/dogeos-hardforks", "crates/dogeos-protocol-types", "crates/dogeos-reth-engine", "crates/dogeos-reth-evm", "crates/dogeos-reth-node", "crates/dogeos-reth-primitives", "crates/dogeos-reth-spike"]
-default-members = ["crates/dogeos-chainspec", "crates/dogeos-hardforks", "crates/dogeos-protocol-types", "crates/dogeos-reth-engine", "crates/dogeos-reth-evm", "crates/dogeos-reth-node", "crates/dogeos-reth-primitives", "crates/dogeos-reth-spike"]
+members = ["crates/dogeos-chainspec", "crates/dogeos-hardforks", "crates/dogeos-protocol-types", "crates/dogeos-reth-engine", "crates/dogeos-reth-evm", "crates/dogeos-reth-node", "crates/dogeos-reth-payload", "crates/dogeos-reth-primitives", "crates/dogeos-reth-spike"]
+default-members = ["crates/dogeos-chainspec", "crates/dogeos-hardforks", "crates/dogeos-protocol-types", "crates/dogeos-reth-engine", "crates/dogeos-reth-evm", "crates/dogeos-reth-node", "crates/dogeos-reth-payload", "crates/dogeos-reth-primitives", "crates/dogeos-reth-spike"]
 resolver = "2"
 
 [workspace.package]
@@ -66,6 +66,7 @@ dogeos-hardforks = { path = "crates/dogeos-hardforks", default-features = false 
 dogeos-chainspec = { path = "crates/dogeos-chainspec", default-features = false }
 dogeos-reth-primitives = { path = "crates/dogeos-reth-primitives", default-features = false }
 dogeos-reth-engine = { path = "crates/dogeos-reth-engine", default-features = false }
+dogeos-reth-payload = { path = "crates/dogeos-reth-payload", default-features = false }
 
 # DogeOS-owned EVM behavior is retained outside upstream Reth. This revision
 # comes from the REVM 36 upgrade branch.

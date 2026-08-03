@@ -1,7 +1,7 @@
 use crate::{
     ScrollBlockAssembler, ScrollBlockExecutionCtx, ScrollBlockExecutorFactory,
     ScrollDefaultPrecompilesFactory, ScrollPrecompilesFactory, ScrollReceiptBuilder,
-    ScrollRethReceiptBuilder, ScrollTransactionIntoTxEnv,
+    ScrollRethReceiptBuilder, ScrollTransactionIntoTxEnv, spec_id_at_timestamp_and_number,
 };
 use alloc::sync::Arc;
 use alloy_consensus::{Block, BlockBody, BlockHeader, Header};
@@ -9,7 +9,7 @@ use alloy_evm::{FromRecoveredTx, FromTxWithEncoded};
 use alloy_primitives::{Address, B256, BlockNumber, BlockTimestamp, U256};
 use core::convert::Infallible;
 use dogeos_chainspec::{ChainConfig, DogeosChainSpec, ScrollChainConfig};
-use dogeos_hardforks::{DogeosHardfork, DogeosHardforks};
+use dogeos_hardforks::DogeosHardforks;
 use dogeos_reth_primitives::{DogeosPrimitives, ScrollReceipt};
 use reth_chainspec::EthChainSpec;
 use reth_evm::{ConfigureEvm, EvmEnv};
@@ -77,26 +77,6 @@ where
         number: BlockNumber,
     ) -> ScrollSpecId {
         spec_id_at_timestamp_and_number(timestamp, number, self.chain_spec())
-    }
-}
-
-/// Maps the retained Feynman+ hardfork schedule to `revm-scroll` specification IDs.
-pub fn spec_id_at_timestamp_and_number(
-    timestamp: u64,
-    number: u64,
-    chain_spec: impl DogeosHardforks,
-) -> ScrollSpecId {
-    let active = |fork| {
-        chain_spec
-            .dogeos_fork_activation(fork)
-            .active_at_timestamp_or_number(timestamp, number)
-    };
-    if active(DogeosHardfork::Tsuki) {
-        ScrollSpecId::TSUKI
-    } else if active(DogeosHardfork::GalileoV2) || active(DogeosHardfork::Galileo) {
-        ScrollSpecId::GALILEO
-    } else {
-        ScrollSpecId::FEYNMAN
     }
 }
 

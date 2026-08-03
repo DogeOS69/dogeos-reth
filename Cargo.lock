@@ -2720,6 +2720,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dogeos-reth-payload"
+version = "0.1.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-rlp",
+ "dogeos-protocol-types",
+ "dogeos-reth-engine",
+ "dogeos-reth-primitives",
+ "reth-chainspec",
+]
+
+[[package]]
 name = "dogeos-reth-primitives"
 version = "0.1.0"
 dependencies = [

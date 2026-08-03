@@ -20,7 +20,7 @@ dogeos-reth-primitives = { workspace = true, optional = true }
 encoder-standard = { workspace = true, optional = true }
 reth-evm = { workspace = true, optional = true }
 reth-execution-types = { workspace = true, optional = true }
-reth-chainspec = { workspace = true, optional = true }
+reth-chainspec.workspace = true
 reth-primitives-traits = { workspace = true, optional = true }
 revm = { workspace = true, features = ["optional_no_base_fee"] }
 revm-scroll.workspace = true
@@ -46,7 +46,6 @@ std = [
     "reth-evm/std",
     "dep:reth-execution-types",
     "reth-execution-types/std",
-    "dep:reth-chainspec",
     "reth-chainspec/std",
     "dep:reth-primitives-traits",
     "reth-primitives-traits/std",

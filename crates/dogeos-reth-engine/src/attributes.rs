@@ -8,7 +8,6 @@ use reth_payload_primitives::PayloadAttributes as PayloadAttributesTrait;
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScrollPayloadAttributes {
-    #[serde(flatten)]
     pub payload_attributes: PayloadAttributes,
     pub transactions: Option<Vec<Bytes>>,
     pub no_tx_pool: bool,
@@ -144,6 +143,8 @@ mod tests {
             ..Default::default()
         };
         let json = serde_json::to_string(&attributes).unwrap();
+        assert!(json.contains("\"payloadAttributes\""));
+        assert!(json.contains("\"noTxPool\":true"));
         assert_eq!(
             serde_json::from_str::<ScrollPayloadAttributes>(&json).unwrap(),
             attributes

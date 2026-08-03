@@ -12,7 +12,15 @@ pub use tx::{
 
 extern crate alloc;
 
+mod base_fee;
 pub mod gas_price_oracle;
+pub use base_fee::{
+    DEFAULT_BASE_FEE_OVERHEAD, L1_BASE_FEE_PRECISION, MAX_L2_BASE_FEE, ScrollBaseFeeProvider,
+};
+mod l1;
+pub use l1::RethL1BlockInfo;
+mod spec;
+pub use spec::spec_id_at_timestamp_and_number;
 mod system_caller;
 pub mod transitions;
 
@@ -30,7 +38,7 @@ pub use build::ScrollBlockAssembler;
 #[cfg(feature = "std")]
 mod config;
 #[cfg(feature = "std")]
-pub use config::{ScrollEvmConfig, ScrollNextBlockEnvAttributes, spec_id_at_timestamp_and_number};
+pub use config::{ScrollEvmConfig, ScrollNextBlockEnvAttributes};
 #[cfg(feature = "std")]
 mod receipt;
 #[cfg(feature = "std")]
