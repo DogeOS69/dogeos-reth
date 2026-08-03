@@ -2667,6 +2667,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "dogeos-reth-evm"
+version = "0.1.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-evm",
+ "alloy-primitives",
+ "dogeos-protocol-types",
+ "encoder-standard",
+ "eyre",
+ "revm",
+ "revm-scroll",
+ "serde",
+]
+
+[[package]]
 name = "dogeos-reth-node"
 version = "0.1.0"
 dependencies = [
@@ -2800,6 +2816,14 @@ dependencies = [
  "serdect",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "encoder-standard"
+version = "0.1.0"
+source = "git+https://github.com/scroll-tech/da-codec?rev=54929786434f00efd00431517a332f1ec8ca58d4#54929786434f00efd00431517a332f1ec8ca58d4"
+dependencies = [
+ "zstd",
 ]
 
 [[package]]
@@ -8631,6 +8655,7 @@ dependencies = [
  "revm",
  "revm-inspector",
  "revm-primitives",
+ "serde",
 ]
 
 [[package]]

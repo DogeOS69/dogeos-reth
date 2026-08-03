@@ -1,0 +1,47 @@
+[package]
+name = "dogeos-reth-evm"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
+alloy-evm = { workspace = true, features = ["rpc"] }
+alloy-primitives.workspace = true
+dogeos-protocol-types.workspace = true
+encoder-standard = { workspace = true, optional = true }
+revm = { workspace = true, features = ["optional_no_base_fee"] }
+revm-scroll.workspace = true
+serde = { workspace = true, optional = true }
+
+[dev-dependencies]
+eyre.workspace = true
+
+[features]
+default = ["std"]
+std = [
+    "alloy-consensus/std",
+    "alloy-eips/std",
+    "alloy-evm/std",
+    "alloy-primitives/std",
+    "dogeos-protocol-types/std",
+    "dogeos-protocol-types/k256",
+    "revm/std",
+    "revm-scroll/std",
+    "serde?/std",
+    "zstd_compression",
+]
+serde = [
+    "dep:serde",
+    "alloy-consensus/serde",
+    "alloy-eips/serde",
+    "alloy-primitives/serde",
+    "dogeos-protocol-types/serde",
+    "revm/serde",
+    "revm-scroll/serde",
+]
+zstd_compression = ["dep:encoder-standard"]
