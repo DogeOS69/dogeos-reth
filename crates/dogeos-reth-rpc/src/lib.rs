@@ -4,4 +4,7 @@ mod receipt;
 pub use receipt::{ScrollReceiptBuilder, ScrollReceiptConverter};
 
 mod transaction;
-pub use transaction::{ScrollRpcTxConverter, ScrollSimTxConverter, ScrollTxInfoMapper};
+pub use transaction::{
+    DogeosRpcConverter, ScrollRpcTxConverter, ScrollSimTxConverter, ScrollTxEnvConverter,
+    ScrollTxInfoMapper, dogeos_rpc_converter,
+};

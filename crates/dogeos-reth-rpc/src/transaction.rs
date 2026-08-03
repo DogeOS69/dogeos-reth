@@ -6,12 +6,17 @@ use alloy_consensus::{
 use alloy_primitives::{Address, Signature};
 use alloy_rpc_types_eth::TransactionInfo;
 use dogeos_protocol_types::{ScrollAdditionalInfo, ScrollTransactionInfo, ScrollTxEnvelope};
+use dogeos_reth_evm::{ScrollEvmConfig, ScrollTransactionIntoTxEnv};
 use dogeos_reth_primitives::ScrollReceipt;
-use dogeos_rpc_types::{ScrollRpcTransaction, ScrollTransactionRequest};
+use dogeos_rpc_types::{Scroll, ScrollRpcTransaction, ScrollTransactionRequest};
 use reth_errors::ProviderError;
-use reth_rpc_convert::TxInfoMapper;
-use reth_rpc_convert::transaction::{RpcTxConverter, SimTxConverter};
+use reth_evm::EvmEnvFor;
+use reth_rpc_convert::{
+    EthTxEnvError, RpcConverter, TryIntoTxEnv, TxInfoMapper,
+    transaction::{RpcTxConverter, SimTxConverter, TxEnvConverter},
+};
 use reth_storage_api::ReceiptProvider;
+use revm::context::TxEnv;
 use std::{convert::Infallible, fmt};
 
 /// Adds receipt-derived Scroll transaction metadata during RPC conversion.
@@ -100,6 +105,44 @@ impl SimTxConverter<ScrollTransactionRequest, ScrollTxEnvelope> for ScrollSimTxC
         let signature = Signature::new(Default::default(), Default::default(), false);
         Ok(transaction.into_signed(signature).into())
     }
+}
+
+/// Converts RPC call requests into the transaction environment used by Scroll REVM.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ScrollTxEnvConverter;
+
+impl TxEnvConverter<ScrollTransactionRequest, ScrollEvmConfig> for ScrollTxEnvConverter {
+    type Error = EthTxEnvError;
+
+    fn convert_tx_env(
+        &self,
+        request: ScrollTransactionRequest,
+        evm_env: &EvmEnvFor<ScrollEvmConfig>,
+    ) -> Result<ScrollTransactionIntoTxEnv<TxEnv>, Self::Error> {
+        let tx_env = request.into_inner().try_into_tx_env(evm_env)?;
+        Ok(ScrollTransactionIntoTxEnv::new(tx_env, None, None, None))
+    }
+}
+
+/// Fully assembled conversion pipeline for the DogeOS `eth_` RPC API.
+pub type DogeosRpcConverter<Provider> = RpcConverter<
+    Scroll,
+    ScrollEvmConfig,
+    crate::ScrollReceiptConverter,
+    (),
+    ScrollTxInfoMapper<Provider>,
+    ScrollSimTxConverter,
+    ScrollRpcTxConverter,
+    ScrollTxEnvConverter,
+>;
+
+/// Builds the conversion pipeline used by the DogeOS node RPC component.
+pub fn dogeos_rpc_converter<Provider>(provider: Provider) -> DogeosRpcConverter<Provider> {
+    RpcConverter::new(crate::ScrollReceiptConverter)
+        .with_mapper(ScrollTxInfoMapper::new(provider))
+        .with_sim_tx_converter(ScrollSimTxConverter)
+        .with_rpc_tx_converter(ScrollRpcTxConverter)
+        .with_tx_env_converter(ScrollTxEnvConverter)
 }
 
 #[cfg(test)]

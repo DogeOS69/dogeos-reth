@@ -24,6 +24,10 @@ use serde::{Deserialize, Serialize};
 pub struct ScrollTransactionRequest(TransactionRequest);
 
 impl ScrollTransactionRequest {
+    pub fn into_inner(self) -> TransactionRequest {
+        self.0
+    }
+
     pub const fn from(mut self, value: Address) -> Self {
         self.0.from = Some(value);
         self
@@ -92,6 +96,20 @@ impl ScrollTransactionRequest {
             }
             TypedTransaction::Eip7702(transaction) => ScrollTypedTransaction::Eip7702(transaction),
         })
+    }
+}
+
+#[cfg(feature = "reth")]
+impl reth_rpc_traits::SignableTxRequest<ScrollTxEnvelope> for ScrollTransactionRequest {
+    async fn try_build_and_sign(
+        self,
+        signer: impl alloy_network::TxSigner<Signature> + Send,
+    ) -> Result<ScrollTxEnvelope, reth_rpc_traits::SignTxRequestError> {
+        let mut transaction = self
+            .build_typed_tx()
+            .map_err(|_| reth_rpc_traits::SignTxRequestError::InvalidTransactionRequest)?;
+        let signature = signer.sign_transaction(&mut transaction).await?;
+        Ok(transaction.into_signed(signature).into())
     }
 }
 

@@ -12,13 +12,16 @@ alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-eth.workspace = true
 dogeos-protocol-types = { workspace = true, features = ["std"] }
+dogeos-reth-evm = { workspace = true, features = ["std"] }
 dogeos-reth-primitives = { workspace = true, features = ["std"] }
-dogeos-rpc-types = { workspace = true, features = ["std"] }
+dogeos-rpc-types = { workspace = true, features = ["reth", "std"] }
 reth-errors.workspace = true
+reth-evm.workspace = true
 reth-primitives-traits = { workspace = true, features = ["std"] }
 reth-rpc-convert.workspace = true
 reth-rpc-eth-types.workspace = true
 reth-storage-api = { workspace = true, features = ["std"] }
+revm.workspace = true
 
 [features]
 default = ["std"]

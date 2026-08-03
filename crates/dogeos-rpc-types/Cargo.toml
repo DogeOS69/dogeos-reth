@@ -19,9 +19,11 @@ derive_more.workspace = true
 dogeos-protocol-types = { workspace = true, features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
+reth-rpc-traits = { workspace = true, optional = true }
 
 [features]
 default = ["std"]
+reth = ["dep:reth-rpc-traits"]
 std = [
     "alloy-consensus/std",
     "alloy-eips/std",
@@ -33,4 +35,5 @@ std = [
     "dogeos-protocol-types/std",
     "serde/std",
     "serde_json/std",
+    "reth-rpc-traits?/std",
 ]
