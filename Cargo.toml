@@ -1,6 +1,6 @@
 [workspace]
-members = ["crates/dogeos-chainspec", "crates/dogeos-hardforks", "crates/dogeos-protocol-types", "crates/dogeos-reth-consensus", "crates/dogeos-reth-engine", "crates/dogeos-reth-evm", "crates/dogeos-reth-node", "crates/dogeos-reth-payload", "crates/dogeos-reth-primitives", "crates/dogeos-reth-spike", "crates/dogeos-reth-txpool"]
-default-members = ["crates/dogeos-chainspec", "crates/dogeos-hardforks", "crates/dogeos-protocol-types", "crates/dogeos-reth-consensus", "crates/dogeos-reth-engine", "crates/dogeos-reth-evm", "crates/dogeos-reth-node", "crates/dogeos-reth-payload", "crates/dogeos-reth-primitives", "crates/dogeos-reth-spike", "crates/dogeos-reth-txpool"]
+members = ["crates/dogeos-chainspec", "crates/dogeos-hardforks", "crates/dogeos-protocol-types", "crates/dogeos-reth-consensus", "crates/dogeos-reth-engine", "crates/dogeos-reth-evm", "crates/dogeos-reth-node", "crates/dogeos-reth-payload", "crates/dogeos-reth-primitives", "crates/dogeos-reth-spike", "crates/dogeos-reth-txpool", "crates/dogeos-rpc-types"]
+default-members = ["crates/dogeos-chainspec", "crates/dogeos-hardforks", "crates/dogeos-protocol-types", "crates/dogeos-reth-consensus", "crates/dogeos-reth-engine", "crates/dogeos-reth-evm", "crates/dogeos-reth-node", "crates/dogeos-reth-payload", "crates/dogeos-reth-primitives", "crates/dogeos-reth-spike", "crates/dogeos-reth-txpool", "crates/dogeos-rpc-types"]
 resolver = "2"
 
 [workspace.package]
@@ -38,11 +38,13 @@ reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth.git", rev =
 alloy-consensus = { version = "=1.8.2", default-features = false }
 alloy-chains = { version = "0.2.34", default-features = false }
 alloy-eips = { version = "1.8.2", default-features = false }
+alloy-network-primitives = { version = "1.8.2", default-features = false }
 alloy-genesis = { version = "1.8.2", default-features = false }
 alloy-evm = { version = "=0.30.0", default-features = false }
 alloy-hardforks = { version = "=0.4.7", default-features = false }
 alloy-primitives = { version = "=1.5.7", default-features = false }
 alloy-rpc-types-engine = { version = "=1.8.2", default-features = false }
+alloy-rpc-types-eth = { version = "=1.8.2", default-features = false }
 alloy-rlp = { version = "0.3.13", default-features = false, features = ["core-net"] }
 alloy-serde = { version = "1.8.2", default-features = false }
 revm = { version = "=36.0.0", default-features = false }
@@ -84,6 +86,7 @@ dogeos-reth-payload = { path = "crates/dogeos-reth-payload", default-features = 
 dogeos-reth-evm = { path = "crates/dogeos-reth-evm", default-features = false }
 dogeos-reth-consensus = { path = "crates/dogeos-reth-consensus", default-features = false }
 dogeos-reth-txpool = { path = "crates/dogeos-reth-txpool", default-features = false }
+dogeos-rpc-types = { path = "crates/dogeos-rpc-types", default-features = false }
 
 # DogeOS-owned EVM behavior is retained outside upstream Reth. This revision
 # comes from the REVM 36 upgrade branch.
