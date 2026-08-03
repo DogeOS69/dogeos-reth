@@ -70,7 +70,6 @@ where
                 .max_batch_size(config.max_batch_size)
                 .max_blocking_io_requests(config.max_blocking_io_requests)
                 .pending_block_kind(config.pending_block_kind)
-                .raw_tx_forwarder(config.raw_tx_forwarder)
                 .evm_memory_limit(config.rpc_evm_memory_limit)
                 .force_blob_sidecar_upcasting(config.force_blob_sidecar_upcasting)
                 .with_rpc_converter(converter)

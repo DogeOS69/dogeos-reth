@@ -60,8 +60,27 @@ impl DogeosNodeTypes {
         Node: reth_node_builder::FullNodeComponents<Types = Self>,
         Node::Provider: reth_storage_api::StateProofProvider,
         DogeosEthApiBuilder: reth_node_builder::rpc::EthApiBuilder<Node>,
+        <DogeosEthApiBuilder as reth_node_builder::rpc::EthApiBuilder<Node>>::EthApi:
+            reth_rpc_eth_api::helpers::EthTransactions<Error = reth_rpc_eth_types::EthApiError>,
     {
         DogeosAddOns::default().extend_rpc_modules(|ctx| {
+            if let Some(url) = ctx.config().rpc.rpc_forwarder.clone() {
+                let sequencer = dogeos_reth_rpc::SequencerClient::with_http_client(
+                    url.as_str(),
+                    reqwest::Client::new(),
+                )?;
+                let forwarder = dogeos_reth_rpc::DogeosRawTransactionForwarder::new(
+                    ctx.registry.eth_api().clone(),
+                    sequencer,
+                    ctx.registry.tasks().clone(),
+                    !ctx.config().txpool.no_local_transactions_propagation,
+                );
+                ctx.modules.add_or_replace_if_module_configured(
+                    RethRpcModule::Eth,
+                    forwarder.into_rpc()?,
+                )?;
+            }
+
             let witness_api = dogeos_reth_rpc::DogeosDebugWitnessApi::new(ctx.registry.debug_api());
             ctx.modules.add_or_replace_if_module_configured(
                 RethRpcModule::Debug,
