@@ -8,6 +8,8 @@ mod attributes;
 pub use attributes::{BlockDataHint, ScrollPayloadAttributes};
 mod built;
 pub use built::ScrollBuiltPayload;
+mod validator;
+pub use validator::DogeosEngineValidator;
 
 use core::marker::PhantomData;
 

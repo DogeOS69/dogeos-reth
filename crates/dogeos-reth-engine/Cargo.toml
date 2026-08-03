@@ -8,6 +8,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+alloy-consensus.workspace = true
 alloy-eips.workspace = true
 alloy-primitives.workspace = true
 alloy-rlp.workspace = true
@@ -25,6 +26,7 @@ serde_json.workspace = true
 [features]
 default = ["std"]
 std = [
+    "alloy-consensus/std",
     "alloy-eips/std",
     "alloy-primitives/std",
     "alloy-rlp/std",
