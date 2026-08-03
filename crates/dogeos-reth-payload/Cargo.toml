@@ -13,8 +13,26 @@ alloy-eips.workspace = true
 alloy-primitives.workspace = true
 alloy-rlp.workspace = true
 dogeos-reth-engine = { workspace = true, features = ["std"] }
+dogeos-reth-evm = { workspace = true, features = ["std"] }
 dogeos-reth-primitives = { workspace = true, features = ["std", "serde", "reth-codec"] }
+dogeos-chainspec = { workspace = true, features = ["std"] }
+dogeos-hardforks = { workspace = true, features = ["std"] }
+either.workspace = true
+reth-basic-payload-builder.workspace = true
 reth-chainspec = { workspace = true, features = ["std"] }
+reth-errors.workspace = true
+reth-evm.workspace = true
+reth-execution-cache.workspace = true
+reth-execution-types.workspace = true
+reth-payload-builder-primitives.workspace = true
+reth-payload-primitives.workspace = true
+reth-primitives-traits = { workspace = true, features = ["std"] }
+reth-revm.workspace = true
+reth-storage-api = { workspace = true, features = ["std"] }
+reth-transaction-pool.workspace = true
+revm.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 dogeos-protocol-types = { workspace = true, features = ["std"] }

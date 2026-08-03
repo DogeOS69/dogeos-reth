@@ -4,6 +4,8 @@ mod config;
 pub use config::{MIN_TRANSACTION_DATA_SIZE, PayloadBuildingBreaker, ScrollBuilderConfig};
 mod forced;
 pub use forced::decode_forced_transactions;
+mod builder;
+pub use builder::{ScrollPayloadBuilder, ScrollPayloadBuilderError};
 
 use alloy_consensus::Transaction;
 use alloy_rlp::Encodable;
