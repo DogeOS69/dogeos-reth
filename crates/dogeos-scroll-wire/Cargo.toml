@@ -1,0 +1,21 @@
+[package]
+name = "dogeos-scroll-wire"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+alloy-primitives = { workspace = true, features = ["std"] }
+alloy-rlp = { workspace = true, features = ["derive"] }
+dogeos-reth-primitives = { workspace = true, features = ["std"] }
+futures.workspace = true
+reth-eth-wire.workspace = true
+reth-network.workspace = true
+reth-network-api.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tracing.workspace = true

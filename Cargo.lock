@@ -2738,11 +2738,13 @@ dependencies = [
  "dogeos-reth-rpc",
  "dogeos-reth-txpool",
  "dogeos-rpc-types",
+ "dogeos-scroll-wire",
  "eyre",
  "reqwest 0.13.4",
  "reth-consensus",
  "reth-evm",
  "reth-network",
+ "reth-network-api",
  "reth-node-builder",
  "reth-node-types",
  "reth-primitives-traits",
@@ -2899,6 +2901,23 @@ dependencies = [
  "reth-rpc-traits",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "dogeos-scroll-wire"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-rlp",
+ "dogeos-reth-primitives",
+ "futures",
+ "reth-eth-wire",
+ "reth-network",
+ "reth-network-api",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-stream",
+ "tracing",
 ]
 
 [[package]]

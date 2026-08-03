@@ -18,11 +18,13 @@ dogeos-reth-txpool = { workspace = true, features = ["std"] }
 dogeos-reth-primitives = { workspace = true, features = ["std", "serde", "reth-codec"] }
 dogeos-reth-rpc = { workspace = true, features = ["std"] }
 dogeos-rpc-types = { workspace = true, features = ["reth", "std"] }
+dogeos-scroll-wire.workspace = true
 eyre.workspace = true
 reth-evm.workspace = true
 reth-node-builder.workspace = true
 reth-node-types.workspace = true
 reth-network.workspace = true
+reth-network-api.workspace = true
 reth-provider.workspace = true
 reth-primitives-traits.workspace = true
 reth-rpc.workspace = true

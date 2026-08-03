@@ -1,6 +1,6 @@
 [workspace]
-members = ["crates/dogeos-chainspec", "crates/dogeos-hardforks", "crates/dogeos-protocol-types", "crates/dogeos-reth-consensus", "crates/dogeos-reth-engine", "crates/dogeos-reth-evm", "crates/dogeos-reth-node", "crates/dogeos-reth-payload", "crates/dogeos-reth-primitives", "crates/dogeos-reth-rpc", "crates/dogeos-reth-spike", "crates/dogeos-reth-txpool", "crates/dogeos-rpc-types"]
-default-members = ["crates/dogeos-chainspec", "crates/dogeos-hardforks", "crates/dogeos-protocol-types", "crates/dogeos-reth-consensus", "crates/dogeos-reth-engine", "crates/dogeos-reth-evm", "crates/dogeos-reth-node", "crates/dogeos-reth-payload", "crates/dogeos-reth-primitives", "crates/dogeos-reth-rpc", "crates/dogeos-reth-spike", "crates/dogeos-reth-txpool", "crates/dogeos-rpc-types"]
+members = ["crates/dogeos-chainspec", "crates/dogeos-hardforks", "crates/dogeos-protocol-types", "crates/dogeos-reth-consensus", "crates/dogeos-reth-engine", "crates/dogeos-reth-evm", "crates/dogeos-reth-node", "crates/dogeos-reth-payload", "crates/dogeos-reth-primitives", "crates/dogeos-reth-rpc", "crates/dogeos-reth-spike", "crates/dogeos-reth-txpool", "crates/dogeos-rpc-types", "crates/dogeos-scroll-wire"]
+default-members = ["crates/dogeos-chainspec", "crates/dogeos-hardforks", "crates/dogeos-protocol-types", "crates/dogeos-reth-consensus", "crates/dogeos-reth-engine", "crates/dogeos-reth-evm", "crates/dogeos-reth-node", "crates/dogeos-reth-payload", "crates/dogeos-reth-primitives", "crates/dogeos-reth-rpc", "crates/dogeos-reth-spike", "crates/dogeos-reth-txpool", "crates/dogeos-rpc-types", "crates/dogeos-scroll-wire"]
 resolver = "2"
 
 [workspace.package]
@@ -20,6 +20,8 @@ reth-consensus-common = { git = "https://github.com/paradigmxyz/reth.git", rev =
 reth-ethereum-forks = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-network-peers = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-network = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
+reth-network-api = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
+reth-eth-wire = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-trie-common = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-evm = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-execution-types = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
@@ -88,7 +90,10 @@ serde_with = { version = "3", default-features = false, features = ["macros"] }
 encoder-standard = { git = "https://github.com/scroll-tech/da-codec", rev = "54929786434f00efd00431517a332f1ec8ca58d4", default-features = false }
 eyre = "0.6"
 either = { version = "1", default-features = false }
+futures = "0.3"
 thiserror = "2"
+tokio = { version = "1", default-features = false, features = ["sync"] }
+tokio-stream = "0.1"
 tracing = { version = "0.1", default-features = false }
 
 # DogeOS-owned crates.
@@ -103,6 +108,7 @@ dogeos-reth-consensus = { path = "crates/dogeos-reth-consensus", default-feature
 dogeos-reth-txpool = { path = "crates/dogeos-reth-txpool", default-features = false }
 dogeos-reth-rpc = { path = "crates/dogeos-reth-rpc", default-features = false }
 dogeos-rpc-types = { path = "crates/dogeos-rpc-types", default-features = false }
+dogeos-scroll-wire = { path = "crates/dogeos-scroll-wire", default-features = false }
 
 # DogeOS-owned EVM behavior is retained outside upstream Reth. This revision
 # comes from the REVM 36 upgrade branch.

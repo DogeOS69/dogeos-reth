@@ -1,7 +1,8 @@
 use crate::DogeosNodeTypes;
 use reth_network::{
-    NetworkHandle, NetworkManager, PeersInfo, primitives::BasicNetworkPrimitives,
-    protocol::RlpxSubProtocol,
+    NetworkHandle, NetworkManager, PeersInfo,
+    primitives::BasicNetworkPrimitives,
+    protocol::{IntoRlpxSubProtocol, RlpxSubProtocol},
 };
 use reth_node_builder::{BuilderContext, FullNodeTypes, components::NetworkBuilder};
 use reth_transaction_pool::{PoolPooledTx, PoolTransaction, TransactionPool};
@@ -24,6 +25,18 @@ impl DogeosNetworkBuilder {
     pub fn with_sub_protocol(mut self, protocol: RlpxSubProtocol) -> Self {
         self.extra_protocols.push(protocol);
         self
+    }
+
+    /// Attaches the inherited `scroll/1` protocol and returns its event/announcement manager.
+    pub fn with_scroll_wire(
+        self,
+        config: dogeos_scroll_wire::ScrollWireConfig,
+    ) -> (Self, dogeos_scroll_wire::ScrollWireManager) {
+        let (handler, events) = dogeos_scroll_wire::ScrollWireProtocolHandler::new(config);
+        (
+            self.with_sub_protocol(handler.into_rlpx_sub_protocol()),
+            dogeos_scroll_wire::ScrollWireManager::new(events),
+        )
     }
 }
 
@@ -62,5 +75,18 @@ where
             "DogeOS P2P networking initialized"
         );
         Ok(handle)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scroll_wire_is_attached_through_the_public_rlpx_hook() {
+        let (builder, manager) = DogeosNetworkBuilder::new()
+            .with_scroll_wire(dogeos_scroll_wire::ScrollWireConfig::new(true));
+        assert_eq!(builder.extra_protocols.len(), 1);
+        assert_eq!(manager.connected_peers().count(), 0);
     }
 }
