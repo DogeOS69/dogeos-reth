@@ -2801,6 +2801,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "dogeos-reth-rpc"
+version = "0.1.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-primitives",
+ "alloy-rpc-types-eth",
+ "dogeos-protocol-types",
+ "dogeos-reth-primitives",
+ "dogeos-rpc-types",
+ "reth-errors",
+ "reth-primitives-traits",
+ "reth-rpc-convert",
+ "reth-rpc-eth-types",
+ "reth-storage-api",
+]
+
+[[package]]
 name = "dogeos-reth-spike"
 version = "0.1.0"
 dependencies = [
