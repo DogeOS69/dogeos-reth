@@ -14,7 +14,7 @@ capabilities below remain unverified until exercised through public Reth APIs.
 | Custom transaction and receipt encodings | `crates/scroll/primitives`, `crates/scroll/alloy/consensus` | `dogeos-protocol-types` + `dogeos-reth-primitives` | Public traits; canonical protocol tests and Reth compact round trips pass |
 | Feynman and Tsuki fork policy | `crates/scroll/alloy/hardforks`, `crates/scroll/hardforks` | `dogeos-hardforks` | Public hook; unit-tested |
 | DogeOS mainnet, Chikyu, and dev chainspecs | `crates/scroll/chainspec/{dogeos,chikyu,dev}.rs` | `dogeos-chainspec` | Public `ChainSpec`/`EthChainSpec` hooks; Feynman+ schedules and Chikyu hash unit-tested |
-| Native DOGE and Tsuki state transition | `crates/scroll/alloy/evm/src/block/tsuki.rs`, `revm-scroll` | `dogeos-reth-evm` + `revm-scroll` | EVM factory public hook verified; Tsuki state transition pending |
+| Native DOGE and Tsuki state transition | `crates/scroll/alloy/evm/src/block/tsuki.rs`, `revm-scroll` | `dogeos-reth-evm` + `revm-scroll` | Public REVM state API; insert/no-overwrite/idempotence tests pass |
 | L1 fee and stateful base-fee policy | `crates/scroll/{evm,consensus,txpool}` | `dogeos-reth-evm`, `dogeos-reth-node` | Transaction-env and canonical zstd compression paths unit-tested; executor policy pending |
 | Engine types, payload attributes, build and validation | `crates/scroll/{engine-primitives,payload,node}` | `dogeos-reth-engine` | Unverified |
 | Equal-timestamp validation and forced transaction ordering | `crates/scroll/{consensus,payload}` | `dogeos-reth-engine` | Unverified |

@@ -12,6 +12,9 @@ pub use tx::{
 
 extern crate alloc;
 
+pub mod gas_price_oracle;
+pub mod transitions;
+
 use alloy_evm::{Database, Evm, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
 use alloy_primitives::{Address, Bytes};
 use core::{
