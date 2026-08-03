@@ -23,6 +23,7 @@ dogeos-scroll-wire.workspace = true
 eyre.workspace = true
 reth-evm.workspace = true
 reth-engine-primitives.workspace = true
+reth-chainspec.workspace = true
 reth-node-builder.workspace = true
 reth-node-types.workspace = true
 reth-payload-primitives.workspace = true

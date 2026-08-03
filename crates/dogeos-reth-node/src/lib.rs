@@ -25,23 +25,38 @@ pub use wire_import::{DogeosScrollWireEngineImporter, ScrollWireImportError};
 mod rpc;
 pub use rpc::{DogeosEthApiBuilder, DogeosPendingEnvBuilder};
 
-use reth_node_builder::components::{BasicPayloadServiceBuilder, ComponentsBuilder};
+use reth_node_builder::{
+    Node, NodeAdapter,
+    components::{BasicPayloadServiceBuilder, ComponentsBuilder, NodeComponentsBuilder},
+};
 use reth_rpc_builder::RethRpcModule;
 
 /// Standard RPC and Engine API add-ons for a fully assembled DogeOS node.
 pub type DogeosAddOns<Node> =
     reth_node_builder::rpc::RpcAddOns<Node, DogeosEthApiBuilder, DogeosEngineValidatorBuilder>;
 
+/// Concrete component builder used by the DogeOS node preset.
+pub type DogeosComponentsBuilder<Node> = ComponentsBuilder<
+    Node,
+    DogeosPoolBuilder,
+    BasicPayloadServiceBuilder<DogeosPayloadBuilderBuilder>,
+    DogeosNetworkBuilder,
+    DogeosExecutorBuilder,
+    DogeosConsensusBuilder,
+>;
+
+/// Concrete components and adapter produced by the DogeOS node preset.
+pub type DogeosComponents<Node> =
+    <DogeosComponentsBuilder<Node> as NodeComponentsBuilder<Node>>::Components;
+pub type DogeosNodeAdapter<Node> = NodeAdapter<Node, DogeosComponents<Node>>;
+pub type DogeosEthApi<Node> = reth_rpc::EthApi<
+    Node,
+    dogeos_reth_rpc::DogeosRpcConverter<<Node as reth_node_builder::FullNodeTypes>::Provider>,
+>;
+
 impl DogeosNodeTypes {
     /// Complete Reth 2 component graph using DogeOS-owned execution and policy components.
-    pub fn components<Node>() -> ComponentsBuilder<
-        Node,
-        DogeosPoolBuilder,
-        BasicPayloadServiceBuilder<DogeosPayloadBuilderBuilder>,
-        DogeosNetworkBuilder,
-        DogeosExecutorBuilder,
-        DogeosConsensusBuilder,
-    >
+    pub fn components<Node>() -> DogeosComponentsBuilder<Node>
     where
         Node: reth_node_builder::FullNodeTypes<Types = Self>,
     {
@@ -57,13 +72,20 @@ impl DogeosNodeTypes {
     }
 
     /// Complete RPC/Engine add-on graph using DogeOS conversion and payload validation.
-    pub fn add_ons<Node>() -> DogeosAddOns<Node>
+    pub fn add_ons<Node>() -> DogeosAddOns<DogeosNodeAdapter<Node>>
     where
-        Node: reth_node_builder::FullNodeComponents<Types = Self>,
+        Node: reth_node_builder::FullNodeTypes<Types = Self>,
         Node::Provider: reth_storage_api::StateProofProvider,
-        DogeosEthApiBuilder: reth_node_builder::rpc::EthApiBuilder<Node>,
-        <DogeosEthApiBuilder as reth_node_builder::rpc::EthApiBuilder<Node>>::EthApi:
-            reth_rpc_eth_api::helpers::EthTransactions<Error = reth_rpc_eth_types::EthApiError>,
+        DogeosEthApiBuilder: reth_node_builder::rpc::EthApiBuilder<
+                DogeosNodeAdapter<Node>,
+                EthApi = DogeosEthApi<DogeosNodeAdapter<Node>>,
+            >,
+        DogeosEthApi<DogeosNodeAdapter<Node>>: reth_rpc_eth_api::helpers::EthTransactions<Error = reth_rpc_eth_types::EthApiError>
+            + reth_rpc_eth_api::helpers::TraceExt
+            + reth_rpc_eth_api::RpcNodeCore<Provider = Node::Provider>,
+        <DogeosEthApi<DogeosNodeAdapter<Node>> as reth_rpc_eth_api::RpcNodeCore>::Provider:
+            reth_chainspec::ChainSpecProvider<ChainSpec = DogeosChainSpec>
+                + reth_storage_api::StateProofProvider,
     {
         DogeosAddOns::default().extend_rpc_modules(|ctx| {
             if let Some(url) = ctx.config().rpc.rpc_forwarder.clone() {
@@ -107,6 +129,33 @@ impl NodeTypes for DogeosNodeTypes {
     type ChainSpec = DogeosChainSpec;
     type Storage = DogeosStorage;
     type Payload = DogeosEngineTypes;
+}
+
+impl<N> Node<N> for DogeosNodeTypes
+where
+    N: reth_node_builder::FullNodeTypes<Types = Self>,
+    N::Provider: reth_storage_api::StateProofProvider,
+    DogeosEthApiBuilder: reth_node_builder::rpc::EthApiBuilder<
+            DogeosNodeAdapter<N>,
+            EthApi = DogeosEthApi<DogeosNodeAdapter<N>>,
+        >,
+    DogeosEthApi<DogeosNodeAdapter<N>>: reth_rpc_eth_api::helpers::EthTransactions<Error = reth_rpc_eth_types::EthApiError>
+        + reth_rpc_eth_api::helpers::TraceExt
+        + reth_rpc_eth_api::RpcNodeCore<Provider = N::Provider>,
+    <DogeosEthApi<DogeosNodeAdapter<N>> as reth_rpc_eth_api::RpcNodeCore>::Provider:
+        reth_chainspec::ChainSpecProvider<ChainSpec = DogeosChainSpec>
+            + reth_storage_api::StateProofProvider,
+{
+    type ComponentsBuilder = DogeosComponentsBuilder<N>;
+    type AddOns = DogeosAddOns<DogeosNodeAdapter<N>>;
+
+    fn components_builder(&self) -> Self::ComponentsBuilder {
+        Self::components()
+    }
+
+    fn add_ons(&self) -> Self::AddOns {
+        DogeosNodeTypes::add_ons()
+    }
 }
 
 #[cfg(test)]

@@ -41,6 +41,7 @@ reth-rpc-builder = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4
 reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-rpc-eth-types = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-rpc-traits = { version = "=0.1.1", default-features = false }
+reth-storage-errors = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 
 # The Reth 2.0 dependency family. Exact resolution is checked in CI below.
