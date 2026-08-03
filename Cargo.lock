@@ -2727,13 +2727,17 @@ dependencies = [
 name = "dogeos-reth-node"
 version = "0.1.0"
 dependencies = [
+ "alloy-consensus",
+ "alloy-primitives",
  "dogeos-chainspec",
  "dogeos-reth-consensus",
  "dogeos-reth-engine",
  "dogeos-reth-evm",
  "dogeos-reth-payload",
  "dogeos-reth-primitives",
+ "dogeos-reth-rpc",
  "dogeos-reth-txpool",
+ "dogeos-rpc-types",
  "eyre",
  "reth-consensus",
  "reth-evm",
@@ -2742,6 +2746,10 @@ dependencies = [
  "reth-node-types",
  "reth-primitives-traits",
  "reth-provider",
+ "reth-rpc",
+ "reth-rpc-convert",
+ "reth-rpc-eth-api",
+ "reth-rpc-eth-types",
  "reth-storage-api",
  "reth-transaction-pool",
  "tracing",

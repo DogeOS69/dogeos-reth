@@ -20,6 +20,8 @@ mod pool;
 pub use pool::DogeosPoolBuilder;
 mod network;
 pub use network::DogeosNetworkBuilder;
+mod rpc;
+pub use rpc::{DogeosEthApiBuilder, DogeosPendingEnvBuilder};
 
 use reth_node_builder::components::{BasicPayloadServiceBuilder, ComponentsBuilder};
 
