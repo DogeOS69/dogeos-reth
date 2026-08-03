@@ -1,0 +1,25 @@
+[workspace]
+members = ["crates/dogeos-reth-spike"]
+default-members = ["crates/dogeos-reth-spike"]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/DogeOS69/dogeos-reth"
+
+[workspace.dependencies]
+# Reth v2.0.0. This is a source dependency, not a copied upstream workspace.
+reth-ethereum = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
+reth-node-builder = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
+
+# The Reth 2.0 dependency family. Exact resolution is checked in CI below.
+alloy-consensus = { version = "=1.8.2", default-features = false }
+alloy-evm = { version = "=0.30.0", default-features = false }
+alloy-primitives = { version = "=1.5.7", default-features = false }
+revm = { version = "=36.0.0", default-features = false }
+
+# DogeOS-owned EVM behavior is retained outside upstream Reth. This revision
+# comes from the REVM 36 upgrade branch.
+revm-scroll = { git = "https://github.com/DogeOS69/dogeos-revm.git", rev = "1b87ecf17af029ac2f39e8ad362f3503ff2f4583", default-features = false }
