@@ -10,7 +10,7 @@ capabilities below remain unverified until exercised through public Reth APIs.
 
 | Requirement | Oracle owner / evidence | Standalone DogeOS owner | Reth 2 status |
 | --- | --- | --- | --- |
-| DogeOS-owned `NodeTypes` composition boundary | New `crates/dogeos-reth-node` | `dogeos-reth-node` | Public hook; DogeOS primitives, chainspec, and Engine payload types are wired and type-tested; Storage V2 remains temporary |
+| DogeOS-owned `NodeTypes` composition boundary | New `crates/dogeos-reth-node` | `dogeos-reth-node` | Public hook; DogeOS primitives, chainspec, Engine payload types, and transaction-bound storage are wired and type-tested |
 | Custom transaction and receipt encodings | `crates/scroll/primitives`, `crates/scroll/alloy/consensus` | `dogeos-protocol-types` + `dogeos-reth-primitives` | Public traits; canonical protocol tests and Reth compact round trips pass |
 | Feynman and Tsuki fork policy | `crates/scroll/alloy/hardforks`, `crates/scroll/hardforks` | `dogeos-hardforks` | Public hook; unit-tested |
 | DogeOS mainnet, Chikyu, and dev chainspecs | `crates/scroll/chainspec/{dogeos,chikyu,dev}.rs` | `dogeos-chainspec` | Public `ChainSpec`/`EthChainSpec` hooks; Feynman+ schedules and Chikyu hash unit-tested |
@@ -19,7 +19,7 @@ capabilities below remain unverified until exercised through public Reth APIs.
 | Feynman+ block execution and assembly | `crates/scroll/{alloy/evm,evm}` | `dogeos-reth-evm` | Public Alloy EVM `StateDB`, executor-factory, Reth `ConfigureEvm`, and `BlockAssembler` hooks; workspace tests pass |
 | Engine types, payload attributes, build and validation | `crates/scroll/{engine-primitives,payload,node}` | `dogeos-reth-engine` | Public `EngineTypes`/`PayloadTypes`/`BuiltPayload` hooks; DogeOS attributes, custom-field payload IDs, built-payload envelopes, and NodeTypes wiring compile; payload-job building and validation pending |
 | Equal-timestamp validation and forced transaction ordering | `crates/scroll/{consensus,payload}` | `dogeos-reth-engine` | Unverified |
-| Storage V2 body reconstruction (`ommers=[]`, `withdrawals=None`) | Current code is coupled to fork storage crates | `dogeos-reth-primitives` | Unverified |
+| Storage V2 body reconstruction (`ommers=[]`, `withdrawals=None`) | Current Scroll node aliases `EthStorage<ScrollTransactionSigned>` | `dogeos-reth-node` | Public generic `EthStorage<T>` hook retained without copied Reth code; Feynman+ chainspec yields post-merge empty ommers and pre-Shanghai absent withdrawals |
 | RPC receipt conversion and `debug_executionWitness` | `crates/scroll/rpc`, `crates/scroll/alloy/rpc-types` | `dogeos-reth-rpc` | Unverified |
 | Txpool fee policy and `noTxPool` | `crates/scroll/txpool`, `crates/scroll/node` | `dogeos-reth-node` | Unverified |
 | Block import/listening and `scroll-wire` signed blocks | `crates/scroll/node` plus network integration | `dogeos-reth-node` | Unverified |

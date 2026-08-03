@@ -2714,8 +2714,9 @@ dependencies = [
  "dogeos-chainspec",
  "dogeos-reth-engine",
  "dogeos-reth-primitives",
- "reth-ethereum",
  "reth-node-types",
+ "reth-primitives-traits",
+ "reth-storage-api",
 ]
 
 [[package]]
@@ -6712,53 +6713,9 @@ name = "reth-ethereum"
 version = "2.0.0"
 source = "git+https://github.com/paradigmxyz/reth.git?rev=eb4c15e5e36d8776d46629beae4c0a69af7ab04f#eb4c15e5e36d8776d46629beae4c0a69af7ab04f"
 dependencies = [
- "alloy-rpc-types-engine",
- "alloy-rpc-types-eth",
  "reth-chainspec",
- "reth-codecs",
- "reth-consensus",
- "reth-consensus-common",
- "reth-db",
- "reth-engine-local",
- "reth-eth-wire",
- "reth-ethereum-consensus",
  "reth-ethereum-primitives",
- "reth-evm",
- "reth-evm-ethereum",
- "reth-network",
- "reth-network-api",
- "reth-node-api",
- "reth-node-builder",
- "reth-node-core",
- "reth-node-ethereum",
  "reth-primitives-traits",
- "reth-provider",
- "reth-revm",
- "reth-rpc",
- "reth-rpc-api",
- "reth-rpc-builder",
- "reth-rpc-eth-types",
- "reth-storage-api",
- "reth-tasks",
- "reth-transaction-pool",
- "reth-trie",
- "reth-trie-db",
-]
-
-[[package]]
-name = "reth-ethereum-consensus"
-version = "2.0.0"
-source = "git+https://github.com/paradigmxyz/reth.git?rev=eb4c15e5e36d8776d46629beae4c0a69af7ab04f#eb4c15e5e36d8776d46629beae4c0a69af7ab04f"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-primitives",
- "reth-chainspec",
- "reth-consensus",
- "reth-consensus-common",
- "reth-execution-types",
- "reth-primitives-traits",
- "tracing",
 ]
 
 [[package]]
@@ -6788,36 +6745,6 @@ dependencies = [
  "auto_impl",
  "once_cell",
  "rustc-hash",
-]
-
-[[package]]
-name = "reth-ethereum-payload-builder"
-version = "2.0.0"
-source = "git+https://github.com/paradigmxyz/reth.git?rev=eb4c15e5e36d8776d46629beae4c0a69af7ab04f#eb4c15e5e36d8776d46629beae4c0a69af7ab04f"
-dependencies = [
- "alloy-consensus",
- "alloy-eips",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-rpc-types-engine",
- "reth-basic-payload-builder",
- "reth-chainspec",
- "reth-consensus-common",
- "reth-errors",
- "reth-ethereum-primitives",
- "reth-evm",
- "reth-evm-ethereum",
- "reth-execution-cache",
- "reth-payload-builder",
- "reth-payload-builder-primitives",
- "reth-payload-primitives",
- "reth-payload-validator",
- "reth-primitives-traits",
- "reth-revm",
- "reth-storage-api",
- "reth-transaction-pool",
- "revm",
- "tracing",
 ]
 
 [[package]]
@@ -7406,44 +7333,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "reth-node-ethereum"
-version = "2.0.0"
-source = "git+https://github.com/paradigmxyz/reth.git?rev=eb4c15e5e36d8776d46629beae4c0a69af7ab04f#eb4c15e5e36d8776d46629beae4c0a69af7ab04f"
-dependencies = [
- "alloy-eips",
- "alloy-network",
- "alloy-rpc-types-engine",
- "alloy-rpc-types-eth",
- "eyre",
- "reth-chainspec",
- "reth-engine-local",
- "reth-engine-primitives",
- "reth-ethereum-consensus",
- "reth-ethereum-engine-primitives",
- "reth-ethereum-payload-builder",
- "reth-ethereum-primitives",
- "reth-evm",
- "reth-evm-ethereum",
- "reth-network",
- "reth-node-api",
- "reth-node-builder",
- "reth-payload-primitives",
- "reth-primitives-traits",
- "reth-provider",
- "reth-revm",
- "reth-rpc",
- "reth-rpc-api",
- "reth-rpc-builder",
- "reth-rpc-eth-api",
- "reth-rpc-eth-types",
- "reth-rpc-server-types",
- "reth-tracing",
- "reth-transaction-pool",
- "revm",
- "tokio",
-]
-
-[[package]]
 name = "reth-node-ethstats"
 version = "2.0.0"
 source = "git+https://github.com/paradigmxyz/reth.git?rev=eb4c15e5e36d8776d46629beae4c0a69af7ab04f#eb4c15e5e36d8776d46629beae4c0a69af7ab04f"
@@ -7584,16 +7473,6 @@ dependencies = [
  "sha2",
  "thiserror 2.0.19",
  "tokio",
-]
-
-[[package]]
-name = "reth-payload-validator"
-version = "2.0.0"
-source = "git+https://github.com/paradigmxyz/reth.git?rev=eb4c15e5e36d8776d46629beae4c0a69af7ab04f#eb4c15e5e36d8776d46629beae4c0a69af7ab04f"
-dependencies = [
- "alloy-consensus",
- "alloy-rpc-types-engine",
- "reth-primitives-traits",
 ]
 
 [[package]]
@@ -8647,7 +8526,6 @@ dependencies = [
  "ark-serialize 0.5.0",
  "arrayref",
  "aurora-engine-modexp",
- "blst",
  "c-kzg",
  "cfg-if",
  "k256",
