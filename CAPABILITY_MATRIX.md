@@ -15,7 +15,8 @@ capabilities below remain unverified until exercised through public Reth APIs.
 | Feynman and Tsuki fork policy | `crates/scroll/alloy/hardforks`, `crates/scroll/hardforks` | `dogeos-hardforks` | Public hook; unit-tested |
 | DogeOS mainnet, Chikyu, and dev chainspecs | `crates/scroll/chainspec/{dogeos,chikyu,dev}.rs` | `dogeos-chainspec` | Public `ChainSpec`/`EthChainSpec` hooks; Feynman+ schedules and Chikyu hash unit-tested |
 | Native DOGE and Tsuki state transition | `crates/scroll/alloy/evm/src/block/tsuki.rs`, `revm-scroll` | `dogeos-reth-evm` + `revm-scroll` | Public REVM state API; insert/no-overwrite/idempotence tests pass |
-| L1 fee and stateful base-fee policy | `crates/scroll/{evm,consensus,txpool}` | `dogeos-reth-evm`, `dogeos-reth-node` | Transaction-env and canonical zstd compression paths unit-tested; executor policy pending |
+| L1 fee and stateful base-fee policy | `crates/scroll/{evm,consensus,txpool}` | `dogeos-reth-evm`, `dogeos-reth-node` | Public `BlockExecutorFactory`/`ConfigureEvm` hooks; L1-message validation overrides, L1 fee receipt construction, canonical zstd compression, Feynman+ transitions, EIP-2935 system calls, and no-std core compile are verified |
+| Feynman+ block execution and assembly | `crates/scroll/{alloy/evm,evm}` | `dogeos-reth-evm` | Public Alloy EVM `StateDB`, executor-factory, Reth `ConfigureEvm`, and `BlockAssembler` hooks; workspace tests pass |
 | Engine types, payload attributes, build and validation | `crates/scroll/{engine-primitives,payload,node}` | `dogeos-reth-engine` | Unverified |
 | Equal-timestamp validation and forced transaction ordering | `crates/scroll/{consensus,payload}` | `dogeos-reth-engine` | Unverified |
 | Storage V2 body reconstruction (`ommers=[]`, `withdrawals=None`) | Current code is coupled to fork storage crates | `dogeos-reth-primitives` | Unverified |

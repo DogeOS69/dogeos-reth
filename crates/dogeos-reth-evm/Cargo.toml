@@ -12,8 +12,16 @@ alloy-consensus.workspace = true
 alloy-eips.workspace = true
 alloy-evm = { workspace = true, features = ["rpc"] }
 alloy-primitives.workspace = true
+auto_impl.workspace = true
+dogeos-chainspec.workspace = true
+dogeos-hardforks.workspace = true
 dogeos-protocol-types.workspace = true
+dogeos-reth-primitives = { workspace = true, optional = true }
 encoder-standard = { workspace = true, optional = true }
+reth-evm = { workspace = true, optional = true }
+reth-execution-types = { workspace = true, optional = true }
+reth-chainspec = { workspace = true, optional = true }
+reth-primitives-traits = { workspace = true, optional = true }
 revm = { workspace = true, features = ["optional_no_base_fee"] }
 revm-scroll.workspace = true
 serde = { workspace = true, optional = true }
@@ -30,6 +38,18 @@ std = [
     "alloy-primitives/std",
     "dogeos-protocol-types/std",
     "dogeos-protocol-types/k256",
+    "dogeos-chainspec/std",
+    "dogeos-hardforks/std",
+    "dep:dogeos-reth-primitives",
+    "dogeos-reth-primitives/std",
+    "dep:reth-evm",
+    "reth-evm/std",
+    "dep:reth-execution-types",
+    "reth-execution-types/std",
+    "dep:reth-chainspec",
+    "reth-chainspec/std",
+    "dep:reth-primitives-traits",
+    "reth-primitives-traits/std",
     "revm/std",
     "revm-scroll/std",
     "serde?/std",

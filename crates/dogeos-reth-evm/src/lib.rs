@@ -13,7 +13,28 @@ pub use tx::{
 extern crate alloc;
 
 pub mod gas_price_oracle;
+mod system_caller;
 pub mod transitions;
+
+mod block;
+pub use block::{
+    EvmExt, ReceiptBuilderCtx, ScrollBlockExecutionCtx, ScrollBlockExecutor,
+    ScrollBlockExecutorFactory, ScrollReceiptBuilder, ScrollTxCompressionInfo,
+    ScrollTxCompressionInfos,
+};
+
+#[cfg(feature = "std")]
+mod build;
+#[cfg(feature = "std")]
+pub use build::ScrollBlockAssembler;
+#[cfg(feature = "std")]
+mod config;
+#[cfg(feature = "std")]
+pub use config::{ScrollEvmConfig, ScrollNextBlockEnvAttributes, spec_id_at_timestamp_and_number};
+#[cfg(feature = "std")]
+mod receipt;
+#[cfg(feature = "std")]
+pub use receipt::ScrollRethReceiptBuilder;
 
 use alloy_evm::{Database, Evm, EvmEnv, EvmFactory, precompiles::PrecompilesMap};
 use alloy_primitives::{Address, Bytes};

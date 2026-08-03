@@ -1,6 +1,6 @@
 use alloy_consensus::crypto::secp256k1::recover_signer;
-use alloy_eips::{Encodable2718, Typed2718};
-use alloy_evm::{FromRecoveredTx, FromTxWithEncoded, IntoTxEnv};
+use alloy_eips::{Encodable2718, Typed2718, eip2930::AccessList};
+use alloy_evm::{FromRecoveredTx, FromTxWithEncoded, IntoTxEnv, TransactionEnvMut};
 use alloy_primitives::{Address, B256, Bytes, TxKind, U256};
 use core::ops::{Deref, DerefMut};
 use dogeos_protocol_types::{L1_MESSAGE_TRANSACTION_TYPE, ScrollTxEnvelope, TxL1Message};
@@ -145,6 +145,20 @@ impl<T: Transaction> Transaction for ScrollTransactionIntoTxEnv<T> {
 
     fn max_priority_fee_per_gas(&self) -> Option<u128> {
         self.0.max_priority_fee_per_gas()
+    }
+}
+
+impl<T: TransactionEnvMut> TransactionEnvMut for ScrollTransactionIntoTxEnv<T> {
+    fn set_gas_limit(&mut self, gas_limit: u64) {
+        self.0.base.set_gas_limit(gas_limit);
+    }
+
+    fn set_nonce(&mut self, nonce: u64) {
+        self.0.base.set_nonce(nonce);
+    }
+
+    fn set_access_list(&mut self, access_list: AccessList) {
+        self.0.base.set_access_list(access_list);
     }
 }
 

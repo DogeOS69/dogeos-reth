@@ -18,6 +18,8 @@ reth-chainspec = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c1
 reth-ethereum-forks = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-network-peers = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-trie-common = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
+reth-evm = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
+reth-execution-types = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 
 # The Reth 2.0 dependency family. Exact resolution is checked in CI below.
 alloy-consensus = { version = "=1.8.2", default-features = false }
@@ -56,6 +58,8 @@ eyre = "0.6"
 # DogeOS-owned crates.
 dogeos-protocol-types = { path = "crates/dogeos-protocol-types", default-features = false }
 dogeos-hardforks = { path = "crates/dogeos-hardforks", default-features = false }
+dogeos-chainspec = { path = "crates/dogeos-chainspec", default-features = false }
+dogeos-reth-primitives = { path = "crates/dogeos-reth-primitives", default-features = false }
 
 # DogeOS-owned EVM behavior is retained outside upstream Reth. This revision
 # comes from the REVM 36 upgrade branch.

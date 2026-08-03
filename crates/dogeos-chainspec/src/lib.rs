@@ -4,7 +4,7 @@
 
 extern crate alloc;
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use alloy_chains::Chain;
 use alloy_consensus::Header;
 use alloy_eips::eip7840::BlobParams;
@@ -94,6 +94,17 @@ impl DogeosChainSpecBuilder {
 pub trait ChainConfig {
     type Config;
     fn chain_config(&self) -> &Self::Config;
+}
+
+impl<T> ChainConfig for Arc<T>
+where
+    T: ChainConfig + ?Sized,
+{
+    type Config = T::Config;
+
+    fn chain_config(&self) -> &Self::Config {
+        (**self).chain_config()
+    }
 }
 
 /// DogeOS Reth chain spec with the inherited external Scroll genesis fields.

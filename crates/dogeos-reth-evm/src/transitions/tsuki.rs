@@ -5,15 +5,10 @@
 //!   1. Set the code of address `0x530000000000000000000000000000000000d09e` to NativeDogeToken
 //!      bytecode.
 
-use alloc::vec;
 use alloy_primitives::{B256, b256, bytes};
 use revm::{
-    Database,
+    Database, DatabaseCommit,
     bytecode::Bytecode,
-    database::{
-        bal::EvmDatabaseError,
-        states::{State, StorageSlot},
-    },
     primitives::{Bytes, U256},
     state::AccountInfo,
 };
@@ -35,14 +30,11 @@ const TSUKI_NATIVE_DOGE_TOKEN_STORAGE: [(U256, U256); 1] =
 /// its only allowed caller, and this migration only creates the account if it is still empty. This
 /// makes the transition compatible with mainnet genesis predeploys: if genesis already contains
 /// code at the same address, the migration is a no-op and does not overwrite it.
-pub fn apply_tsuki_hard_fork<DB: Database>(
-    state: &mut State<DB>,
-) -> Result<(), <State<DB> as Database>::Error> {
-    let token = state
-        .load_cache_account(NATIVE_DOGE_TOKEN_ADDRESS)
-        .map_err(EvmDatabaseError::Database)?;
-
-    let old_info = token.account_info().unwrap_or_default();
+pub fn apply_tsuki_hard_fork<DB>(db: &mut DB) -> Result<(), DB::Error>
+where
+    DB: Database + DatabaseCommit,
+{
+    let old_info = db.basic(NATIVE_DOGE_TOKEN_ADDRESS)?.unwrap_or_default();
     if old_info.nonce != 0 || !old_info.is_empty_code_hash() {
         return Ok(());
     }
@@ -54,28 +46,16 @@ pub fn apply_tsuki_hard_fork<DB: Database>(
         nonce: 1,
         code_hash,
         code: Some(bytecode),
-        ..old_info
+        ..old_info.clone()
     };
-    let new_storage = TSUKI_NATIVE_DOGE_TOKEN_STORAGE
-        .into_iter()
-        .map(|(slot, present_value)| {
-            (
-                slot,
-                StorageSlot {
-                    present_value,
-                    previous_or_original_value: token.storage_slot(slot).unwrap_or_default(),
-                },
-            )
-        })
-        .collect();
 
-    let transition = token.change(new_info, new_storage);
-
-    if let Some(s) = state.transition_state.as_mut() {
-        s.add_transitions(vec![(NATIVE_DOGE_TOKEN_ADDRESS, transition)])
-    }
-
-    Ok(())
+    super::commit_account_update(
+        db,
+        NATIVE_DOGE_TOKEN_ADDRESS,
+        old_info,
+        new_info,
+        TSUKI_NATIVE_DOGE_TOKEN_STORAGE,
+    )
 }
 
 #[cfg(test)]
