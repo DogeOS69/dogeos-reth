@@ -1,6 +1,6 @@
 [workspace]
-members = ["crates/dogeos-reth-spike"]
-default-members = ["crates/dogeos-reth-spike"]
+members = ["crates/dogeos-hardforks", "crates/dogeos-protocol-types", "crates/dogeos-reth-node", "crates/dogeos-reth-primitives", "crates/dogeos-reth-spike"]
+default-members = ["crates/dogeos-hardforks", "crates/dogeos-protocol-types", "crates/dogeos-reth-node", "crates/dogeos-reth-primitives", "crates/dogeos-reth-spike"]
 resolver = "2"
 
 [workspace.package]
@@ -13,12 +13,40 @@ repository = "https://github.com/DogeOS69/dogeos-reth"
 # Reth v2.0.0. This is a source dependency, not a copied upstream workspace.
 reth-ethereum = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-node-builder = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
+reth-node-types = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 
 # The Reth 2.0 dependency family. Exact resolution is checked in CI below.
 alloy-consensus = { version = "=1.8.2", default-features = false }
+alloy-eips = { version = "1.8.2", default-features = false }
 alloy-evm = { version = "=0.30.0", default-features = false }
+alloy-hardforks = { version = "=0.4.7", default-features = false }
 alloy-primitives = { version = "=1.5.7", default-features = false }
+alloy-rlp = { version = "0.3.13", default-features = false, features = ["core-net"] }
+alloy-serde = { version = "1.8.2", default-features = false }
 revm = { version = "=36.0.0", default-features = false }
+
+# Shared utility dependencies used by DogeOS-owned protocol crates.
+auto_impl = "1"
+arbitrary = "1.3"
+bincode = "1.3"
+bytes = { version = "1.11.1", default-features = false }
+derive_more = { version = "2", default-features = false, features = ["full"] }
+modular-bitfield = "0.13.1"
+once_cell = { version = "1.19", default-features = false, features = ["critical-section"] }
+proptest = "1.7"
+proptest-arbitrary-interop = "0.1.0"
+rand = "0.9"
+reth-codecs = "=0.1.1"
+reth-codecs-derive = "=0.1.1"
+reth-primitives-traits = { version = "=0.1.1", default-features = false }
+reth-zstd-compressors = { version = "=0.1.1", default-features = false }
+rstest = "0.26.1"
+serde = { version = "1", default-features = false, features = ["derive"] }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
+serde_with = { version = "3", default-features = false, features = ["macros"] }
+
+# DogeOS-owned crates.
+dogeos-protocol-types = { path = "crates/dogeos-protocol-types", default-features = false }
 
 # DogeOS-owned EVM behavior is retained outside upstream Reth. This revision
 # comes from the REVM 36 upgrade branch.

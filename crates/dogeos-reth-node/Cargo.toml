@@ -1,0 +1,12 @@
+[package]
+name = "dogeos-reth-node"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+reth-ethereum = { workspace = true, features = ["node"] }
+reth-node-builder.workspace = true
+reth-node-types.workspace = true
