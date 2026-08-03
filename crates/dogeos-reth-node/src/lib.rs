@@ -18,6 +18,35 @@ mod execution;
 pub use execution::DogeosExecutorBuilder;
 mod pool;
 pub use pool::DogeosPoolBuilder;
+mod network;
+pub use network::DogeosNetworkBuilder;
+
+use reth_node_builder::components::{BasicPayloadServiceBuilder, ComponentsBuilder};
+
+impl DogeosNodeTypes {
+    /// Complete Reth 2 component graph using DogeOS-owned execution and policy components.
+    pub fn components<Node>() -> ComponentsBuilder<
+        Node,
+        DogeosPoolBuilder,
+        BasicPayloadServiceBuilder<DogeosPayloadBuilderBuilder>,
+        DogeosNetworkBuilder,
+        DogeosExecutorBuilder,
+        DogeosConsensusBuilder,
+    >
+    where
+        Node: reth_node_builder::FullNodeTypes<Types = Self>,
+    {
+        ComponentsBuilder::default()
+            .node_types::<Node>()
+            .pool(DogeosPoolBuilder::default())
+            .executor(DogeosExecutorBuilder)
+            .payload(BasicPayloadServiceBuilder::new(
+                DogeosPayloadBuilderBuilder::default(),
+            ))
+            .network(DogeosNetworkBuilder::default())
+            .consensus(DogeosConsensusBuilder)
+    }
+}
 
 /// Reth 2's generic body storage bound to the inherited Scroll transaction envelope.
 pub type DogeosStorage = reth_storage_api::EthStorage<

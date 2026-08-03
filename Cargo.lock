@@ -2737,6 +2737,7 @@ dependencies = [
  "eyre",
  "reth-consensus",
  "reth-evm",
+ "reth-network",
  "reth-node-builder",
  "reth-node-types",
  "reth-primitives-traits",

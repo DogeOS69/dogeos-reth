@@ -1,12 +1,12 @@
 # Reth 2 extension-point capability matrix
 
-This is the Phase 0 spike checklist.  “Unverified” means that no copied
+This is the Phase 0 spike checklist. “Unverified” means that no copied
 upstream implementation may be used to satisfy the row.  The result must be
 changed to **public hook**, **generic patch**, or **unsupported** by a minimal
 standalone Reth 2 / REVM 36 spike.
 
-The dependency-family gate is complete; see `DEPENDENCY_AUDIT.md`. All runtime
-capabilities below remain unverified until exercised through public Reth APIs.
+The dependency-family gate is complete; see `DEPENDENCY_AUDIT.md`. Verified runtime
+capabilities below are compiled and unit-tested through public Reth APIs.
 
 | Requirement | Oracle owner / evidence | Standalone DogeOS owner | Reth 2 status |
 | --- | --- | --- | --- |
@@ -15,14 +15,14 @@ capabilities below remain unverified until exercised through public Reth APIs.
 | Feynman and Tsuki fork policy | `crates/scroll/alloy/hardforks`, `crates/scroll/hardforks` | `dogeos-hardforks` | Public hook; unit-tested |
 | DogeOS mainnet, Chikyu, and dev chainspecs | `crates/scroll/chainspec/{dogeos,chikyu,dev}.rs` | `dogeos-chainspec` | Public `ChainSpec`/`EthChainSpec` hooks; Feynman+ schedules and Chikyu hash unit-tested |
 | Native DOGE and Tsuki state transition | `crates/scroll/alloy/evm/src/block/tsuki.rs`, `revm-scroll` | `dogeos-reth-evm` + `revm-scroll` | Public REVM state API; insert/no-overwrite/idempotence tests pass |
-| L1 fee and stateful base-fee policy | `crates/scroll/{evm,consensus,txpool}` | `dogeos-reth-evm`, `dogeos-reth-node` | Public `BlockExecutorFactory`/`ConfigureEvm` hooks; L1-message validation overrides, L1 fee receipt construction, canonical zstd compression, state-aware Feynman base fee with system-config overhead/cap, transitions, EIP-2935 calls, and no-std core compile are verified |
+| L1 fee and stateful base-fee policy | `crates/scroll/{evm,consensus,txpool}` | `dogeos-reth-evm`, `dogeos-reth-txpool`, `dogeos-reth-node` | Public `BlockExecutorFactory`/`ConfigureEvm` and transaction-validator hooks; L1 fee receipts, canonical compression, state-aware payload base fee, Tsuki fee caps, balance buffering, transitions, and EIP-2935 calls are verified |
 | Feynman+ block execution and assembly | `crates/scroll/{alloy/evm,evm}` | `dogeos-reth-evm` | Public Alloy EVM `StateDB`, executor-factory, Reth `ConfigureEvm`, and `BlockAssembler` hooks; workspace tests pass |
-| Engine types, payload attributes, build and validation | `crates/scroll/{engine-primitives,payload,node}` | `dogeos-reth-engine` | Public `EngineTypes`/`PayloadTypes`/`BuiltPayload` hooks; DogeOS attributes, custom-field payload IDs, built-payload envelopes, and NodeTypes wiring compile; payload-job building and validation pending |
-| Equal-timestamp validation and forced transaction ordering | `crates/scroll/{consensus,payload}` | `dogeos-reth-engine`, `dogeos-reth-payload` | Forced transactions decode once at the payload boundary, preserve input order and original EIP-2718 bytes, and reject trailing bytes; execution/job integration and equal-timestamp validation pending |
+| Engine types, payload attributes, build and validation | `crates/scroll/{engine-primitives,payload,node}` | `dogeos-reth-engine`, `dogeos-reth-payload` | Public `EngineTypes`/`PayloadTypes`/`BuiltPayload`/`PayloadBuilder` hooks; attributes, payload IDs, forced/pool execution, execution cache, sparse-trie handoff, block hints, built payloads, and Engine validation compile and test |
+| Equal-timestamp validation and forced transaction ordering | `crates/scroll/{consensus,payload}` | `dogeos-reth-consensus`, `dogeos-reth-engine`, `dogeos-reth-payload` | Forced transactions decode once, retain order/bytes, reject trailing bytes, execute before pool transactions, and freeze `noTxPool` payloads; consensus and Engine validators both allow equal timestamps |
 | Storage V2 body reconstruction (`ommers=[]`, `withdrawals=None`) | Current Scroll node aliases `EthStorage<ScrollTransactionSigned>` | `dogeos-reth-node` | Public generic `EthStorage<T>` hook retained without copied Reth code; Feynman+ chainspec yields post-merge empty ommers and pre-Shanghai absent withdrawals |
 | RPC receipt conversion and `debug_executionWitness` | `crates/scroll/rpc`, `crates/scroll/alloy/rpc-types` | `dogeos-reth-rpc` | Unverified |
-| Txpool fee policy and `noTxPool` | `crates/scroll/txpool`, `crates/scroll/node` | `dogeos-reth-payload`, `dogeos-reth-node` | External `noTxPool` attribute contract and payload resource breakers are unit-tested; pool execution bypass and fee ordering integration pending |
-| Block import/listening and `scroll-wire` signed blocks | `crates/scroll/node` plus network integration | `dogeos-reth-node` | Unverified |
+| Txpool fee policy and `noTxPool` | `crates/scroll/txpool`, `crates/scroll/node` | `dogeos-reth-txpool`, `dogeos-reth-payload`, `dogeos-reth-node` | Custom pooled transaction, exact encoded-byte cache, L1 fee validation, blob/L1-message rejection, maintenance tasks, pool bypass, resource limits, and deterministic `noTxPool` freeze use public hooks and compile together |
+| Block import/listening and `scroll-wire` signed blocks | `crates/scroll/node` plus `dogeos-rollup-node/crates/scroll-wire` | `dogeos-reth-node` plus shared `scroll-wire` | Public `NetworkBuilder` and `NetworkConfigBuilder::add_rlpx_sub_protocol` hooks verified; canonical eth-wire network compiles. Shared `scroll-wire` attachment and signed-block import tests remain pending |
 | Fresh V2 replay and abrupt-stop recovery | No standalone implementation | `dogeos-reth-node` | Unverified |
 
 ## Spike acceptance criteria
