@@ -52,6 +52,7 @@ alloy-hardforks = { version = "=0.4.7", default-features = false }
 alloy-primitives = { version = "=1.5.7", default-features = false }
 alloy-rpc-types-engine = { version = "=1.8.2", default-features = false }
 alloy-rpc-types-eth = { version = "=1.8.2", default-features = false }
+alloy-rpc-types-debug = { version = "=1.8.3", default-features = false }
 alloy-rpc-client = { version = "=1.8.3", default-features = false }
 alloy-rlp = { version = "0.3.13", default-features = false, features = ["core-net"] }
 alloy-serde = { version = "1.8.2", default-features = false }
