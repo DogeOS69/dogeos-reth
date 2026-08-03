@@ -1,6 +1,6 @@
 [workspace]
-members = ["crates/dogeos-chainspec", "crates/dogeos-hardforks", "crates/dogeos-protocol-types", "crates/dogeos-reth-engine", "crates/dogeos-reth-evm", "crates/dogeos-reth-node", "crates/dogeos-reth-payload", "crates/dogeos-reth-primitives", "crates/dogeos-reth-spike"]
-default-members = ["crates/dogeos-chainspec", "crates/dogeos-hardforks", "crates/dogeos-protocol-types", "crates/dogeos-reth-engine", "crates/dogeos-reth-evm", "crates/dogeos-reth-node", "crates/dogeos-reth-payload", "crates/dogeos-reth-primitives", "crates/dogeos-reth-spike"]
+members = ["crates/dogeos-chainspec", "crates/dogeos-hardforks", "crates/dogeos-protocol-types", "crates/dogeos-reth-consensus", "crates/dogeos-reth-engine", "crates/dogeos-reth-evm", "crates/dogeos-reth-node", "crates/dogeos-reth-payload", "crates/dogeos-reth-primitives", "crates/dogeos-reth-spike"]
+default-members = ["crates/dogeos-chainspec", "crates/dogeos-hardforks", "crates/dogeos-protocol-types", "crates/dogeos-reth-consensus", "crates/dogeos-reth-engine", "crates/dogeos-reth-evm", "crates/dogeos-reth-node", "crates/dogeos-reth-payload", "crates/dogeos-reth-primitives", "crates/dogeos-reth-spike"]
 resolver = "2"
 
 [workspace.package]
@@ -15,6 +15,8 @@ reth-ethereum = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15
 reth-node-builder = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-node-types = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
+reth-consensus = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
+reth-consensus-common = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-ethereum-forks = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-network-peers = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-trie-common = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
@@ -77,6 +79,7 @@ dogeos-reth-primitives = { path = "crates/dogeos-reth-primitives", default-featu
 dogeos-reth-engine = { path = "crates/dogeos-reth-engine", default-features = false }
 dogeos-reth-payload = { path = "crates/dogeos-reth-payload", default-features = false }
 dogeos-reth-evm = { path = "crates/dogeos-reth-evm", default-features = false }
+dogeos-reth-consensus = { path = "crates/dogeos-reth-consensus", default-features = false }
 
 # DogeOS-owned EVM behavior is retained outside upstream Reth. This revision
 # comes from the REVM 36 upgrade branch.

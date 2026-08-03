@@ -12,6 +12,8 @@ mod payload;
 pub use payload::DogeosPayloadBuilderBuilder;
 mod engine;
 pub use engine::DogeosEngineValidatorBuilder;
+mod consensus;
+pub use consensus::DogeosConsensusBuilder;
 
 /// Reth 2's generic body storage bound to the inherited Scroll transaction envelope.
 pub type DogeosStorage = reth_storage_api::EthStorage<

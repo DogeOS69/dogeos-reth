@@ -9,6 +9,7 @@ publish = false
 [dependencies]
 dogeos-chainspec = { workspace = true, features = ["std"] }
 dogeos-reth-engine = { workspace = true, features = ["std"] }
+dogeos-reth-consensus = { workspace = true, features = ["std"] }
 dogeos-reth-evm = { workspace = true, features = ["std"] }
 dogeos-reth-payload = { workspace = true, features = ["std"] }
 dogeos-reth-primitives = { workspace = true, features = ["std", "serde", "reth-codec"] }
@@ -20,3 +21,6 @@ reth-primitives-traits.workspace = true
 reth-storage-api = { workspace = true, features = ["std", "db-api"] }
 reth-transaction-pool.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+reth-consensus.workspace = true

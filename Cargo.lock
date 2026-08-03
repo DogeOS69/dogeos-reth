@@ -2667,6 +2667,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "dogeos-reth-consensus"
+version = "0.1.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-primitives",
+ "dogeos-protocol-types",
+ "dogeos-reth-primitives",
+ "reth-consensus",
+ "reth-consensus-common",
+ "reth-execution-types",
+ "reth-primitives-traits",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "dogeos-reth-engine"
 version = "0.1.0"
 dependencies = [
@@ -2713,11 +2728,13 @@ name = "dogeos-reth-node"
 version = "0.1.0"
 dependencies = [
  "dogeos-chainspec",
+ "dogeos-reth-consensus",
  "dogeos-reth-engine",
  "dogeos-reth-evm",
  "dogeos-reth-payload",
  "dogeos-reth-primitives",
  "eyre",
+ "reth-consensus",
  "reth-evm",
  "reth-node-builder",
  "reth-node-types",
