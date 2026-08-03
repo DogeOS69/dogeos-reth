@@ -5,6 +5,7 @@ use alloy_rlp::Encodable;
 use alloy_rpc_types_debug::ExecutionWitness;
 use dogeos_hardforks::DogeosHardforks;
 use dogeos_reth_evm::LoadMessageQueueWitnessState;
+use jsonrpsee::{RpcModule, types::ErrorObjectOwned};
 use reth_chainspec::ChainSpecProvider;
 use reth_evm::{ConfigureEvm, execute::Executor};
 use reth_primitives_traits::RecoveredBlock;
@@ -28,6 +29,32 @@ impl<Eth: RpcNodeCore> DogeosDebugWitnessApi<Eth> {
 
     pub const fn inner(&self) -> &DebugApi<Eth> {
         &self.inner
+    }
+
+    /// Builds the two Scroll-aware debug methods for installation into configured transports.
+    pub fn into_rpc(self) -> Result<RpcModule<Self>, jsonrpsee::core::RegisterMethodError>
+    where
+        Self: Clone + Send + Sync + 'static,
+        Eth: TraceExt + Send + Sync + 'static,
+        Eth::Provider:
+            ChainSpecProvider<ChainSpec: DogeosHardforks> + HeaderProvider + StateProofProvider,
+        Eth::Error: Into<ErrorObjectOwned>,
+    {
+        let mut module = RpcModule::new(self);
+        module.register_async_method(
+            "debug_executionWitnessByBlockHash",
+            |params, api, _| async move {
+                let hash = params.one::<B256>()?;
+                api.execution_witness_by_block_hash(hash)
+                    .await
+                    .map_err(Into::into)
+            },
+        )?;
+        module.register_async_method("debug_executionWitness", |params, api, _| async move {
+            let block = params.one::<BlockNumberOrTag>()?;
+            api.execution_witness(block).await.map_err(Into::into)
+        })?;
+        Ok(module)
     }
 }
 

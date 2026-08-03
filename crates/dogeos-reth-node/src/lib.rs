@@ -24,6 +24,7 @@ mod rpc;
 pub use rpc::{DogeosEthApiBuilder, DogeosPendingEnvBuilder};
 
 use reth_node_builder::components::{BasicPayloadServiceBuilder, ComponentsBuilder};
+use reth_rpc_builder::RethRpcModule;
 
 /// Standard RPC and Engine API add-ons for a fully assembled DogeOS node.
 pub type DogeosAddOns<Node> =
@@ -57,9 +58,17 @@ impl DogeosNodeTypes {
     pub fn add_ons<Node>() -> DogeosAddOns<Node>
     where
         Node: reth_node_builder::FullNodeComponents<Types = Self>,
+        Node::Provider: reth_storage_api::StateProofProvider,
         DogeosEthApiBuilder: reth_node_builder::rpc::EthApiBuilder<Node>,
     {
-        DogeosAddOns::default()
+        DogeosAddOns::default().extend_rpc_modules(|ctx| {
+            let witness_api = dogeos_reth_rpc::DogeosDebugWitnessApi::new(ctx.registry.debug_api());
+            ctx.modules.add_or_replace_if_module_configured(
+                RethRpcModule::Debug,
+                witness_api.into_rpc()?,
+            )?;
+            Ok(())
+        })
     }
 }
 

@@ -34,6 +34,7 @@ reth-provider = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15
 reth-revm = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-rpc-convert = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-rpc = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
+reth-rpc-builder = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-rpc-eth-types = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-rpc-traits = { version = "=0.1.1", default-features = false }
@@ -58,6 +59,7 @@ alloy-rlp = { version = "0.3.13", default-features = false, features = ["core-ne
 alloy-serde = { version = "1.8.2", default-features = false }
 alloy-transport = { version = "=1.8.3", default-features = false }
 alloy-transport-http = { version = "=1.8.3", default-features = false }
+jsonrpsee = { version = "0.26", features = ["server"] }
 revm = { version = "=36.0.0", default-features = false }
 
 # Shared utility dependencies used by DogeOS-owned protocol crates.
@@ -103,4 +105,4 @@ dogeos-rpc-types = { path = "crates/dogeos-rpc-types", default-features = false 
 
 # DogeOS-owned EVM behavior is retained outside upstream Reth. This revision
 # comes from the REVM 36 upgrade branch.
-revm-scroll = { git = "https://github.com/DogeOS69/dogeos-revm.git", rev = "1b87ecf17af029ac2f39e8ad362f3503ff2f4583", default-features = false }
+revm-scroll = { git = "https://github.com/DogeOS69/dogeos-revm.git", branch = "chore/upgrade-revm-v36", default-features = false }
