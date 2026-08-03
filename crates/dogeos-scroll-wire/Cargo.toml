@@ -10,11 +10,13 @@ publish = false
 [dependencies]
 alloy-primitives = { workspace = true, features = ["std"] }
 alloy-rlp = { workspace = true, features = ["derive"] }
+alloy-consensus.workspace = true
 dogeos-reth-primitives = { workspace = true, features = ["std"] }
 futures.workspace = true
 reth-eth-wire.workspace = true
 reth-network.workspace = true
 reth-network-api.workspace = true
+reth-primitives-traits = { workspace = true, features = ["std"] }
 thiserror.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true

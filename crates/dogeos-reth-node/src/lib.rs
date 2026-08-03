@@ -20,6 +20,8 @@ mod pool;
 pub use pool::DogeosPoolBuilder;
 mod network;
 pub use network::DogeosNetworkBuilder;
+mod wire_import;
+pub use wire_import::{DogeosScrollWireEngineImporter, ScrollWireImportError};
 mod rpc;
 pub use rpc::{DogeosEthApiBuilder, DogeosPendingEnvBuilder};
 

@@ -2729,6 +2729,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
+ "alloy-rpc-types-engine",
  "dogeos-chainspec",
  "dogeos-reth-consensus",
  "dogeos-reth-engine",
@@ -2740,13 +2741,16 @@ dependencies = [
  "dogeos-rpc-types",
  "dogeos-scroll-wire",
  "eyre",
+ "futures",
  "reqwest 0.13.4",
  "reth-consensus",
+ "reth-engine-primitives",
  "reth-evm",
  "reth-network",
  "reth-network-api",
  "reth-node-builder",
  "reth-node-types",
+ "reth-payload-primitives",
  "reth-primitives-traits",
  "reth-provider",
  "reth-rpc",
@@ -2756,6 +2760,8 @@ dependencies = [
  "reth-rpc-eth-types",
  "reth-storage-api",
  "reth-transaction-pool",
+ "thiserror 2.0.19",
+ "tokio",
  "tracing",
 ]
 
@@ -2907,6 +2913,7 @@ dependencies = [
 name = "dogeos-scroll-wire"
 version = "0.1.0"
 dependencies = [
+ "alloy-consensus",
  "alloy-primitives",
  "alloy-rlp",
  "dogeos-reth-primitives",
@@ -2914,6 +2921,7 @@ dependencies = [
  "reth-eth-wire",
  "reth-network",
  "reth-network-api",
+ "reth-primitives-traits",
  "thiserror 2.0.19",
  "tokio",
  "tokio-stream",
