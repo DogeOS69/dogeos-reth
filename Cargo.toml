@@ -53,6 +53,7 @@ bytes = { version = "1.11.1", default-features = false }
 derive_more = { version = "2", default-features = false, features = ["full"] }
 modular-bitfield = "0.13.1"
 once_cell = { version = "1.19", default-features = false, features = ["critical-section"] }
+parking_lot = "0.12"
 proptest = "1.7"
 proptest-arbitrary-interop = "0.1.0"
 rand = "0.9"

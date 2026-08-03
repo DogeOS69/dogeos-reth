@@ -14,8 +14,17 @@ alloy-primitives.workspace = true
 derive_more.workspace = true
 dogeos-protocol-types = { workspace = true, features = ["std"] }
 dogeos-reth-primitives = { workspace = true, features = ["std", "reth-codec"] }
+dogeos-hardforks = { workspace = true, features = ["std"] }
+dogeos-reth-evm = { workspace = true, features = ["std"] }
+parking_lot.workspace = true
+reth-chainspec = { workspace = true, features = ["std"] }
+reth-evm.workspace = true
 reth-primitives-traits = { workspace = true, features = ["std"] }
+reth-revm.workspace = true
+reth-storage-api = { workspace = true, features = ["std"] }
 reth-transaction-pool.workspace = true
+revm-scroll.workspace = true
+tracing.workspace = true
 
 [features]
 default = ["std"]

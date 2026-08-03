@@ -2818,10 +2818,19 @@ dependencies = [
  "alloy-eips",
  "alloy-primitives",
  "derive_more",
+ "dogeos-hardforks",
  "dogeos-protocol-types",
+ "dogeos-reth-evm",
  "dogeos-reth-primitives",
+ "parking_lot",
+ "reth-chainspec",
+ "reth-evm",
  "reth-primitives-traits",
+ "reth-revm",
+ "reth-storage-api",
  "reth-transaction-pool",
+ "revm-scroll",
+ "tracing",
 ]
 
 [[package]]
