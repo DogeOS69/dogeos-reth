@@ -2811,6 +2811,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dogeos-reth-txpool"
+version = "0.1.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "derive_more",
+ "dogeos-protocol-types",
+ "dogeos-reth-primitives",
+ "reth-primitives-traits",
+ "reth-transaction-pool",
+]
+
+[[package]]
 name = "dunce"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
