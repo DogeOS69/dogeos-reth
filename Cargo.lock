@@ -2667,6 +2667,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "dogeos-reth-engine"
+version = "0.1.0"
+dependencies = [
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-rlp",
+ "alloy-rpc-types-engine",
+ "dogeos-reth-primitives",
+ "reth-engine-primitives",
+ "reth-payload-primitives",
+ "reth-primitives-traits",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "dogeos-reth-evm"
 version = "0.1.0"
 dependencies = [
@@ -2694,8 +2711,10 @@ dependencies = [
 name = "dogeos-reth-node"
 version = "0.1.0"
 dependencies = [
+ "dogeos-chainspec",
+ "dogeos-reth-engine",
+ "dogeos-reth-primitives",
  "reth-ethereum",
- "reth-node-builder",
  "reth-node-types",
 ]
 

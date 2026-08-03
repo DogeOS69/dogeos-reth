@@ -1,6 +1,6 @@
 [workspace]
-members = ["crates/dogeos-chainspec", "crates/dogeos-hardforks", "crates/dogeos-protocol-types", "crates/dogeos-reth-evm", "crates/dogeos-reth-node", "crates/dogeos-reth-primitives", "crates/dogeos-reth-spike"]
-default-members = ["crates/dogeos-chainspec", "crates/dogeos-hardforks", "crates/dogeos-protocol-types", "crates/dogeos-reth-evm", "crates/dogeos-reth-node", "crates/dogeos-reth-primitives", "crates/dogeos-reth-spike"]
+members = ["crates/dogeos-chainspec", "crates/dogeos-hardforks", "crates/dogeos-protocol-types", "crates/dogeos-reth-engine", "crates/dogeos-reth-evm", "crates/dogeos-reth-node", "crates/dogeos-reth-primitives", "crates/dogeos-reth-spike"]
+default-members = ["crates/dogeos-chainspec", "crates/dogeos-hardforks", "crates/dogeos-protocol-types", "crates/dogeos-reth-engine", "crates/dogeos-reth-evm", "crates/dogeos-reth-node", "crates/dogeos-reth-primitives", "crates/dogeos-reth-spike"]
 resolver = "2"
 
 [workspace.package]
@@ -20,6 +20,8 @@ reth-network-peers = { git = "https://github.com/paradigmxyz/reth.git", rev = "e
 reth-trie-common = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-evm = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-execution-types = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
+reth-engine-primitives = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
+reth-payload-primitives = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 
 # The Reth 2.0 dependency family. Exact resolution is checked in CI below.
 alloy-consensus = { version = "=1.8.2", default-features = false }
@@ -29,6 +31,7 @@ alloy-genesis = { version = "1.8.2", default-features = false }
 alloy-evm = { version = "=0.30.0", default-features = false }
 alloy-hardforks = { version = "=0.4.7", default-features = false }
 alloy-primitives = { version = "=1.5.7", default-features = false }
+alloy-rpc-types-engine = { version = "=1.8.2", default-features = false }
 alloy-rlp = { version = "0.3.13", default-features = false, features = ["core-net"] }
 alloy-serde = { version = "1.8.2", default-features = false }
 revm = { version = "=36.0.0", default-features = false }
@@ -51,6 +54,7 @@ reth-zstd-compressors = { version = "=0.1.1", default-features = false }
 rstest = "0.26.1"
 serde = { version = "1", default-features = false, features = ["derive"] }
 serde_json = { version = "1", default-features = false, features = ["alloc"] }
+sha2 = { version = "0.10", default-features = false }
 serde_with = { version = "3", default-features = false, features = ["macros"] }
 encoder-standard = { git = "https://github.com/scroll-tech/da-codec", rev = "54929786434f00efd00431517a332f1ec8ca58d4", default-features = false }
 eyre = "0.6"
@@ -60,6 +64,7 @@ dogeos-protocol-types = { path = "crates/dogeos-protocol-types", default-feature
 dogeos-hardforks = { path = "crates/dogeos-hardforks", default-features = false }
 dogeos-chainspec = { path = "crates/dogeos-chainspec", default-features = false }
 dogeos-reth-primitives = { path = "crates/dogeos-reth-primitives", default-features = false }
+dogeos-reth-engine = { path = "crates/dogeos-reth-engine", default-features = false }
 
 # DogeOS-owned EVM behavior is retained outside upstream Reth. This revision
 # comes from the REVM 36 upgrade branch.
