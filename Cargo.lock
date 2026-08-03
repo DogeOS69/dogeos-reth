@@ -2714,10 +2714,17 @@ version = "0.1.0"
 dependencies = [
  "dogeos-chainspec",
  "dogeos-reth-engine",
+ "dogeos-reth-evm",
+ "dogeos-reth-payload",
  "dogeos-reth-primitives",
+ "eyre",
+ "reth-evm",
+ "reth-node-builder",
  "reth-node-types",
  "reth-primitives-traits",
  "reth-storage-api",
+ "reth-transaction-pool",
+ "tracing",
 ]
 
 [[package]]

@@ -8,6 +8,11 @@ use dogeos_reth_engine::DogeosEngineTypes;
 use dogeos_reth_primitives::DogeosPrimitives;
 use reth_node_types::NodeTypes;
 
+mod payload;
+pub use payload::DogeosPayloadBuilderBuilder;
+mod engine;
+pub use engine::DogeosEngineValidatorBuilder;
+
 /// Reth 2's generic body storage bound to the inherited Scroll transaction envelope.
 pub type DogeosStorage = reth_storage_api::EthStorage<
     <DogeosPrimitives as reth_primitives_traits::NodePrimitives>::SignedTx,
