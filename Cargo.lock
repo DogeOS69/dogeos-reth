@@ -2805,12 +2805,17 @@ name = "dogeos-reth-rpc"
 version = "0.1.0"
 dependencies = [
  "alloy-consensus",
+ "alloy-json-rpc",
  "alloy-primitives",
+ "alloy-rpc-client",
  "alloy-rpc-types-eth",
+ "alloy-transport",
+ "alloy-transport-http",
  "dogeos-protocol-types",
  "dogeos-reth-evm",
  "dogeos-reth-primitives",
  "dogeos-rpc-types",
+ "reqwest 0.13.4",
  "reth-errors",
  "reth-evm",
  "reth-primitives-traits",
@@ -2818,6 +2823,8 @@ dependencies = [
  "reth-rpc-eth-types",
  "reth-storage-api",
  "revm",
+ "thiserror 2.0.19",
+ "tracing",
 ]
 
 [[package]]

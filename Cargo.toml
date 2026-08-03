@@ -44,13 +44,17 @@ alloy-eips = { version = "1.8.2", default-features = false }
 alloy-network = { version = "1.8.2", default-features = false }
 alloy-network-primitives = { version = "1.8.2", default-features = false }
 alloy-genesis = { version = "1.8.2", default-features = false }
+alloy-json-rpc = { version = "=1.8.3", default-features = false }
 alloy-evm = { version = "=0.30.0", default-features = false }
 alloy-hardforks = { version = "=0.4.7", default-features = false }
 alloy-primitives = { version = "=1.5.7", default-features = false }
 alloy-rpc-types-engine = { version = "=1.8.2", default-features = false }
 alloy-rpc-types-eth = { version = "=1.8.2", default-features = false }
+alloy-rpc-client = { version = "=1.8.3", default-features = false }
 alloy-rlp = { version = "0.3.13", default-features = false, features = ["core-net"] }
 alloy-serde = { version = "1.8.2", default-features = false }
+alloy-transport = { version = "=1.8.3", default-features = false }
+alloy-transport-http = { version = "=1.8.3", default-features = false }
 revm = { version = "=36.0.0", default-features = false }
 
 # Shared utility dependencies used by DogeOS-owned protocol crates.
@@ -65,6 +69,7 @@ parking_lot = "0.12"
 proptest = "1.7"
 proptest-arbitrary-interop = "0.1.0"
 rand = "0.9"
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 reth-codecs = "=0.1.1"
 reth-codecs-derive = "=0.1.1"
 reth-primitives-traits = { version = "=0.1.1", default-features = false }
