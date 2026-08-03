@@ -16,6 +16,8 @@ mod consensus;
 pub use consensus::DogeosConsensusBuilder;
 mod execution;
 pub use execution::DogeosExecutorBuilder;
+mod pool;
+pub use pool::DogeosPoolBuilder;
 
 /// Reth 2's generic body storage bound to the inherited Scroll transaction envelope.
 pub type DogeosStorage = reth_storage_api::EthStorage<

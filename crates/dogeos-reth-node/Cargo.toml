@@ -12,11 +12,13 @@ dogeos-reth-engine = { workspace = true, features = ["std"] }
 dogeos-reth-consensus = { workspace = true, features = ["std"] }
 dogeos-reth-evm = { workspace = true, features = ["std"] }
 dogeos-reth-payload = { workspace = true, features = ["std"] }
+dogeos-reth-txpool = { workspace = true, features = ["std"] }
 dogeos-reth-primitives = { workspace = true, features = ["std", "serde", "reth-codec"] }
 eyre.workspace = true
 reth-evm.workspace = true
 reth-node-builder.workspace = true
 reth-node-types.workspace = true
+reth-provider.workspace = true
 reth-primitives-traits.workspace = true
 reth-storage-api = { workspace = true, features = ["std", "db-api"] }
 reth-transaction-pool.workspace = true
