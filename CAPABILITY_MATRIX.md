@@ -10,7 +10,7 @@ capabilities below are compiled and unit-tested through public Reth APIs.
 
 | Requirement | Oracle owner / evidence | Standalone DogeOS owner | Reth 2 status |
 | --- | --- | --- | --- |
-| DogeOS-owned `NodeTypes` composition boundary | New `crates/dogeos-reth-node` | `dogeos-reth-node` | Public hook; DogeOS primitives, chainspec, Engine payload types, and transaction-bound storage are wired and type-tested |
+| DogeOS-owned `NodeTypes` composition boundary | New `crates/dogeos-reth-node` | `dogeos-reth-node` | Public hooks; DogeOS primitives, chainspec, Engine payload types, transaction-bound storage, component graph, `eth_` RPC builder, and Engine/RPC add-on graph are wired and type-tested |
 | Custom transaction and receipt encodings | `crates/scroll/primitives`, `crates/scroll/alloy/consensus` | `dogeos-protocol-types` + `dogeos-reth-primitives` | Public traits; canonical protocol tests and Reth compact round trips pass |
 | Feynman and Tsuki fork policy | `crates/scroll/alloy/hardforks`, `crates/scroll/hardforks` | `dogeos-hardforks` | Public hook; unit-tested |
 | DogeOS mainnet, Chikyu, and dev chainspecs | `crates/scroll/chainspec/{dogeos,chikyu,dev}.rs` | `dogeos-chainspec` | Public `ChainSpec`/`EthChainSpec` hooks; Feynman+ schedules and Chikyu hash unit-tested |

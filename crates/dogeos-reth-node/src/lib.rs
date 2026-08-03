@@ -25,6 +25,10 @@ pub use rpc::{DogeosEthApiBuilder, DogeosPendingEnvBuilder};
 
 use reth_node_builder::components::{BasicPayloadServiceBuilder, ComponentsBuilder};
 
+/// Standard RPC and Engine API add-ons for a fully assembled DogeOS node.
+pub type DogeosAddOns<Node> =
+    reth_node_builder::rpc::RpcAddOns<Node, DogeosEthApiBuilder, DogeosEngineValidatorBuilder>;
+
 impl DogeosNodeTypes {
     /// Complete Reth 2 component graph using DogeOS-owned execution and policy components.
     pub fn components<Node>() -> ComponentsBuilder<
@@ -47,6 +51,15 @@ impl DogeosNodeTypes {
             ))
             .network(DogeosNetworkBuilder::default())
             .consensus(DogeosConsensusBuilder)
+    }
+
+    /// Complete RPC/Engine add-on graph using DogeOS conversion and payload validation.
+    pub fn add_ons<Node>() -> DogeosAddOns<Node>
+    where
+        Node: reth_node_builder::FullNodeComponents<Types = Self>,
+        DogeosEthApiBuilder: reth_node_builder::rpc::EthApiBuilder<Node>,
+    {
+        DogeosAddOns::default()
     }
 }
 
