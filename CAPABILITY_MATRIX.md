@@ -11,7 +11,8 @@ capabilities below are compiled and unit-tested through public Reth APIs.
 | Requirement | Oracle owner / evidence | Standalone DogeOS owner | Reth 2 status |
 | --- | --- | --- | --- |
 | DogeOS-owned `NodeTypes` composition boundary | New `crates/dogeos-reth-node` | `dogeos-reth-node` | Public `Node`/component hooks; DogeOS primitives, chainspec, Engine payload types, transaction-bound storage, concrete component graph, `eth_` RPC builder, and Engine/RPC add-on graph are assembled as a launchable preset and type-tested |
-| Custom transaction and receipt encodings | `crates/scroll/primitives`, `crates/scroll/alloy/consensus` | `dogeos-protocol-types` + `dogeos-reth-primitives` | Public traits; canonical protocol tests and Reth compact round trips pass |
+| Standalone node CLI and chain selection | `bin/reth`, Scroll chain parser | `bin/dogeos-reth` | Public Reth CLI and node-launch hooks; `dogeos-mainnet`, `dogeos-chikyu`, `dev`, and custom genesis inputs select `DogeosChainSpec`, then launch the DogeOS node preset with sequencer forwarding and payload-size policy arguments |
+| Custom transaction and receipt encodings | `crates/scroll/primitives`, `crates/scroll/alloy/consensus` | `dogeos-protocol-types` + `dogeos-reth-primitives` | Public traits; canonical protocol tests, Reth compact round trips, and MDBX `Compress`/`Decompress` bindings pass |
 | Feynman and Tsuki fork policy | `crates/scroll/alloy/hardforks`, `crates/scroll/hardforks` | `dogeos-hardforks` | Public hook; unit-tested |
 | DogeOS mainnet, Chikyu, and dev chainspecs | `crates/scroll/chainspec/{dogeos,chikyu,dev}.rs` | `dogeos-chainspec` | Public `ChainSpec`/`EthChainSpec` hooks; Feynman+ schedules and Chikyu hash unit-tested |
 | Native DOGE and Tsuki state transition | `crates/scroll/alloy/evm/src/block/tsuki.rs`, `revm-scroll` | `dogeos-reth-evm` + `revm-scroll` | Public REVM state API; insert/no-overwrite/idempotence tests pass |

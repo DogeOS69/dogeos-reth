@@ -10,6 +10,7 @@ publish = false
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-engine.workspace = true
+clap.workspace = true
 dogeos-chainspec = { workspace = true, features = ["std"] }
 dogeos-reth-engine = { workspace = true, features = ["std"] }
 dogeos-reth-consensus = { workspace = true, features = ["std"] }

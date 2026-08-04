@@ -1,6 +1,6 @@
 [workspace]
-members = ["crates/dogeos-chainspec", "crates/dogeos-hardforks", "crates/dogeos-protocol-types", "crates/dogeos-reth-consensus", "crates/dogeos-reth-engine", "crates/dogeos-reth-evm", "crates/dogeos-reth-node", "crates/dogeos-reth-payload", "crates/dogeos-reth-primitives", "crates/dogeos-reth-rpc", "crates/dogeos-reth-spike", "crates/dogeos-reth-txpool", "crates/dogeos-rpc-types", "crates/dogeos-scroll-wire"]
-default-members = ["crates/dogeos-chainspec", "crates/dogeos-hardforks", "crates/dogeos-protocol-types", "crates/dogeos-reth-consensus", "crates/dogeos-reth-engine", "crates/dogeos-reth-evm", "crates/dogeos-reth-node", "crates/dogeos-reth-payload", "crates/dogeos-reth-primitives", "crates/dogeos-reth-rpc", "crates/dogeos-reth-spike", "crates/dogeos-reth-txpool", "crates/dogeos-rpc-types", "crates/dogeos-scroll-wire"]
+members = ["bin/dogeos-reth", "crates/dogeos-chainspec", "crates/dogeos-hardforks", "crates/dogeos-protocol-types", "crates/dogeos-reth-consensus", "crates/dogeos-reth-engine", "crates/dogeos-reth-evm", "crates/dogeos-reth-node", "crates/dogeos-reth-payload", "crates/dogeos-reth-primitives", "crates/dogeos-reth-rpc", "crates/dogeos-reth-spike", "crates/dogeos-reth-txpool", "crates/dogeos-rpc-types", "crates/dogeos-scroll-wire"]
+default-members = ["bin/dogeos-reth", "crates/dogeos-chainspec", "crates/dogeos-hardforks", "crates/dogeos-protocol-types", "crates/dogeos-reth-consensus", "crates/dogeos-reth-engine", "crates/dogeos-reth-evm", "crates/dogeos-reth-node", "crates/dogeos-reth-payload", "crates/dogeos-reth-primitives", "crates/dogeos-reth-rpc", "crates/dogeos-reth-spike", "crates/dogeos-reth-txpool", "crates/dogeos-rpc-types", "crates/dogeos-scroll-wire"]
 resolver = "2"
 
 [workspace.package]
@@ -12,6 +12,8 @@ repository = "https://github.com/DogeOS69/dogeos-reth"
 [workspace.dependencies]
 # Reth v2.0.0. This is a source dependency, not a copied upstream workspace.
 reth-ethereum = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
+reth-ethereum-cli = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
+reth-cli = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-node-builder = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-node-types = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-chainspec = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
@@ -71,6 +73,7 @@ auto_impl = "1"
 arbitrary = "1.3"
 bincode = "1.3"
 bytes = { version = "1.11.1", default-features = false }
+clap = { version = "4.5", features = ["derive", "env"] }
 derive_more = { version = "2", default-features = false, features = ["full"] }
 modular-bitfield = "0.13.1"
 once_cell = { version = "1.19", default-features = false, features = ["critical-section"] }
@@ -108,6 +111,7 @@ dogeos-reth-evm = { path = "crates/dogeos-reth-evm", default-features = false }
 dogeos-reth-consensus = { path = "crates/dogeos-reth-consensus", default-features = false }
 dogeos-reth-txpool = { path = "crates/dogeos-reth-txpool", default-features = false }
 dogeos-reth-rpc = { path = "crates/dogeos-reth-rpc", default-features = false }
+dogeos-reth-node = { path = "crates/dogeos-reth-node", default-features = false }
 dogeos-rpc-types = { path = "crates/dogeos-rpc-types", default-features = false }
 dogeos-scroll-wire = { path = "crates/dogeos-scroll-wire", default-features = false }
 

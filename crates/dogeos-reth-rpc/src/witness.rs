@@ -36,8 +36,7 @@ impl<Eth: RpcNodeCore> DogeosDebugWitnessApi<Eth> {
     where
         Self: Clone + Send + Sync + 'static,
         Eth: TraceExt + Send + Sync + 'static,
-        Eth::Provider:
-            ChainSpecProvider<ChainSpec: DogeosHardforks> + HeaderProvider + StateProofProvider,
+        Eth::Provider: ChainSpecProvider<ChainSpec: DogeosHardforks> + HeaderProvider,
         Eth::Error: Into<ErrorObjectOwned>,
     {
         let mut module = RpcModule::new(self);
@@ -61,8 +60,7 @@ impl<Eth: RpcNodeCore> DogeosDebugWitnessApi<Eth> {
 impl<Eth> DogeosDebugWitnessApi<Eth>
 where
     Eth: TraceExt,
-    Eth::Provider:
-        ChainSpecProvider<ChainSpec: DogeosHardforks> + HeaderProvider + StateProofProvider,
+    Eth::Provider: ChainSpecProvider<ChainSpec: DogeosHardforks> + HeaderProvider,
 {
     pub async fn execution_witness_by_block_hash(
         &self,

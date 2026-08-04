@@ -555,6 +555,9 @@ impl Compact for ScrollTxEnvelope {
     }
 }
 
+#[cfg(feature = "reth-codec")]
+reth_codecs::impl_compression_for_compact!(ScrollTxEnvelope);
+
 impl Encodable for ScrollTxEnvelope {
     fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
         self.network_encode(out)

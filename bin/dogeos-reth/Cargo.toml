@@ -1,0 +1,20 @@
+[package]
+name = "dogeos-reth"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+default-run = "dogeos-reth"
+
+[dependencies]
+clap.workspace = true
+dogeos-chainspec = { workspace = true, features = ["std"] }
+dogeos-reth-consensus.workspace = true
+dogeos-reth-evm.workspace = true
+dogeos-reth-node.workspace = true
+eyre.workspace = true
+reth-cli.workspace = true
+reth-chainspec.workspace = true
+reth-ethereum-cli.workspace = true

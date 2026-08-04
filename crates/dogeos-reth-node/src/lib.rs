@@ -8,6 +8,8 @@ use dogeos_reth_engine::DogeosEngineTypes;
 use dogeos_reth_primitives::DogeosPrimitives;
 use reth_node_types::NodeTypes;
 
+mod args;
+pub use args::DogeosRollupArgs;
 mod payload;
 pub use payload::DogeosPayloadBuilderBuilder;
 mod engine;
@@ -55,6 +57,10 @@ pub type DogeosEthApi<Node> = reth_rpc::EthApi<
 >;
 
 impl DogeosNodeTypes {
+    pub const fn new(args: DogeosRollupArgs) -> Self {
+        Self { args }
+    }
+
     /// Complete Reth 2 component graph using DogeOS-owned execution and policy components.
     pub fn components<Node>() -> DogeosComponentsBuilder<Node>
     where
@@ -75,7 +81,6 @@ impl DogeosNodeTypes {
     pub fn add_ons<Node>() -> DogeosAddOns<DogeosNodeAdapter<Node>>
     where
         Node: reth_node_builder::FullNodeTypes<Types = Self>,
-        Node::Provider: reth_storage_api::StateProofProvider,
         DogeosEthApiBuilder: reth_node_builder::rpc::EthApiBuilder<
                 DogeosNodeAdapter<Node>,
                 EthApi = DogeosEthApi<DogeosNodeAdapter<Node>>,
@@ -84,11 +89,33 @@ impl DogeosNodeTypes {
             + reth_rpc_eth_api::helpers::TraceExt
             + reth_rpc_eth_api::RpcNodeCore<Provider = Node::Provider>,
         <DogeosEthApi<DogeosNodeAdapter<Node>> as reth_rpc_eth_api::RpcNodeCore>::Provider:
-            reth_chainspec::ChainSpecProvider<ChainSpec = DogeosChainSpec>
-                + reth_storage_api::StateProofProvider,
+            reth_chainspec::ChainSpecProvider<ChainSpec = DogeosChainSpec>,
     {
-        DogeosAddOns::default().extend_rpc_modules(|ctx| {
-            if let Some(url) = ctx.config().rpc.rpc_forwarder.clone() {
+        Self::add_ons_with_sequencer(None)
+    }
+
+    fn add_ons_with_sequencer<Node>(
+        sequencer_url: Option<String>,
+    ) -> DogeosAddOns<DogeosNodeAdapter<Node>>
+    where
+        Node: reth_node_builder::FullNodeTypes<Types = Self>,
+        DogeosEthApiBuilder: reth_node_builder::rpc::EthApiBuilder<
+                DogeosNodeAdapter<Node>,
+                EthApi = DogeosEthApi<DogeosNodeAdapter<Node>>,
+            >,
+        DogeosEthApi<DogeosNodeAdapter<Node>>: reth_rpc_eth_api::helpers::EthTransactions<Error = reth_rpc_eth_types::EthApiError>
+            + reth_rpc_eth_api::helpers::TraceExt
+            + reth_rpc_eth_api::RpcNodeCore<Provider = Node::Provider>,
+        <DogeosEthApi<DogeosNodeAdapter<Node>> as reth_rpc_eth_api::RpcNodeCore>::Provider:
+            reth_chainspec::ChainSpecProvider<ChainSpec = DogeosChainSpec>,
+    {
+        DogeosAddOns::default().extend_rpc_modules(move |ctx| {
+            let forwarder_url = sequencer_url
+                .as_deref()
+                .map(reqwest::Url::parse)
+                .transpose()?
+                .or_else(|| ctx.config().rpc.rpc_forwarder.clone());
+            if let Some(url) = forwarder_url {
                 let sequencer = dogeos_reth_rpc::SequencerClient::with_http_client(
                     url.as_str(),
                     reqwest::Client::new(),
@@ -120,9 +147,12 @@ pub type DogeosStorage = reth_storage_api::EthStorage<
     <DogeosPrimitives as reth_primitives_traits::NodePrimitives>::SignedTx,
 >;
 
-/// Stateless node type configuration owned by DogeOS.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct DogeosNodeTypes;
+/// Node type and runtime policy configuration owned by DogeOS.
+#[derive(Clone, Debug, Default)]
+pub struct DogeosNodeTypes {
+    /// Scroll-compatible runtime settings supplied by the CLI.
+    pub args: DogeosRollupArgs,
+}
 
 impl NodeTypes for DogeosNodeTypes {
     type Primitives = DogeosPrimitives;
@@ -134,7 +164,6 @@ impl NodeTypes for DogeosNodeTypes {
 impl<N> Node<N> for DogeosNodeTypes
 where
     N: reth_node_builder::FullNodeTypes<Types = Self>,
-    N::Provider: reth_storage_api::StateProofProvider,
     DogeosEthApiBuilder: reth_node_builder::rpc::EthApiBuilder<
             DogeosNodeAdapter<N>,
             EthApi = DogeosEthApi<DogeosNodeAdapter<N>>,
@@ -143,18 +172,28 @@ where
         + reth_rpc_eth_api::helpers::TraceExt
         + reth_rpc_eth_api::RpcNodeCore<Provider = N::Provider>,
     <DogeosEthApi<DogeosNodeAdapter<N>> as reth_rpc_eth_api::RpcNodeCore>::Provider:
-        reth_chainspec::ChainSpecProvider<ChainSpec = DogeosChainSpec>
-            + reth_storage_api::StateProofProvider,
+        reth_chainspec::ChainSpecProvider<ChainSpec = DogeosChainSpec>,
 {
     type ComponentsBuilder = DogeosComponentsBuilder<N>;
     type AddOns = DogeosAddOns<DogeosNodeAdapter<N>>;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {
-        Self::components()
+        ComponentsBuilder::default()
+            .node_types::<N>()
+            .pool(DogeosPoolBuilder::default())
+            .executor(DogeosExecutorBuilder)
+            .payload(BasicPayloadServiceBuilder::new(
+                DogeosPayloadBuilderBuilder {
+                    block_da_size_limit: Some(self.args.payload_size_limit),
+                    ..Default::default()
+                },
+            ))
+            .network(DogeosNetworkBuilder::default())
+            .consensus(DogeosConsensusBuilder)
     }
 
     fn add_ons(&self) -> Self::AddOns {
-        DogeosNodeTypes::add_ons()
+        DogeosNodeTypes::add_ons_with_sequencer(self.args.sequencer.clone())
     }
 }
 
@@ -182,5 +221,15 @@ mod tests {
     #[test]
     fn node_boundary_uses_dogeos_protocol_types() {
         requires_protocol_types::<DogeosNodeTypes>();
+    }
+
+    #[test]
+    fn rollup_args_preserve_current_defaults() {
+        let node = DogeosNodeTypes::default();
+        assert_eq!(node.args, DogeosRollupArgs::default());
+        assert_eq!(
+            node.args.payload_size_limit,
+            payload::DOGEOS_DEFAULT_PAYLOAD_SIZE_LIMIT
+        );
     }
 }

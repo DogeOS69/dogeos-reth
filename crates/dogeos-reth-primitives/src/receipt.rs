@@ -532,3 +532,6 @@ mod compact {
         }
     }
 }
+
+#[cfg(feature = "reth-codec")]
+reth_codecs::impl_compression_for_compact!(ScrollReceipt);
