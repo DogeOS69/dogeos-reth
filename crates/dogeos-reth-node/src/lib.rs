@@ -91,11 +91,17 @@ impl DogeosNodeTypes {
         <DogeosEthApi<DogeosNodeAdapter<Node>> as reth_rpc_eth_api::RpcNodeCore>::Provider:
             reth_chainspec::ChainSpecProvider<ChainSpec = DogeosChainSpec>,
     {
-        Self::add_ons_with_sequencer(None)
+        Self::add_ons_with_policy(
+            None,
+            dogeos_reth_rpc::DEFAULT_MIN_SUGGESTED_PRIORITY_FEE,
+            payload::DOGEOS_DEFAULT_PAYLOAD_SIZE_LIMIT,
+        )
     }
 
-    fn add_ons_with_sequencer<Node>(
+    fn add_ons_with_policy<Node>(
         sequencer_url: Option<String>,
+        min_suggested_priority_fee: u64,
+        payload_size_limit: u64,
     ) -> DogeosAddOns<DogeosNodeAdapter<Node>>
     where
         Node: reth_node_builder::FullNodeTypes<Types = Self>,
@@ -110,6 +116,17 @@ impl DogeosNodeTypes {
             reth_chainspec::ChainSpecProvider<ChainSpec = DogeosChainSpec>,
     {
         DogeosAddOns::default().extend_rpc_modules(move |ctx| {
+            let priority_fee_api = dogeos_reth_rpc::DogeosPriorityFeeApi::new(
+                ctx.registry.eth_api().clone(),
+                ctx.registry.eth_api().gas_oracle().config().max_price,
+                min_suggested_priority_fee,
+                payload_size_limit,
+            );
+            ctx.modules.add_or_replace_if_module_configured(
+                RethRpcModule::Eth,
+                priority_fee_api.into_rpc()?,
+            )?;
+
             let forwarder_url = sequencer_url
                 .as_deref()
                 .map(reqwest::Url::parse)
@@ -216,7 +233,11 @@ where
     }
 
     fn add_ons(&self) -> Self::AddOns {
-        DogeosNodeTypes::add_ons_with_sequencer(self.args.sequencer.clone())
+        DogeosNodeTypes::add_ons_with_policy(
+            self.args.sequencer.clone(),
+            self.args.min_suggested_priority_fee,
+            self.args.payload_size_limit,
+        )
     }
 }
 
@@ -280,6 +301,10 @@ mod tests {
         assert_eq!(
             node.args.payload_size_limit,
             payload::DOGEOS_DEFAULT_PAYLOAD_SIZE_LIMIT
+        );
+        assert_eq!(
+            node.args.min_suggested_priority_fee,
+            dogeos_reth_rpc::DEFAULT_MIN_SUGGESTED_PRIORITY_FEE
         );
     }
 
