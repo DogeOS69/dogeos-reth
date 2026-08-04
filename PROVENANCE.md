@@ -39,9 +39,10 @@ from the local Engine qualification recorded in `ENGINE_V1_SMOKE.md`.
 The old-to-new staged-sync comparison is frozen under `fixtures/sync/` and
 documented in `SYNC_COMPATIBILITY_SMOKE.md`.
 
-These fixtures do not claim oracle root parity. A generator plus Chikyu replay,
-receipt/root, reorg, RPC, and execution-witness comparisons remain blocking
-qualification work.
+The staged-sync fixture records old-to-new dev oracle parity at block 300 for block, state,
+transaction, and receipt roots plus selected RPC fields. It is not a substitute for a reproducible
+oracle generator or Chikyu historical replay; broader transaction/receipt, reorg, RPC, and
+execution-witness comparisons remain blocking qualification work.
 
 ## Verification
 
