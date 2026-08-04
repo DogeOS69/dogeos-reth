@@ -1,5 +1,6 @@
 use crate::DogeosNodeTypes;
 use alloy_consensus::BlockHeader;
+use alloy_primitives::Address;
 use dogeos_reth_evm::{ScrollEvmConfig, ScrollNextBlockEnvAttributes};
 use dogeos_reth_primitives::ScrollReceipt;
 use dogeos_reth_rpc::{DogeosRpcConverter, dogeos_rpc_converter};
@@ -13,6 +14,27 @@ use reth_rpc_convert::RpcConvert;
 use reth_rpc_eth_api::{FullEthApiServer, helpers::pending_block::PendingEnvBuilder};
 use reth_rpc_eth_types::{EthApiError, error::FromEvmError};
 use reth_storage_api::ReceiptProvider;
+use std::sync::{Arc, Mutex};
+
+/// One-shot handoff from the network component builder to the RPC launch phase, where Reth makes
+/// the consensus Engine handle available.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ScrollWireRuntime {
+    manager: Arc<Mutex<Option<dogeos_scroll_wire::ScrollWireManager>>>,
+}
+
+impl ScrollWireRuntime {
+    pub(crate) fn install(&self, manager: dogeos_scroll_wire::ScrollWireManager) {
+        *self.manager.lock().expect("scroll-wire runtime lock") = Some(manager);
+    }
+
+    fn take(&self) -> Option<dogeos_scroll_wire::ScrollWireManager> {
+        self.manager
+            .lock()
+            .expect("scroll-wire runtime lock")
+            .take()
+    }
+}
 
 /// Derives a best-effort pending environment without introducing an RPC dependency into the EVM
 /// owner crate. Canonical payload construction continues to use the state-aware base-fee provider.
@@ -34,9 +56,24 @@ impl PendingEnvBuilder<ScrollEvmConfig> for DogeosPendingEnvBuilder {
 }
 
 /// Builds the standard Reth `eth_` API with DogeOS RPC schemas and converters.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone)]
 #[non_exhaustive]
-pub struct DogeosEthApiBuilder;
+pub struct DogeosEthApiBuilder {
+    scroll_wire: ScrollWireRuntime,
+    scroll_wire_signer: Option<Address>,
+}
+
+impl DogeosEthApiBuilder {
+    pub(crate) const fn new(
+        scroll_wire: ScrollWireRuntime,
+        scroll_wire_signer: Option<Address>,
+    ) -> Self {
+        Self {
+            scroll_wire,
+            scroll_wire_signer,
+        }
+    }
+}
 
 impl<N> EthApiBuilder<N> for DogeosEthApiBuilder
 where
@@ -55,6 +92,18 @@ where
     type EthApi = EthApi<N, DogeosRpcConverter<N::Provider>>;
 
     async fn build_eth_api(self, ctx: EthApiCtx<'_, N>) -> eyre::Result<Self::EthApi> {
+        if let Some(manager) = self.scroll_wire.take() {
+            let importer = crate::DogeosScrollWireEngineImporter::new(
+                manager,
+                ctx.engine_handle.clone(),
+                self.scroll_wire_signer,
+            );
+            ctx.components
+                .task_executor()
+                .spawn_critical_task("scroll-wire engine importer", importer.run());
+            tracing::info!(target: "reth::cli", "DogeOS scroll/1 block importer started");
+        }
+
         let converter = dogeos_rpc_converter(ctx.components.provider().clone());
         let config = ctx.config;
         Ok(

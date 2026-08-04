@@ -25,6 +25,7 @@ pub use network::DogeosNetworkBuilder;
 mod wire_import;
 pub use wire_import::{DogeosScrollWireEngineImporter, ScrollWireImportError};
 mod rpc;
+use rpc::ScrollWireRuntime;
 pub use rpc::{DogeosEthApiBuilder, DogeosPendingEnvBuilder};
 
 use reth_node_builder::{
@@ -57,8 +58,11 @@ pub type DogeosEthApi<Node> = reth_rpc::EthApi<
 >;
 
 impl DogeosNodeTypes {
-    pub const fn new(args: DogeosRollupArgs) -> Self {
-        Self { args }
+    pub fn new(args: DogeosRollupArgs) -> Self {
+        Self {
+            args,
+            scroll_wire: ScrollWireRuntime::default(),
+        }
     }
 
     /// Complete Reth 2 component graph using DogeOS-owned execution and policy components.
@@ -101,6 +105,8 @@ impl DogeosNodeTypes {
             None,
             dogeos_reth_rpc::DEFAULT_MIN_SUGGESTED_PRIORITY_FEE,
             payload::DOGEOS_DEFAULT_PAYLOAD_SIZE_LIMIT,
+            ScrollWireRuntime::default(),
+            None,
         )
     }
 
@@ -108,6 +114,8 @@ impl DogeosNodeTypes {
         sequencer_url: Option<String>,
         min_suggested_priority_fee: u64,
         payload_size_limit: u64,
+        scroll_wire: ScrollWireRuntime,
+        scroll_wire_signer: Option<alloy_primitives::Address>,
     ) -> DogeosAddOns<DogeosNodeAdapter<Node>>
     where
         Node: reth_node_builder::FullNodeTypes<Types = Self>,
@@ -127,7 +135,14 @@ impl DogeosNodeTypes {
                 Network = dogeos_rpc_types::Scroll,
             >,
     {
-        DogeosAddOns::default().extend_rpc_modules(move |ctx| {
+        DogeosAddOns::new(
+            DogeosEthApiBuilder::new(scroll_wire, scroll_wire_signer),
+            DogeosEngineValidatorBuilder,
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        )
+        .extend_rpc_modules(move |ctx| {
             let priority_fee_api = dogeos_reth_rpc::DogeosPriorityFeeApi::new(
                 ctx.registry.eth_api().clone(),
                 ctx.registry.eth_api().gas_oracle().config().max_price,
@@ -181,6 +196,7 @@ pub type DogeosStorage = reth_storage_api::EthStorage<
 pub struct DogeosNodeTypes {
     /// Scroll-compatible runtime settings supplied by the CLI.
     pub args: DogeosRollupArgs,
+    scroll_wire: ScrollWireRuntime,
 }
 
 /// Adapts Reth's Ethereum local miner attributes to the Scroll-compatible Engine API shape.
@@ -236,6 +252,14 @@ where
     type AddOns = DogeosAddOns<DogeosNodeAdapter<N>>;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {
+        let network = if self.args.enable_scroll_wire {
+            let (network, manager) = DogeosNetworkBuilder::new()
+                .with_scroll_wire(dogeos_scroll_wire::ScrollWireConfig::new(true));
+            self.scroll_wire.install(manager);
+            network
+        } else {
+            DogeosNetworkBuilder::new()
+        };
         ComponentsBuilder::default()
             .node_types::<N>()
             .pool(DogeosPoolBuilder::default())
@@ -246,7 +270,7 @@ where
                     ..Default::default()
                 },
             ))
-            .network(DogeosNetworkBuilder::default())
+            .network(network)
             .consensus(DogeosConsensusBuilder)
     }
 
@@ -255,6 +279,8 @@ where
             self.args.sequencer.clone(),
             self.args.min_suggested_priority_fee,
             self.args.payload_size_limit,
+            self.scroll_wire.clone(),
+            self.args.scroll_wire_signer,
         )
     }
 }
@@ -324,6 +350,8 @@ mod tests {
             node.args.min_suggested_priority_fee,
             dogeos_reth_rpc::DEFAULT_MIN_SUGGESTED_PRIORITY_FEE
         );
+        assert!(node.args.enable_scroll_wire);
+        assert_eq!(node.args.scroll_wire_signer, None);
     }
 
     #[test]
