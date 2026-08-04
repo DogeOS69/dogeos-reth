@@ -18,6 +18,8 @@ crate.
 The first `feat/drop-scroll-patch` candidate resolved REVM 34 and
 `alloy-evm 0.27.3`, so it was rejected. The selected `chore/upgrade-revm-v36`
 revision resolves a single REVM 36 and a single alloy-evm 0.30.0 instance.
+The workspace intentionally selects that branch in `Cargo.toml`; the audit requires both the
+encoded branch source and the exact `1b87ecf...` commit resolved in `Cargo.lock`.
 
 The Reth source manifest uses compatible semver ranges for a subset of the
 Alloy 1.5 components. Cargo otherwise selected a newer incompatible parser

@@ -83,22 +83,16 @@ where
         let ExecutionData { payload, sidecar } = payload;
         let mut block = payload.try_into_block_with_sidecar(&sidecar)?;
 
-        // Difficulty is not carried by the Engine payload. DogeOS blocks inherited the two
-        // externally-observed Clique values, so recover it by matching the advertised hash.
+        // Difficulty is not carried by the Engine payload. The supported post-Euclid baseline
+        // fixes it to one; do not reconstruct legacy Clique difficulty-two headers.
         block.header.difficulty = U256::ONE;
-        let no_turn_hash = block.hash_slow();
-        if no_turn_hash == expected_hash {
-            return Ok(block.seal_unchecked(no_turn_hash));
-        }
-
-        block.header.difficulty = U256::from(2);
-        let in_turn_hash = block.hash_slow();
-        if in_turn_hash == expected_hash {
-            return Ok(block.seal_unchecked(in_turn_hash));
+        let block_hash = block.hash_slow();
+        if block_hash == expected_hash {
+            return Ok(block.seal_unchecked(block_hash));
         }
 
         Err(PayloadError::BlockHash {
-            execution: no_turn_hash,
+            execution: block_hash,
             consensus: expected_hash,
         }
         .into())
@@ -120,7 +114,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_consensus::Header;
+    use alloy_consensus::{EMPTY_OMMER_ROOT_HASH, EMPTY_ROOT_HASH, Header};
 
     #[test]
     fn equal_timestamp_is_valid() {
@@ -162,6 +156,29 @@ mod tests {
         assert!(
             <DogeosEngineValidator<()> as PayloadValidator<DogeosEngineTypes>>::
                 validate_payload_attributes_against_header(&validator, &attributes, &header)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn engine_reconstructs_only_post_euclid_difficulty() {
+        let validator = DogeosEngineValidator::new(Arc::new(()));
+        let mut block = DogeosBlock::default();
+        block.header.ommers_hash = EMPTY_OMMER_ROOT_HASH;
+        block.header.transactions_root = EMPTY_ROOT_HASH;
+        block.header.base_fee_per_gas = Some(0);
+        block.header.difficulty = U256::ONE;
+        let payload = ExecutionData::from_block_unchecked(block.header.hash_slow(), &block);
+        let converted = <DogeosEngineValidator<()> as PayloadValidator<DogeosEngineTypes>>::
+            convert_payload_to_block(&validator, payload)
+            .unwrap();
+        assert_eq!(converted.difficulty, U256::ONE);
+
+        block.header.difficulty = U256::from(2);
+        let legacy_payload = ExecutionData::from_block_unchecked(block.header.hash_slow(), &block);
+        assert!(
+            <DogeosEngineValidator<()> as PayloadValidator<DogeosEngineTypes>>::
+                convert_payload_to_block(&validator, legacy_payload)
                 .is_err()
         );
     }

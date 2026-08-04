@@ -21,7 +21,7 @@ single_package alloy-primitives 1.5.7
 
 jq -e '
     [.packages[] | select(.name == "revm-scroll") | .source]
-    == ["git+https://github.com/DogeOS69/dogeos-revm.git?rev=1b87ecf17af029ac2f39e8ad362f3503ff2f4583#1b87ecf17af029ac2f39e8ad362f3503ff2f4583"]
+    == ["git+https://github.com/DogeOS69/dogeos-revm.git?branch=chore/upgrade-revm-v36#1b87ecf17af029ac2f39e8ad362f3503ff2f4583"]
 ' "$metadata_file" > /dev/null
 
 jq -e '

@@ -23,7 +23,7 @@ use reth_execution_cache::CachedStateProvider;
 use reth_execution_types::BlockExecutionOutput;
 use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::BuiltPayloadExecutedBlock;
-use reth_primitives_traits::{RecoveredBlock, SignedTransaction, transaction::TxHashRef};
+use reth_primitives_traits::{SignedTransaction, transaction::TxHashRef};
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_storage_api::StateProviderFactory;
 use reth_transaction_pool::{
@@ -321,7 +321,7 @@ where
         execution_result,
         hashed_state,
         trie_updates,
-        mut block,
+        block,
     } = if let Some(mut handle) = trie_handle.take() {
         builder.executor_mut().set_state_hook(None);
         match handle.state_root() {
@@ -341,27 +341,12 @@ where
         builder.finish(state_provider.as_ref(), None)?
     };
 
-    let (mut raw_block, senders) = block.split();
-    raw_block = raw_block.map_header(|mut header| {
-        let hint = &attributes.block_data_hint;
-        if let Some(value) = &hint.extra_data {
-            header.extra_data = value.clone();
-        }
-        if let Some(value) = hint.state_root {
-            header.state_root = value;
-        }
-        if let Some(value) = hint.coinbase {
-            header.beneficiary = value;
-        }
-        if let Some(value) = hint.nonce {
-            header.nonce = value.into();
-        }
-        if let Some(value) = hint.difficulty {
-            header.difficulty = value;
-        }
-        header
-    });
-    block = RecoveredBlock::new_unhashed(raw_block, senders);
+    if !attributes.block_data_hint.is_empty() {
+        trace!(
+            target: "payload_builder",
+            "ignoring legacy pre-Euclid block data hint"
+        );
+    }
     let sealed_block = Arc::new(block.sealed_block().clone());
     let executed = BuiltPayloadExecutedBlock {
         recovered_block: Arc::new(block),

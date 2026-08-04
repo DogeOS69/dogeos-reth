@@ -15,7 +15,10 @@ pub struct ScrollPayloadAttributes {
     pub gas_limit: Option<u64>,
 }
 
-/// Optional block fields supplied by the sequencer.
+/// Legacy pre-Euclid block fields retained in the Engine JSON and payload-ID contract.
+///
+/// The Feynman+/post-Euclid payload builder intentionally ignores these values: execution owns the
+/// state root and consensus fixes coinbase, nonce, difficulty, and extra data.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockDataHint {
@@ -132,6 +135,16 @@ mod tests {
         let base = ScrollPayloadAttributes::default();
         let mut changed = base.clone();
         changed.no_tx_pool = true;
+        assert_ne!(base.payload_id(&parent), changed.payload_id(&parent));
+
+        changed = base.clone();
+        changed.block_data_hint = BlockDataHint {
+            extra_data: Some(Bytes::from_static(b"legacy")),
+            state_root: Some(B256::repeat_byte(2)),
+            coinbase: Some(Address::repeat_byte(3)),
+            nonce: Some(4),
+            difficulty: Some(U256::from(5)),
+        };
         assert_ne!(base.payload_id(&parent), changed.payload_id(&parent));
     }
 
