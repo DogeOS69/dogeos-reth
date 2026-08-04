@@ -36,6 +36,25 @@ The returned `keys` included the canonical message-queue address
 next-message-index slot `0xc`. This confirms that the DogeOS witness preload runs through the
 installed public RPC replacement and affects the generated witness.
 
+## Forced L1 message
+
+A second Engine V1 build supplied one canonical queue-index-zero L1 message in the inherited
+`transactions` payload-attributes field with `noTxPool=true`:
+
+```text
+0x7ef180830186a09400000000000000000000000000000000000000008080940000000000000000000000000000000000000000
+```
+
+`engine_getPayloadV1` returned the identical bytes at transaction index zero. The payload used
+21,000 gas, `engine_newPayloadV1` returned `VALID`, and the final forkchoice committed block 2.
+JSON-RPC returned transaction type `0x7e`, queue index zero, and a successful receipt with
+`gasUsed=0x5208`, `effectiveGasPrice=0`, and `l1Fee=0`. After another clean restart, Storage V2
+returned the same block, transaction hash, transaction root, receipt root, and receipt fields.
+
+The arbitrary transaction bytes in the historical payload-ID hashing fixture are intentionally not
+an execution fixture: its first RLP field exceeds `u64` and correctly fails L1-message decoding with
+`Overflow`. Runtime qualification therefore uses the valid canonical encoding above.
+
 The first attempt intentionally used a historical timestamp one second after genesis and expired
 before `getPayloadV1`; Reth correctly removed that past-deadline build job. Repeating with a current
 timestamp completed the full flow above.

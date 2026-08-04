@@ -76,4 +76,25 @@ mod tests {
         };
         assert!(decode_forced_transactions(&attributes).is_err());
     }
+
+    #[test]
+    fn canonical_zero_index_l1_message_preserves_oracle_bytes() {
+        let encoded = alloy_primitives::bytes!(
+            "7ef180830186a09400000000000000000000000000000000000000008080940000000000000000000000000000000000000000"
+        );
+        let attributes = ScrollPayloadAttributes {
+            transactions: Some(vec![encoded.clone()]),
+            ..Default::default()
+        };
+
+        let decoded = decode_forced_transactions(&attributes).unwrap();
+        assert_eq!(decoded[0].encoded_bytes(), &encoded);
+        match decoded[0].value() {
+            ScrollTxEnvelope::L1Message(message) => {
+                assert_eq!(message.queue_index, 0);
+                assert_eq!(message.gas_limit, 100_000);
+            }
+            _ => panic!("expected L1 message"),
+        }
+    }
 }
