@@ -28,6 +28,14 @@ built `dogeos-reth` binary. It supplements unit tests with the same Engine metho
 6. After a clean shutdown, the same Storage V2 datadir passed Reth consistency checks and reopened
    the same canonical block hash and state root at height 1.
 
+## Execution witness
+
+After the restart, `debug_executionWitnessByBlockHash` succeeded for the Engine-imported block.
+The returned `keys` included the canonical message-queue address
+`0x5300000000000000000000000000000000000002`, withdraw-root slot `0xb`, and
+next-message-index slot `0xc`. This confirms that the DogeOS witness preload runs through the
+installed public RPC replacement and affects the generated witness.
+
 The first attempt intentionally used a historical timestamp one second after genesis and expired
 before `getPayloadV1`; Reth correctly removed that past-deadline build job. Repeating with a current
 timestamp completed the full flow above.
