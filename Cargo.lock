@@ -2969,6 +2969,7 @@ dependencies = [
  "alloy-rpc-types-eth",
  "alloy-transport",
  "alloy-transport-http",
+ "dogeos-chainspec",
  "dogeos-hardforks",
  "dogeos-protocol-types",
  "dogeos-reth-evm",

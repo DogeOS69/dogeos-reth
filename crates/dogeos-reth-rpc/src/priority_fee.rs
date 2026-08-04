@@ -1,11 +1,16 @@
 use alloy_consensus::{BlockHeader, Transaction, TxReceipt};
 use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
-use alloy_primitives::U256;
+use alloy_primitives::{U64, U256};
+use alloy_rpc_types_eth::FeeHistory;
+use dogeos_chainspec::DogeosChainSpec;
+use dogeos_reth_evm::ScrollBaseFeeProvider;
 use jsonrpsee::{RpcModule, types::ErrorObjectOwned};
+use reth_chainspec::ChainSpecProvider;
 use reth_primitives_traits::BlockBody;
-use reth_rpc_eth_api::{RpcNodeCore, RpcNodeCoreExt};
+use reth_revm::database::StateProviderDatabase;
+use reth_rpc_eth_api::{RpcNodeCore, RpcNodeCoreExt, helpers::EthFees};
 use reth_rpc_eth_types::EthApiError;
-use reth_storage_api::BlockReaderIdExt;
+use reth_storage_api::{BlockReaderIdExt, StateProviderFactory};
 
 /// Default minimum tip returned while the latest block still has capacity.
 pub const DEFAULT_MIN_SUGGESTED_PRIORITY_FEE: u64 = 100;
@@ -67,11 +72,21 @@ impl<Eth: RpcNodeCore> DogeosPriorityFeeApi<Eth> {
     pub fn into_rpc(self) -> Result<RpcModule<Self>, jsonrpsee::core::RegisterMethodError>
     where
         Self: Clone + Send + Sync + 'static,
-        Eth: RpcNodeCoreExt + Send + Sync + 'static,
+        Eth: EthFees + RpcNodeCoreExt + Send + Sync + 'static,
+        Eth::Provider: ChainSpecProvider<ChainSpec = DogeosChainSpec> + StateProviderFactory,
+        Eth::Error: Into<ErrorObjectOwned>,
     {
         let mut module = RpcModule::new(self);
         module.register_async_method("eth_maxPriorityFeePerGas", |_, api, _| async move {
             api.suggested_priority_fee().await
+        })?;
+        module.register_async_method("eth_feeHistory", |params, api, _| async move {
+            let mut params = params.sequence();
+            let block_count = params.next::<U64>()?;
+            let newest_block = params.next::<BlockNumberOrTag>()?;
+            let reward_percentiles = params.optional_next::<Vec<f64>>()?;
+            api.fee_history(block_count.to(), newest_block, reward_percentiles)
+                .await
         })?;
         Ok(module)
     }
@@ -81,15 +96,16 @@ impl<Eth> DogeosPriorityFeeApi<Eth>
 where
     Eth: RpcNodeCoreExt,
 {
-    async fn suggested_priority_fee(&self) -> Result<U256, ErrorObjectOwned> {
+    async fn priority_fee_for_block(
+        &self,
+        block: BlockNumberOrTag,
+    ) -> Result<(U256, bool), ErrorObjectOwned> {
         let header = self
             .eth
             .provider()
-            .sealed_header_by_number_or_tag(BlockNumberOrTag::Latest)
+            .sealed_header_by_number_or_tag(block)
             .map_err(|error| ErrorObjectOwned::from(EthApiError::from(error)))?
-            .ok_or_else(|| {
-                ErrorObjectOwned::from(EthApiError::HeaderNotFound(BlockNumberOrTag::Latest.into()))
-            })?;
+            .ok_or_else(|| ErrorObjectOwned::from(EthApiError::HeaderNotFound(block.into())))?;
 
         let Some((block, receipts)) = self
             .eth
@@ -98,7 +114,7 @@ where
             .await
             .map_err(|error| ErrorObjectOwned::from(EthApiError::from(error)))?
         else {
-            return Ok(self.min_suggested_priority_fee);
+            return Ok((self.min_suggested_priority_fee, false));
         };
 
         let mut max_tx_gas_used = 0u64;
@@ -129,7 +145,7 @@ where
             self.payload_size_limit,
         );
         if !at_capacity {
-            return Ok(self.min_suggested_priority_fee);
+            return Ok((self.min_suggested_priority_fee, false));
         }
 
         let base_fee = block.base_fee_per_gas();
@@ -143,11 +159,81 @@ where
                     .unwrap_or_else(|| Some(transaction.priority_fee_or_price()))
             })
             .collect::<Vec<_>>();
-        Ok(capacity_tip(
-            tips,
-            self.min_suggested_priority_fee,
-            self.max_price,
+        Ok((
+            capacity_tip(tips, self.min_suggested_priority_fee, self.max_price),
+            true,
         ))
+    }
+
+    async fn suggested_priority_fee(&self) -> Result<U256, ErrorObjectOwned> {
+        self.priority_fee_for_block(BlockNumberOrTag::Latest)
+            .await
+            .map(|(tip, _)| tip)
+    }
+}
+
+impl<Eth> DogeosPriorityFeeApi<Eth>
+where
+    Eth: EthFees + RpcNodeCoreExt,
+    Eth::Provider: ChainSpecProvider<ChainSpec = DogeosChainSpec> + StateProviderFactory,
+    Eth::Error: Into<ErrorObjectOwned>,
+{
+    async fn fee_history(
+        &self,
+        block_count: u64,
+        mut newest_block: BlockNumberOrTag,
+        reward_percentiles: Option<Vec<f64>>,
+    ) -> Result<FeeHistory, ErrorObjectOwned> {
+        let mut history = EthFees::fee_history(
+            &self.eth,
+            block_count,
+            newest_block,
+            reward_percentiles.clone(),
+        )
+        .await
+        .map_err(Into::into)?;
+
+        if block_count == 0 {
+            return Ok(history);
+        }
+        if newest_block.is_pending() {
+            newest_block = BlockNumberOrTag::Latest;
+        }
+
+        let last_header = self
+            .eth
+            .provider()
+            .sealed_header_by_number_or_tag(newest_block)
+            .map_err(|error| ErrorObjectOwned::from(EthApiError::from(error)))?
+            .ok_or_else(|| {
+                ErrorObjectOwned::from(EthApiError::HeaderNotFound(newest_block.into()))
+            })?;
+        let next_base_fee = {
+            let state = self
+                .eth
+                .provider()
+                .state_by_block_id(last_header.hash().into())
+                .map_err(|error| ErrorObjectOwned::from(EthApiError::from(error)))?;
+            let mut state = StateProviderDatabase::new(state.as_ref());
+            ScrollBaseFeeProvider::new(self.eth.provider().chain_spec())
+                .next_block_base_fee(&mut state, last_header.header(), last_header.timestamp())
+                .map_err(|error| ErrorObjectOwned::from(EthApiError::Internal(error.into())))?
+        };
+        if let Some(next) = history.base_fee_per_gas.last_mut() {
+            *next = next_base_fee as u128;
+        }
+
+        if let Some(percentiles) = reward_percentiles {
+            let (suggestion, at_capacity) = self.priority_fee_for_block(newest_block).await?;
+            if !at_capacity {
+                history.reward = Some(vec![
+                    vec![suggestion.to::<u128>(); percentiles.len()];
+                    history.gas_used_ratio.len()
+                ]);
+            }
+        }
+
+        Ok(history)
     }
 }
 

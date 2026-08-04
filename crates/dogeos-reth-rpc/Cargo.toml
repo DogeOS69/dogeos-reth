@@ -19,6 +19,7 @@ alloy-rlp.workspace = true
 alloy-transport.workspace = true
 alloy-transport-http = { workspace = true, features = ["reqwest"] }
 dogeos-protocol-types = { workspace = true, features = ["std"] }
+dogeos-chainspec = { workspace = true, features = ["std"] }
 dogeos-hardforks = { workspace = true, features = ["std"] }
 dogeos-reth-evm = { workspace = true, features = ["std"] }
 dogeos-reth-primitives = { workspace = true, features = ["reth-codec", "serde", "std"] }

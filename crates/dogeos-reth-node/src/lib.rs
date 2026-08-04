@@ -90,6 +90,12 @@ impl DogeosNodeTypes {
             + reth_rpc_eth_api::RpcNodeCore<Provider = Node::Provider>,
         <DogeosEthApi<DogeosNodeAdapter<Node>> as reth_rpc_eth_api::RpcNodeCore>::Provider:
             reth_chainspec::ChainSpecProvider<ChainSpec = DogeosChainSpec>,
+        dogeos_reth_rpc::DogeosRpcConverter<Node::Provider>: reth_rpc_convert::RpcConvert<
+                Primitives = DogeosPrimitives,
+                Evm = dogeos_reth_evm::ScrollEvmConfig,
+                Error = reth_rpc_eth_types::EthApiError,
+                Network = dogeos_rpc_types::Scroll,
+            >,
     {
         Self::add_ons_with_policy(
             None,
@@ -114,6 +120,12 @@ impl DogeosNodeTypes {
             + reth_rpc_eth_api::RpcNodeCore<Provider = Node::Provider>,
         <DogeosEthApi<DogeosNodeAdapter<Node>> as reth_rpc_eth_api::RpcNodeCore>::Provider:
             reth_chainspec::ChainSpecProvider<ChainSpec = DogeosChainSpec>,
+        dogeos_reth_rpc::DogeosRpcConverter<Node::Provider>: reth_rpc_convert::RpcConvert<
+                Primitives = DogeosPrimitives,
+                Evm = dogeos_reth_evm::ScrollEvmConfig,
+                Error = reth_rpc_eth_types::EthApiError,
+                Network = dogeos_rpc_types::Scroll,
+            >,
     {
         DogeosAddOns::default().extend_rpc_modules(move |ctx| {
             let priority_fee_api = dogeos_reth_rpc::DogeosPriorityFeeApi::new(
@@ -213,6 +225,12 @@ where
         + reth_rpc_eth_api::RpcNodeCore<Provider = N::Provider>,
     <DogeosEthApi<DogeosNodeAdapter<N>> as reth_rpc_eth_api::RpcNodeCore>::Provider:
         reth_chainspec::ChainSpecProvider<ChainSpec = DogeosChainSpec>,
+    dogeos_reth_rpc::DogeosRpcConverter<N::Provider>: reth_rpc_convert::RpcConvert<
+            Primitives = DogeosPrimitives,
+            Evm = dogeos_reth_evm::ScrollEvmConfig,
+            Error = reth_rpc_eth_types::EthApiError,
+            Network = dogeos_rpc_types::Scroll,
+        >,
 {
     type ComponentsBuilder = DogeosComponentsBuilder<N>;
     type AddOns = DogeosAddOns<DogeosNodeAdapter<N>>;
