@@ -1,0 +1,38 @@
+# Engine V1 runtime smoke
+
+This records the standalone-node Engine API check performed on 2026-08-03 against the locally
+built `dogeos-reth` binary. It supplements unit tests with the same Engine method family used by
+`dogeos-rollup-node`.
+
+## Scope
+
+- Fresh `dev` Storage V2 datadir with local mining disabled.
+- External JWT-authenticated Engine driver.
+- Scroll-compatible nested payload attributes, `noTxPool=true`, no forced transactions,
+  `withdrawals=null`, and `parentBeaconBlockRoot=null`.
+- Payload timestamp after both the parent and the wall clock, so Reth's payload job deadline stays
+  active while the payload is resolved.
+
+## Observed transcript
+
+1. `engine_forkchoiceUpdatedV1` returned `VALID` and payload ID
+   `0x01536ade66e7f8a8`. The leading `0x01` proves the Scroll V1 payload-ID domain is
+   present in the deployable binary.
+2. `engine_getPayloadV1` returned block 1 with block hash
+   `0x5265ffde2752fcca46208345f88134bc7b79273be5710591631f244298ee8e02` and state root
+   `0x9b32336dbf3fc1790fccbfccf4345db44868eda006391aa239b66c598aa365cc`.
+3. `engine_newPayloadV1` returned `VALID` with that block as `latestValidHash`.
+4. A final `engine_forkchoiceUpdatedV1` made the block canonical.
+5. JSON-RPC exposed the post-Euclid header invariants: difficulty one, zero beneficiary, zero nonce,
+   zero mix hash, empty extra data, and no transactions or uncles.
+6. After a clean shutdown, the same Storage V2 datadir passed Reth consistency checks and reopened
+   the same canonical block hash and state root at height 1.
+
+The first attempt intentionally used a historical timestamp one second after genesis and expired
+before `getPayloadV1`; Reth correctly removed that past-deadline build job. Repeating with a current
+timestamp completed the full flow above.
+
+## Remaining qualification
+
+This is an extension-point and local persistence check. It does not replace Chikyu replay, oracle
+root comparison, sustained payload load, reorg, or abrupt-termination qualification.
