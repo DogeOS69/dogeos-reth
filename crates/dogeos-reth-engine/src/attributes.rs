@@ -4,6 +4,9 @@ use alloy_rlp::Encodable;
 use alloy_rpc_types_engine::{PayloadAttributes, PayloadId};
 use reth_payload_primitives::PayloadAttributes as PayloadAttributesTrait;
 
+/// DogeOS rollup payloads use the Scroll Engine V1 payload-ID domain.
+const DOGEOS_PAYLOAD_VERSION: u8 = 1;
+
 /// Engine payload attributes with forced transactions and `noTxPool` support.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -117,7 +120,11 @@ pub fn payload_id_scroll(parent: &B256, attributes: &ScrollPayloadAttributes) ->
         hasher.update(value.to_be_bytes());
     }
 
-    let output = hasher.finalize();
+    let mut output = hasher.finalize();
+    // Reth 2 computes the ID directly from RPC attributes and no longer passes the Engine method
+    // version into a builder-attributes constructor. DogeOS only supports Scroll Engine V1, so
+    // retain the oracle's version-domain byte explicitly.
+    output[0] = DOGEOS_PAYLOAD_VERSION;
     PayloadId::new(
         output[..8]
             .try_into()
@@ -133,6 +140,10 @@ mod tests {
     fn custom_fields_change_payload_id() {
         let parent = B256::repeat_byte(1);
         let base = ScrollPayloadAttributes::default();
+        assert_eq!(
+            base.payload_id(&parent),
+            PayloadId::new([0x01, 0xd8, 0x90, 0x28, 0xac, 0x91, 0x1a, 0x64])
+        );
         let mut changed = base.clone();
         changed.no_tx_pool = true;
         assert_ne!(base.payload_id(&parent), changed.payload_id(&parent));

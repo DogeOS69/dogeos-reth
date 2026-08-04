@@ -212,11 +212,14 @@ impl reth_node_builder::PayloadAttributesBuilder<ScrollPayloadAttributes, alloy_
         &self,
         parent: &reth_primitives_traits::SealedHeader<alloy_consensus::Header>,
     ) -> ScrollPayloadAttributes {
+        let mut payload_attributes =
+            reth_node_builder::PayloadAttributesBuilder::build(&self.inner, parent);
+        // Scroll activates the Shanghai EVM rules but does not include EIP-4895 withdrawals in
+        // Engine attributes or Storage V2 block bodies.
+        payload_attributes.withdrawals = None;
+
         ScrollPayloadAttributes {
-            payload_attributes: reth_node_builder::PayloadAttributesBuilder::build(
-                &self.inner,
-                parent,
-            ),
+            payload_attributes,
             ..Default::default()
         }
     }
@@ -369,7 +372,7 @@ mod tests {
         let attributes = reth_node_builder::PayloadAttributesBuilder::build(&builder, &parent);
 
         assert!(attributes.payload_attributes.timestamp >= 2);
-        assert!(attributes.payload_attributes.withdrawals.is_some());
+        assert!(attributes.payload_attributes.withdrawals.is_none());
         assert!(!attributes.no_tx_pool);
         assert!(attributes.transactions.is_none());
         assert!(attributes.block_data_hint.is_empty());
