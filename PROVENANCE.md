@@ -36,6 +36,8 @@ Engine V1 compatibility vectors under `fixtures/engine-v1/` and authenticates
 them with `fixtures/SHA256SUMS`. The payload-ID vector is retained from the
 legacy Scroll V1 compatibility implementation; the forced-L1-message vector is
 from the local Engine qualification recorded in `ENGINE_V1_SMOKE.md`.
+The old-to-new staged-sync comparison is frozen under `fixtures/sync/` and
+documented in `SYNC_COMPATIBILITY_SMOKE.md`.
 
 These fixtures do not claim oracle root parity. A generator plus Chikyu replay,
 receipt/root, reorg, RPC, and execution-witness comparisons remain blocking

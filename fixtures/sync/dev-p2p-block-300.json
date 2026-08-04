@@ -1,0 +1,27 @@
+{
+  "schema": "dogeos.sync.dev-p2p.v1",
+  "provenance": "old scroll-reth 6b62297 to new dogeos-reth eb4c15e local eth/69 staged sync",
+  "blockNumber": "0x12c",
+  "blockHash": "0x24a2343516dc4b9a9ac41e819f5f7daf6ea1300ffd72adf7bf4ad15f7839ebce",
+  "stateRoot": "0x340387296c3f842f3e1da1ca4c18e4e4872b1fd4d83c36b9de8a7e331c25d3ba",
+  "transactionsRoot": "0x6a994f2640e39405ef72372e7451c01283e0ee50903a929c494631c74389b47d",
+  "receiptsRoot": "0xf78dfb743fbd92ade140711c8bbc542b5e307f0ab7984eff35d751969fe57efa",
+  "gasUsed": "0x5208",
+  "transaction": {
+    "hash": "0xad5d1402a463d507cab3b560482e99de11449a0f274cc5825b58ff6589587ebd",
+    "type": "0x2",
+    "from": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+    "to": "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
+    "value": "0x1",
+    "nonce": "0x0",
+    "input": "0x"
+  },
+  "receipt": {
+    "status": "0x1",
+    "gasUsed": "0x5208",
+    "effectiveGasPrice": "0xef4264",
+    "l1Fee": "0x2925b7bf3625",
+    "logs": []
+  },
+  "recipientBalance": "0xd3c21bcecceda1000001"
+}

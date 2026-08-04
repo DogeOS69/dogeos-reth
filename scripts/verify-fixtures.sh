@@ -4,7 +4,7 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo_root"
 
-for fixture in fixtures/engine-v1/*.json; do
+for fixture in fixtures/*/*.json; do
     jq -e 'type == "object" and (.schema | type == "string") and (.provenance | type == "string")' \
         "$fixture" > /dev/null
 done
