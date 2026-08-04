@@ -14,7 +14,8 @@ single_package() {
     name=$1
     version=$2
     jq -e --arg name "$name" --arg version "$version" '
-        [.packages[] | select(.name == $name and .version == $version)] | length == 1
+        [.packages[] | select(.name == $name)]
+        | length == 1 and .[0].version == $version
     ' "$metadata_file" > /dev/null
 }
 
@@ -22,6 +23,7 @@ single_package revm 36.0.0
 single_package alloy-evm 0.30.0
 single_package alloy-consensus 1.8.2
 single_package alloy-primitives 1.5.7
+single_package alloy-sol-types 1.5.7
 
 jq -e --arg source "$revm_scroll_source" '
     [.packages[] | select(.name == "revm-scroll") | .source]

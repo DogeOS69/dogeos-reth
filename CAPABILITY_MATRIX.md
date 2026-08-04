@@ -9,6 +9,9 @@ The dependency-family gate is complete; see `DEPENDENCY_AUDIT.md`. Verified capa
 are compiled and unit-tested through public Reth APIs. The Engine and Storage V2 rows also have a
 real-node transcript in `ENGINE_V1_SMOKE.md`.
 
+Run `scripts/verify-workspace.sh` for the reproducible local gate: formatting,
+dependency purity, fixture integrity, and every workspace test target.
+
 | Requirement | Oracle owner / evidence | Standalone DogeOS owner | Reth 2 status |
 | --- | --- | --- | --- |
 | DogeOS-owned `NodeTypes` composition boundary | New `crates/dogeos-reth-node` | `dogeos-reth-node` | Public `Node`/component hooks; DogeOS primitives, chainspec, Engine payload types, transaction-bound storage, concrete component graph, `eth_` RPC builder, and Engine/RPC add-on graph are assembled as a launchable preset and type-tested |
