@@ -16,7 +16,7 @@ The standalone node retains the DogeOS-owned EVM dependency used by the
 oracle:
 
 ```toml
-revm-scroll = { git = "https://github.com/DogeOS69/dogeos-revm", branch = "feat/drop-scroll-patch" }
+revm-scroll = { git = "https://github.com/DogeOS69/dogeos-revm", branch = "chore/upgrade-revm-v36", default-features = false }
 ```
 
 `revm-scroll` is a required DogeOS dependency, not an upstream Reth patch. Its
@@ -31,8 +31,9 @@ either retain that revision with a compatible dependency graph or record the
 replacement `dogeos-revm` revision and its parity evidence here.
 
 The spike evaluates `chore/upgrade-revm-v36` revision
-`1b87ecf17af029ac2f39e8ad362f3503ff2f4583`, observed on 2026-08-02. It is
-pinned by `Cargo.toml`. The dependency spike passed: the locked graph contains
+`1b87ecf17af029ac2f39e8ad362f3503ff2f4583`, observed on 2026-08-02. The branch
+is selected by `Cargo.toml` and the exact revision is pinned by `Cargo.lock`.
+The dependency spike passed: the locked graph contains
 one REVM 36.0.0 and one alloy-evm 0.30.0 instance. The exact audit and
 reproduction commands are in `DEPENDENCY_AUDIT.md`.
 
