@@ -121,4 +121,86 @@ mod tests {
             crate::protocol::ScrollMessagePayload::NewBlock(block) if block == announcement
         ));
     }
+
+    #[test]
+    fn reconnect_replaces_the_stale_connection() {
+        let peer_id = PeerId::random();
+        let (event_sender, events) = tokio::sync::mpsc::unbounded_channel();
+        let (old_connection, mut old_outbound) = tokio::sync::mpsc::unbounded_channel();
+        let (new_connection, mut new_outbound) = tokio::sync::mpsc::unbounded_channel();
+        event_sender
+            .send(ScrollWireEvent::connection_established(
+                Direction::Incoming,
+                peer_id,
+                old_connection,
+            ))
+            .unwrap();
+        event_sender
+            .send(ScrollWireEvent::connection_established(
+                Direction::Incoming,
+                peer_id,
+                new_connection,
+            ))
+            .unwrap();
+        event_sender
+            .send(ScrollWireEvent::new_block(
+                peer_id,
+                DogeosBlock::default(),
+                Signature::new(U256::from(1), U256::from(2), false),
+            ))
+            .unwrap();
+
+        let mut manager = ScrollWireManager::new(events);
+        let _ = futures::executor::block_on(&mut manager);
+        let announcement = NewBlock::new(
+            Signature::new(U256::from(3), U256::from(4), true),
+            DogeosBlock::default(),
+        );
+        manager.announce_block(peer_id, &announcement).unwrap();
+
+        assert!(matches!(
+            old_outbound.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
+        ));
+        assert!(new_outbound.try_recv().is_ok());
+    }
+
+    #[test]
+    fn failed_send_removes_the_connection() {
+        let peer_id = PeerId::random();
+        let (event_sender, events) = tokio::sync::mpsc::unbounded_channel();
+        let (to_connection, outbound) = tokio::sync::mpsc::unbounded_channel();
+        event_sender
+            .send(ScrollWireEvent::connection_established(
+                Direction::Incoming,
+                peer_id,
+                to_connection,
+            ))
+            .unwrap();
+        event_sender
+            .send(ScrollWireEvent::new_block(
+                peer_id,
+                DogeosBlock::default(),
+                Signature::new(U256::from(1), U256::from(2), false),
+            ))
+            .unwrap();
+
+        let mut manager = ScrollWireManager::new(events);
+        let _ = futures::executor::block_on(&mut manager);
+        drop(outbound);
+        let announcement = NewBlock::new(
+            Signature::new(U256::from(3), U256::from(4), true),
+            DogeosBlock::default(),
+        );
+
+        assert!(matches!(
+            manager.announce_block(peer_id, &announcement),
+            Err(AnnounceBlockError::SendFailed(id)) if id == peer_id
+        ));
+        assert!(!manager.is_connected(peer_id));
+        assert!(matches!(
+            manager.announce_block(peer_id, &announcement),
+            Err(AnnounceBlockError::PeerNotConnected(id)) if id == peer_id
+        ));
+    }
 }
