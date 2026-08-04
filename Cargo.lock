@@ -2880,6 +2880,7 @@ dependencies = [
  "reqwest 0.13.4",
  "reth-chainspec",
  "reth-consensus",
+ "reth-db-api",
  "reth-engine-local",
  "reth-engine-primitives",
  "reth-evm",

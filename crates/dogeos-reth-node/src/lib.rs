@@ -22,6 +22,8 @@ mod pool;
 pub use pool::DogeosPoolBuilder;
 mod network;
 pub use network::DogeosNetworkBuilder;
+mod storage;
+pub use storage::DogeosStorage;
 mod wire_import;
 pub use wire_import::{DogeosScrollWireEngineImporter, ScrollWireImportError};
 mod rpc;
@@ -185,11 +187,6 @@ impl DogeosNodeTypes {
         })
     }
 }
-
-/// Reth 2's generic body storage bound to the inherited Scroll transaction envelope.
-pub type DogeosStorage = reth_storage_api::EthStorage<
-    <DogeosPrimitives as reth_primitives_traits::NodePrimitives>::SignedTx,
->;
 
 /// Node type and runtime policy configuration owned by DogeOS.
 #[derive(Clone, Debug, Default)]
@@ -355,6 +352,43 @@ mod tests {
         );
         assert!(node.args.enable_scroll_wire);
         assert_eq!(node.args.scroll_wire_signer, None);
+    }
+
+    #[test]
+    fn scroll_wire_signer_is_required_outside_dev() {
+        let args = DogeosRollupArgs::default();
+        assert!(
+            args.validate_for_chain(&dogeos_chainspec::DOGEOS_DEV)
+                .is_ok()
+        );
+        assert!(
+            args.validate_for_chain(&dogeos_chainspec::DOGEOS_MAINNET)
+                .is_err()
+        );
+        assert!(
+            args.validate_for_chain(&dogeos_chainspec::DOGEOS_CHIKYU)
+                .is_err()
+        );
+
+        let disabled = DogeosRollupArgs {
+            enable_scroll_wire: false,
+            ..Default::default()
+        };
+        assert!(
+            disabled
+                .validate_for_chain(&dogeos_chainspec::DOGEOS_MAINNET)
+                .is_ok()
+        );
+
+        let authenticated = DogeosRollupArgs {
+            scroll_wire_signer: Some(alloy_primitives::Address::ZERO),
+            ..Default::default()
+        };
+        assert!(
+            authenticated
+                .validate_for_chain(&dogeos_chainspec::DOGEOS_MAINNET)
+                .is_ok()
+        );
     }
 
     #[test]

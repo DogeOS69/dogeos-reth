@@ -1,0 +1,38 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  workspace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.93.0
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Verify source provenance and frozen fixtures
+        run: |
+          scripts/verify-dependency-graph.sh
+          scripts/verify-fixtures.sh
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Check workspace
+        run: cargo check --workspace --all-targets --locked
+      - name: Test workspace
+        run: cargo test --workspace --all-targets --locked
+      - name: Lint workspace
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Check explicit feature selection
+        run: cargo check --workspace --no-default-features --locked

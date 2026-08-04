@@ -259,9 +259,9 @@ where
         ))
     }
 
-    fn context_for_block<'a>(
+    fn context_for_block(
         &self,
-        block: &'a SealedBlock<Block<N::SignedTx>>,
+        block: &SealedBlock<Block<N::SignedTx>>,
     ) -> Result<ScrollBlockExecutionCtx, Self::Error> {
         Ok(ScrollBlockExecutionCtx {
             parent_hash: block.header().parent_hash(),

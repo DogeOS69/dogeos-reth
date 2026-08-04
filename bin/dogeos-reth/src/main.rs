@@ -16,6 +16,7 @@ fn main() {
                 )
             },
             async move |builder, args| {
+                args.validate_for_chain(builder.config().chain.as_ref())?;
                 let handle = builder
                     .node(DogeosNodeTypes::new(args))
                     .launch_with_debug_capabilities()

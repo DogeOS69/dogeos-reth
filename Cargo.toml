@@ -5,7 +5,7 @@ resolver = "2"
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.93"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/DogeOS69/dogeos-reth"
 
@@ -37,6 +37,7 @@ reth-errors = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5
 reth-execution-cache = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-payload-builder-primitives = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-provider = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
+reth-db-api = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-revm = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-rpc-convert = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-rpc = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }

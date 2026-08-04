@@ -25,6 +25,15 @@ pub fn decode_forced_transactions(
         .collect()
 }
 
+/// Returns the exact EIP-2718 byte count supplied by the Engine API for forced transactions.
+pub(crate) fn forced_transactions_da_bytes(
+    transactions: &[alloy_eips::eip2718::WithEncoded<ScrollTransactionSigned>],
+) -> u64 {
+    transactions.iter().fold(0u64, |total, transaction| {
+        total.saturating_add(transaction.encoded_bytes().len() as u64)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -54,6 +63,10 @@ mod tests {
         };
 
         let decoded = decode_forced_transactions(&attributes).unwrap();
+        assert_eq!(
+            forced_transactions_da_bytes(&decoded),
+            encoded.iter().map(|tx| tx.len() as u64).sum::<u64>()
+        );
         assert_eq!(decoded.len(), 2);
         assert_eq!(decoded[0].encoded_bytes(), &encoded[0]);
         assert_eq!(decoded[1].encoded_bytes(), &encoded[1]);

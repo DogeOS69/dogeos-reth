@@ -1,6 +1,8 @@
 use crate::payload::DOGEOS_DEFAULT_PAYLOAD_SIZE_LIMIT;
 use alloy_primitives::Address;
+use dogeos_chainspec::{DOGEOS_DEV, DogeosChainSpec};
 use dogeos_reth_rpc::DEFAULT_MIN_SUGGESTED_PRIORITY_FEE;
+use reth_chainspec::EthChainSpec;
 
 /// Scroll-compatible runtime policy exposed by the standalone DogeOS node.
 #[derive(Clone, Debug, clap::Args, PartialEq, Eq)]
@@ -30,6 +32,19 @@ pub struct DogeosRollupArgs {
     /// Optional signer required for blocks received through `scroll/1`.
     #[arg(long = "network.valid-signer", value_name = "ADDRESS")]
     pub scroll_wire_signer: Option<Address>,
+}
+
+impl DogeosRollupArgs {
+    /// Rejects an unauthenticated `scroll/1` importer on non-development chains.
+    pub fn validate_for_chain(&self, chain_spec: &DogeosChainSpec) -> eyre::Result<()> {
+        let is_dev = chain_spec.chain() == DOGEOS_DEV.chain();
+        if self.enable_scroll_wire && self.scroll_wire_signer.is_none() && !is_dev {
+            eyre::bail!(
+                "--network.valid-signer is required when --network.scroll-wire=true on non-development chains"
+            );
+        }
+        Ok(())
+    }
 }
 
 impl Default for DogeosRollupArgs {

@@ -6,6 +6,7 @@ use reth_network_api::PeerId;
 use tokio::sync::mpsc::UnboundedSender;
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)] // NewBlock is forwarded once; avoid a second heap allocation.
 pub enum ScrollWireEvent {
     ConnectionEstablished {
         direction: Direction,

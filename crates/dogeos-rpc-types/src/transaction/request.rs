@@ -71,6 +71,7 @@ impl ScrollTransactionRequest {
 
     /// Builds a supported transaction. Blob requests retain their ordinary transaction fields but
     /// are lowered to EIP-1559 because DogeOS has no blob transaction type.
+    #[allow(clippy::result_large_err)] // Preserve the request for callers that fill missing fields.
     pub fn build_typed_tx(self) -> Result<ScrollTypedTransaction, Self> {
         let transaction = self
             .0
@@ -194,7 +195,7 @@ mod tests {
     fn l1_message_request_preserves_execution_fields() {
         let message = TxL1Message {
             sender: Address::repeat_byte(2),
-            to: Address::repeat_byte(3).into(),
+            to: Address::repeat_byte(3),
             gas_limit: 123,
             value: U256::from(4),
             ..Default::default()

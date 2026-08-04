@@ -1,4 +1,6 @@
-use crate::{ExecutionInfo, ScrollBuilderConfig, decode_forced_transactions};
+use crate::{
+    ExecutionInfo, ScrollBuilderConfig, decode_forced_transactions, forced_transactions_da_bytes,
+};
 use alloy_consensus::Transaction;
 use alloy_eips::Typed2718;
 use alloy_primitives::U256;
@@ -47,6 +49,8 @@ pub enum ScrollPayloadBuilderError {
     BlobTransactionRejected,
     #[error("forced transactions exceed block gas limit {gas}: {gas_spent_by_tx:?}")]
     BlockGasLimitExceededByForcedTransactions { gas_spent_by_tx: Vec<u64>, gas: u64 },
+    #[error("forced transactions use {bytes} encoded bytes, exceeding block DA limit {limit}")]
+    BlockDaLimitExceededByForcedTransactions { bytes: u64, limit: u64 },
 }
 
 /// Reth 2 payload builder for DogeOS/Scroll execution payloads.
@@ -220,8 +224,23 @@ where
 
     let mut info = ExecutionInfo::new();
     let block_gas_limit = builder.evm().block().gas_limit();
+    let forced_transactions =
+        decode_forced_transactions(&attributes).map_err(PayloadBuilderError::other)?;
+    let forced_da_bytes = forced_transactions_da_bytes(&forced_transactions);
+    if let Some(limit) = builder_config.max_da_block_size
+        && forced_da_bytes > limit
+    {
+        return Err(PayloadBuilderError::other(
+            ScrollPayloadBuilderError::BlockDaLimitExceededByForcedTransactions {
+                bytes: forced_da_bytes,
+                limit,
+            },
+        ));
+    }
+
     let mut forced_gas = Vec::new();
-    for forced in decode_forced_transactions(&attributes).map_err(PayloadBuilderError::other)? {
+    for forced in forced_transactions {
+        let encoded_len = forced.encoded_bytes().len() as u64;
         if forced.value().is_eip4844() {
             return Err(PayloadBuilderError::other(
                 ScrollPayloadBuilderError::BlobTransactionRejected,
@@ -256,6 +275,7 @@ where
             gas_used
         };
         info.cumulative_gas_used += gas_used;
+        info.cumulative_da_bytes_used += encoded_len;
         forced_gas.push(gas_used);
     }
 
