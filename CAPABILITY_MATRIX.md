@@ -11,6 +11,8 @@ real-node transcript in `ENGINE_V1_SMOKE.md`.
 
 Run `scripts/verify-workspace.sh` for the reproducible local gate: formatting,
 dependency purity, fixture integrity, and every workspace test target.
+The adjacent-repository and direct-database-reader scan is recorded in
+`CONSUMER_AUDIT.md`.
 
 | Requirement | Oracle owner / evidence | Standalone DogeOS owner | Reth 2 status |
 | --- | --- | --- | --- |
