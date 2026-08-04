@@ -318,6 +318,21 @@ mod tests {
     }
 
     #[test]
+    fn mainnet_genesis_hash_and_l1_config_match_the_frozen_document() {
+        let genesis: Genesis =
+            serde_json::from_str(include_str!("../res/genesis/dogeos.json")).unwrap();
+        assert_eq!(
+            make_genesis_header(&genesis).hash_slow(),
+            DOGEOS_MAINNET_GENESIS_HASH
+        );
+        assert_eq!(DOGEOS_MAINNET.genesis_hash(), DOGEOS_MAINNET_GENESIS_HASH);
+        assert_eq!(
+            ScrollChainConfig::extract_from(&genesis.config.extra_fields).unwrap(),
+            DOGEOS_MAINNET.config
+        );
+    }
+
+    #[test]
     fn supported_chain_ids_match_the_current_node() {
         assert_eq!(DOGEOS_MAINNET.chain().id(), 0xff);
         assert_eq!(DOGEOS_CHIKYU.chain().id(), 0x5fdaf3);

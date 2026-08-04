@@ -21,14 +21,19 @@ pub const DOGEOS_DEV_L1_CONFIG: L1Config = L1Config {
     num_l1_messages_per_block: 10,
 };
 
-/// DogeOS mainnet L1 configuration retained from the current node.
-pub const DOGEOS_MAINNET_L1_CONFIG: L1Config = DOGEOS_DEV_L1_CONFIG;
+/// DogeOS mainnet L1 configuration frozen in `res/genesis/dogeos.json`.
+pub const DOGEOS_MAINNET_L1_CONFIG: L1Config = L1Config {
+    l1_chain_id: 111_111,
+    l1_message_queue_address: DOGEOS_CHIKYU_L1_MESSAGE_QUEUE_ADDRESS,
+    l1_message_queue_v2_address: DOGEOS_CHIKYU_L1_MESSAGE_QUEUE_V2_ADDRESS,
+    scroll_chain_address: DOGEOS_CHIKYU_L1_PROXY_ADDRESS,
+    l2_system_config_address: DOGEOS_CHIKYU_L2_SYSTEM_CONFIG_CONTRACT_ADDRESS,
+    num_l1_messages_per_block: 10,
+};
 
-/// DogeOS mainnet genesis hash retained from the current node configuration.
-///
-/// This remains unresolved in the oracle repository and must be replaced with a
-/// published hash before mainnet qualification.
-pub const DOGEOS_MAINNET_GENESIS_HASH: B256 = B256::ZERO;
+/// Canonical header hash computed from the frozen DogeOS mainnet genesis document.
+pub const DOGEOS_MAINNET_GENESIS_HASH: B256 =
+    b256!("f9f7c524dce38b51a4d28ec2f18680773e5ba9d3f5f430d0e05f92cfeb65b1bc");
 
 pub const DOGEOS_CHIKYU_L1_MESSAGE_QUEUE_ADDRESS: Address =
     address!("3396BeD5adB7d83CC6C424264d229478556d3C02");
