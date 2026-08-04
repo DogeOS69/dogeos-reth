@@ -160,6 +160,53 @@ mod tests {
     }
 
     #[test]
+    fn payload_id_matches_the_scroll_v1_oracle_vector() {
+        let attributes = ScrollPayloadAttributes {
+            payload_attributes: PayloadAttributes {
+                timestamp: 1_728_933_301,
+                prev_randao: alloy_primitives::b256!(
+                    "9158595abbdab2c90635087619aa7042bbebe47642dfab3c9bfb934f6b082765"
+                ),
+                suggested_fee_recipient: alloy_primitives::address!(
+                    "4200000000000000000000000000000000000011"
+                ),
+                withdrawals: Some(Vec::new()),
+                parent_beacon_block_root: Some(alloy_primitives::b256!(
+                    "8fe0193b9bf83cb7e5a08538e494fecc23046aab9a497af3704f4afdae3250ff"
+                )),
+            },
+            transactions: Some(vec![alloy_primitives::bytes!(
+                "7ef8f8a0dc19cfa777d90980e4875d0a548a881baaa3f83f14d1bc0d3038bc329350e54194deaddeaddeaddeaddeaddeaddeaddeaddead00019442000000000000000000000000000000000000158080830f424080b8a4440a5e20000f424000000000000000000000000300000000670d6d890000000000000125000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000014bf9181db6e381d4384bbf69c48b0ee0eed23c6ca26143c6d2544f9d39997a590000000000000000000000007f83d659683caf2767fd3c720981d51f5bc365bc"
+            )]),
+            no_tx_pool: false,
+            block_data_hint: BlockDataHint {
+                extra_data: Some(alloy_primitives::bytes!(
+                    "476574682f76312e302e302f6c696e75782f676f312e342e32"
+                )),
+                state_root: Some(alloy_primitives::b256!(
+                    "000000000000000000000000000000000000000000000000000000000000dead"
+                )),
+                coinbase: Some(alloy_primitives::address!(
+                    "000000000000000000000000000000000000dead"
+                )),
+                nonce: Some(u64::MAX),
+                difficulty: Some(U256::from(10)),
+            },
+            gas_limit: Some(10_000_000),
+        };
+
+        assert_eq!(
+            payload_id_scroll(
+                &alloy_primitives::b256!(
+                    "3533bf30edaf9505d0810bf475cbe4e5f4b9889904b9845e83efdeab4e92eb1e"
+                ),
+                &attributes
+            ),
+            PayloadId::new([0x01, 0x63, 0x69, 0x37, 0x0c, 0x15, 0x5d, 0x4c])
+        );
+    }
+
+    #[test]
     fn attributes_roundtrip_json() {
         let attributes = ScrollPayloadAttributes {
             no_tx_pool: true,
