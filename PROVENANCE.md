@@ -30,18 +30,27 @@ them against the pinned oracle checkout before an extraction changes them.
 | `crates/scroll/chainspec/res/genesis/chikyu_dogeos.json` | `c6effe795d7a5b000f07167ca1c97b6fa8c428acfdcf65641ee6bf9e4b32390b` |
 | `crates/scroll/chainspec/res/genesis/dev.json` | `2e450321d7bf396ca9597d86e1cc5e603065e1ee78663f4b3b85d8265ba92619` |
 
-The fixture generator, Engine transcripts, execution/witness vectors, and
-their SHA-256 manifest are not present in the oracle checkout.  They are a
-blocking Phase 1 deliverable and must be added before behavior-changing work.
+The oracle checkout does not contain a fixture generator or a complete
+differential replay corpus. This repository now freezes the initial byte-level
+Engine V1 compatibility vectors under `fixtures/engine-v1/` and authenticates
+them with `fixtures/SHA256SUMS`. The payload-ID vector is retained from the
+legacy Scroll V1 compatibility implementation; the forced-L1-message vector is
+from the local Engine qualification recorded in `ENGINE_V1_SMOKE.md`.
+
+These fixtures do not claim oracle root parity. A generator plus Chikyu replay,
+receipt/root, reorg, RPC, and execution-witness comparisons remain blocking
+qualification work.
 
 ## Verification
 
 ```sh
 scripts/verify-oracle-baseline.sh /path/to/dogeos-reth
+scripts/verify-fixtures.sh
 ```
 
-The command intentionally validates source identity and chain inputs only. It
-does not treat Storage V1 bytes as a protocol oracle.
+The baseline command intentionally validates source identity and chain inputs
+only. The fixture command validates JSON structure and the byte manifest.
+Neither command treats Storage V1 bytes as a protocol oracle.
 
 ## Phase 0 dependency spike inputs
 

@@ -1,0 +1,14 @@
+{
+  "schema": "dogeos.engine.forced-l1-message.v1",
+  "provenance": "local Engine V1 qualification recorded in ENGINE_V1_SMOKE.md",
+  "encodedTransaction": "0x7ef180830186a09400000000000000000000000000000000000000008080940000000000000000000000000000000000000000",
+  "expected": {
+    "transactionType": "0x7e",
+    "queueIndex": "0x0",
+    "gasLimit": "0x186a0",
+    "receiptStatus": "0x1",
+    "receiptGasUsed": "0x5208",
+    "effectiveGasPrice": "0x0",
+    "l1Fee": "0x0"
+  }
+}

@@ -78,10 +78,12 @@ mod tests {
     }
 
     #[test]
-    fn canonical_zero_index_l1_message_preserves_oracle_bytes() {
-        let encoded = alloy_primitives::bytes!(
-            "7ef180830186a09400000000000000000000000000000000000000008080940000000000000000000000000000000000000000"
-        );
+    fn canonical_zero_index_l1_message_preserves_qualified_bytes() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../fixtures/engine-v1/forced-l1-message.json"
+        ))
+        .unwrap();
+        let encoded: Bytes = serde_json::from_value(fixture["encodedTransaction"].clone()).unwrap();
         let attributes = ScrollPayloadAttributes {
             transactions: Some(vec![encoded.clone()]),
             ..Default::default()

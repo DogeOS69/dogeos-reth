@@ -36,6 +36,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 dogeos-protocol-types = { workspace = true, features = ["std"] }
+serde_json.workspace = true
 
 [features]
 default = ["std"]
