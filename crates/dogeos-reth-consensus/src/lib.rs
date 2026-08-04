@@ -3,7 +3,7 @@
 use alloy_consensus::{
     BlockHeader as _, EMPTY_OMMER_ROOT_HASH, TxReceipt, proofs::calculate_receipt_root,
 };
-use alloy_primitives::{B256, Bloom, U256};
+use alloy_primitives::{Address, B64, B256, Bloom, U256};
 use dogeos_protocol_types::ScrollTransaction;
 use dogeos_reth_primitives::{DogeosBlock, DogeosPrimitives, ScrollReceipt};
 use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
@@ -18,8 +18,7 @@ use reth_primitives_traits::{
 };
 
 pub const DOGEOS_MAXIMUM_BASE_FEE: u64 = 10_000_000_000;
-pub const LEGACY_IN_TURN_DIFFICULTY: U256 = U256::from_limbs([2, 0, 0, 0]);
-pub const LEGACY_NO_TURN_DIFFICULTY: U256 = U256::from_limbs([1, 0, 0, 0]);
+pub const DOGEOS_BLOCK_DIFFICULTY: U256 = U256::from_limbs([1, 0, 0, 0]);
 
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
 pub enum DogeosConsensusError {
@@ -27,8 +26,14 @@ pub enum DogeosConsensusError {
     InvalidL1MessageOrder,
     #[error("block mix hash is not zero: {0:?}")]
     MixHashNotZero(Option<B256>),
-    #[error("block difficulty must be one or two: {0}")]
-    InvalidDifficulty(U256),
+    #[error("block coinbase is not zero: {0}")]
+    CoinbaseNotZero(Address),
+    #[error("block nonce is not zero: {0:?}")]
+    NonceNotZero(Option<B64>),
+    #[error("block difficulty must be one: {0}")]
+    DifficultyNotOne(U256),
+    #[error("block extra data must be empty")]
+    ExtraDataNotEmpty,
     #[error("base fee missing")]
     BaseFeeMissing,
     #[error("base fee exceeds {DOGEOS_MAXIMUM_BASE_FEE}")]
@@ -152,10 +157,17 @@ impl HeaderValidator<alloy_consensus::Header> for DogeosConsensus {
         if header.mix_hash() != Some(B256::ZERO) {
             return Err(DogeosConsensusError::MixHashNotZero(header.mix_hash()).into());
         }
-        if header.difficulty() != LEGACY_NO_TURN_DIFFICULTY
-            && header.difficulty() != LEGACY_IN_TURN_DIFFICULTY
-        {
-            return Err(DogeosConsensusError::InvalidDifficulty(header.difficulty()).into());
+        if header.beneficiary() != Address::ZERO {
+            return Err(DogeosConsensusError::CoinbaseNotZero(header.beneficiary()).into());
+        }
+        if header.nonce() != Some(B64::ZERO) {
+            return Err(DogeosConsensusError::NonceNotZero(header.nonce()).into());
+        }
+        if header.difficulty() != DOGEOS_BLOCK_DIFFICULTY {
+            return Err(DogeosConsensusError::DifficultyNotOne(header.difficulty()).into());
+        }
+        if !header.extra_data().is_empty() {
+            return Err(DogeosConsensusError::ExtraDataNotEmpty.into());
         }
         let Some(base_fee) = header.base_fee_per_gas() else {
             return Err(DogeosConsensusError::BaseFeeMissing.into());
@@ -171,6 +183,7 @@ impl HeaderValidator<alloy_consensus::Header> for DogeosConsensus {
         {
             return Err(DogeosConsensusError::BlobFieldsPresent.into());
         }
+        validate_header_timestamp(header)?;
         validate_header_gas(header)?;
         Ok(())
     }
@@ -189,6 +202,20 @@ impl HeaderValidator<alloy_consensus::Header> for DogeosConsensus {
         }
         validate_parent_gas_limit(header.header(), parent.header())
     }
+}
+
+fn validate_header_timestamp(header: &alloy_consensus::Header) -> Result<(), ConsensusError> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock is after the Unix epoch")
+        .as_secs();
+    if header.timestamp() > now {
+        return Err(ConsensusError::TimestampIsInPast {
+            parent_timestamp: now,
+            timestamp: header.timestamp(),
+        });
+    }
+    Ok(())
 }
 
 pub fn validate_l1_messages<'a>(
@@ -266,6 +293,19 @@ mod tests {
         .into()
     }
 
+    fn valid_header() -> alloy_consensus::Header {
+        alloy_consensus::Header {
+            ommers_hash: EMPTY_OMMER_ROOT_HASH,
+            beneficiary: Address::ZERO,
+            difficulty: DOGEOS_BLOCK_DIFFICULTY,
+            mix_hash: B256::ZERO,
+            nonce: B64::ZERO,
+            base_fee_per_gas: Some(1),
+            gas_limit: 20_000_000,
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn l1_messages_must_be_a_sequential_prefix() {
         assert!(validate_l1_messages(&[l1(7), l1(8), l2()]).is_ok());
@@ -298,5 +338,53 @@ mod tests {
                 .validate_header_against_parent(&child, &parent)
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn post_euclid_header_fields_are_enforced() {
+        let consensus = DogeosConsensus;
+        assert!(
+            consensus
+                .validate_header(&SealedHeader::seal_slow(valid_header()))
+                .is_ok()
+        );
+
+        let mut header = valid_header();
+        header.difficulty = U256::from(2);
+        assert!(matches!(
+            consensus.validate_header(&SealedHeader::seal_slow(header)),
+            Err(ConsensusError::Other(message)) if message.contains("difficulty must be one")
+        ));
+
+        let mut header = valid_header();
+        header.beneficiary = Address::repeat_byte(1);
+        assert!(matches!(
+            consensus.validate_header(&SealedHeader::seal_slow(header)),
+            Err(ConsensusError::Other(message)) if message.contains("coinbase is not zero")
+        ));
+
+        let mut header = valid_header();
+        header.nonce = B64::repeat_byte(1);
+        assert!(matches!(
+            consensus.validate_header(&SealedHeader::seal_slow(header)),
+            Err(ConsensusError::Other(message)) if message.contains("nonce is not zero")
+        ));
+
+        let mut header = valid_header();
+        header.extra_data = alloy_primitives::Bytes::from_static(b"clique");
+        assert!(matches!(
+            consensus.validate_header(&SealedHeader::seal_slow(header)),
+            Err(ConsensusError::Other(message)) if message.contains("extra data must be empty")
+        ));
+    }
+
+    #[test]
+    fn future_header_timestamp_is_rejected() {
+        let mut header = valid_header();
+        header.timestamp = u64::MAX;
+        assert!(matches!(
+            DogeosConsensus.validate_header(&SealedHeader::seal_slow(header)),
+            Err(ConsensusError::TimestampIsInPast { .. })
+        ));
     }
 }
