@@ -49,4 +49,5 @@ tracing.workspace = true
 [dev-dependencies]
 futures.workspace = true
 reth-consensus.workspace = true
+reth-provider = { workspace = true, features = ["test-utils"] }
 tokio.workspace = true

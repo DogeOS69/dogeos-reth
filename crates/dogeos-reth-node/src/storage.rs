@@ -76,6 +76,8 @@ impl ChainStorage<DogeosPrimitives> for DogeosStorage {
 mod tests {
     use super::*;
     use alloy_consensus::Header;
+    use reth_primitives_traits::RecoveredBlock;
+    use reth_provider::{BlockReader, BlockWriter};
 
     #[test]
     fn body_reconstruction_never_invents_withdrawals() {
@@ -93,5 +95,36 @@ mod tests {
         assert!(bodies[0].transactions.is_empty());
         assert!(bodies[0].ommers.is_empty());
         assert!(bodies[0].withdrawals.is_none());
+    }
+
+    #[test]
+    fn provider_roundtrip_preserves_absent_withdrawals() {
+        let factory = reth_provider::test_utils::create_test_provider_factory_with_node_types::<
+            crate::DogeosNodeTypes,
+        >(dogeos_chainspec::DOGEOS_DEV.clone());
+        let block = RecoveredBlock::new_unhashed(
+            alloy_consensus::Block {
+                header: Header {
+                    number: 0,
+                    timestamp: u64::MAX,
+                    ..Default::default()
+                },
+                body: DogeosBlockBody {
+                    transactions: Vec::new(),
+                    ommers: Vec::new(),
+                    withdrawals: None,
+                },
+            },
+            Vec::new(),
+        );
+
+        let writer = factory.provider_rw().unwrap();
+        writer.insert_block(&block).unwrap();
+        writer.commit().unwrap();
+
+        let reader = factory.provider().unwrap();
+        let stored = reader.block_by_number(0).unwrap().unwrap();
+        assert!(stored.body.withdrawals.is_none());
+        assert!(stored.body.ommers.is_empty());
     }
 }

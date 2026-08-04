@@ -3794,6 +3794,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hash-db"
+version = "0.15.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d23bd4e7b5eda0d0f3a307e8b381fdc8ba9000f26fbe912250c0a4cc3956364a"
+
+[[package]]
 name = "hashbag"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5873,6 +5879,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
+name = "plain_hasher"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e19e6491bdde87c2c43d70f4c194bc8a758f2eb732df00f61e43f7362e3b4cc"
+dependencies = [
+ "crunchy",
+]
+
+[[package]]
 name = "polyval"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6586,6 +6601,8 @@ dependencies = [
  "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
  "derive_more",
  "metrics",
  "parking_lot",
@@ -6861,6 +6878,7 @@ dependencies = [
  "eyre",
  "metrics",
  "page_size",
+ "parking_lot",
  "quanta",
  "reth-db-api",
  "reth-fs-util",
@@ -6873,6 +6891,7 @@ dependencies = [
  "rustc-hash",
  "strum 0.27.2",
  "sysinfo",
+ "tempfile",
  "thiserror 2.0.19",
  "tracing",
 ]
@@ -6884,11 +6903,13 @@ source = "git+https://github.com/paradigmxyz/reth.git?rev=eb4c15e5e36d8776d46629
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
+ "arbitrary",
  "arrayvec",
  "bytes",
  "derive_more",
  "metrics",
  "modular-bitfield",
+ "proptest",
  "reth-codecs",
  "reth-db-models",
  "reth-ethereum-primitives",
@@ -6938,6 +6959,7 @@ source = "git+https://github.com/paradigmxyz/reth.git?rev=eb4c15e5e36d8776d46629
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
+ "arbitrary",
  "bytes",
  "modular-bitfield",
  "reth-codecs",
@@ -8256,6 +8278,7 @@ dependencies = [
  "reth-db",
  "reth-db-api",
  "reth-errors",
+ "reth-ethereum-engine-primitives",
  "reth-ethereum-primitives",
  "reth-execution-types",
  "reth-fs-util",
@@ -8272,8 +8295,10 @@ dependencies = [
  "reth-trie",
  "reth-trie-db",
  "revm-database",
+ "revm-state",
  "rocksdb",
  "strum 0.27.2",
+ "tokio",
  "tracing",
 ]
 
@@ -8312,6 +8337,7 @@ version = "2.0.0"
 source = "git+https://github.com/paradigmxyz/reth.git?rev=eb4c15e5e36d8776d46629beae4c0a69af7ab04f#eb4c15e5e36d8776d46629beae4c0a69af7ab04f"
 dependencies = [
  "alloy-primitives",
+ "arbitrary",
  "derive_more",
  "modular-bitfield",
  "reth-codecs",
@@ -8761,6 +8787,7 @@ version = "2.0.0"
 source = "git+https://github.com/paradigmxyz/reth.git?rev=eb4c15e5e36d8776d46629beae4c0a69af7ab04f#eb4c15e5e36d8776d46629beae4c0a69af7ab04f"
 dependencies = [
  "alloy-primitives",
+ "arbitrary",
  "bytes",
  "modular-bitfield",
  "reth-codecs",
@@ -8975,6 +9002,7 @@ dependencies = [
  "reth-trie-sparse",
  "revm-database",
  "tracing",
+ "triehash",
 ]
 
 [[package]]
@@ -8988,11 +9016,14 @@ dependencies = [
  "alloy-rpc-types-eth",
  "alloy-serde",
  "alloy-trie",
+ "arbitrary",
  "arrayvec",
  "bytes",
  "derive_more",
+ "hash-db",
  "itertools 0.14.0",
  "nybbles",
+ "plain_hasher",
  "rayon",
  "reth-codecs",
  "reth-primitives-traits",
@@ -10895,6 +10926,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "triehash"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1631b201eb031b563d2e85ca18ec8092508e262a3196ce9bd10a67ec87b9f5c"
+dependencies = [
+ "hash-db",
+ "rlp",
 ]
 
 [[package]]
