@@ -28,6 +28,7 @@ reth-trie-common = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4
 reth-evm = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-execution-types = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-engine-primitives = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
+reth-engine-local = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-payload-primitives = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-storage-api = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
 reth-tasks = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }

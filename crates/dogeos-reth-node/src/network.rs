@@ -67,6 +67,7 @@ where
         for protocol in self.extra_protocols {
             config = config.add_rlpx_sub_protocol(protocol);
         }
+        tracing::info!(target: "reth::cli", "Initializing DogeOS P2P networking");
         let network = NetworkManager::builder(ctx.build_network_config(config)).await?;
         let handle = ctx.start_network(network, pool);
         tracing::info!(

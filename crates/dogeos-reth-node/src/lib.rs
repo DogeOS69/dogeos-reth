@@ -4,7 +4,7 @@
 //! storage binding are all selected at this boundary.
 
 use dogeos_chainspec::DogeosChainSpec;
-use dogeos_reth_engine::DogeosEngineTypes;
+use dogeos_reth_engine::{DogeosEngineTypes, ScrollPayloadAttributes};
 use dogeos_reth_primitives::DogeosPrimitives;
 use reth_node_types::NodeTypes;
 
@@ -28,7 +28,7 @@ mod rpc;
 pub use rpc::{DogeosEthApiBuilder, DogeosPendingEnvBuilder};
 
 use reth_node_builder::{
-    Node, NodeAdapter,
+    DebugNode, Node, NodeAdapter,
     components::{BasicPayloadServiceBuilder, ComponentsBuilder, NodeComponentsBuilder},
 };
 use reth_rpc_builder::RethRpcModule;
@@ -154,6 +154,29 @@ pub struct DogeosNodeTypes {
     pub args: DogeosRollupArgs,
 }
 
+/// Adapts Reth's Ethereum local miner attributes to the Scroll-compatible Engine API shape.
+#[derive(Debug)]
+struct DogeosLocalPayloadAttributesBuilder {
+    inner: reth_engine_local::LocalPayloadAttributesBuilder<DogeosChainSpec>,
+}
+
+impl reth_node_builder::PayloadAttributesBuilder<ScrollPayloadAttributes, alloy_consensus::Header>
+    for DogeosLocalPayloadAttributesBuilder
+{
+    fn build(
+        &self,
+        parent: &reth_primitives_traits::SealedHeader<alloy_consensus::Header>,
+    ) -> ScrollPayloadAttributes {
+        ScrollPayloadAttributes {
+            payload_attributes: reth_node_builder::PayloadAttributesBuilder::build(
+                &self.inner,
+                parent,
+            ),
+            ..Default::default()
+        }
+    }
+}
+
 impl NodeTypes for DogeosNodeTypes {
     type Primitives = DogeosPrimitives;
     type ChainSpec = DogeosChainSpec;
@@ -197,6 +220,33 @@ where
     }
 }
 
+impl<N> DebugNode<N> for DogeosNodeTypes
+where
+    N: reth_node_builder::FullNodeComponents<Types = Self>,
+    Self: Node<N>,
+{
+    type RpcBlock = alloy_rpc_types_eth::Block<dogeos_reth_primitives::ScrollTransactionSigned>;
+
+    fn rpc_to_primitive_block(
+        rpc_block: Self::RpcBlock,
+    ) -> reth_primitives_traits::BlockTy<Self::Primitives> {
+        rpc_block.into_consensus()
+    }
+
+    fn local_payload_attributes_builder(
+        chain_spec: &Self::ChainSpec,
+    ) -> impl reth_node_builder::PayloadAttributesBuilder<
+        <Self::Payload as reth_node_builder::PayloadTypes>::PayloadAttributes,
+        <Self::Primitives as reth_primitives_traits::NodePrimitives>::BlockHeader,
+    > {
+        DogeosLocalPayloadAttributesBuilder {
+            inner: reth_engine_local::LocalPayloadAttributesBuilder::new(std::sync::Arc::new(
+                chain_spec.clone(),
+            )),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -231,5 +281,27 @@ mod tests {
             node.args.payload_size_limit,
             payload::DOGEOS_DEFAULT_PAYLOAD_SIZE_LIMIT
         );
+    }
+
+    #[test]
+    fn local_miner_builds_scroll_payload_attributes() {
+        let builder = DogeosLocalPayloadAttributesBuilder {
+            inner: reth_engine_local::LocalPayloadAttributesBuilder::new(
+                dogeos_chainspec::DOGEOS_DEV.clone(),
+            ),
+        };
+        let parent = reth_primitives_traits::SealedHeader::seal_slow(alloy_consensus::Header {
+            timestamp: 1,
+            ..Default::default()
+        });
+
+        let attributes = reth_node_builder::PayloadAttributesBuilder::build(&builder, &parent);
+
+        assert!(attributes.payload_attributes.timestamp >= 2);
+        assert!(attributes.payload_attributes.withdrawals.is_some());
+        assert!(!attributes.no_tx_pool);
+        assert!(attributes.transactions.is_none());
+        assert!(attributes.block_data_hint.is_empty());
+        assert!(attributes.gas_limit.is_none());
     }
 }

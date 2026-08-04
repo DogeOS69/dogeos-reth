@@ -16,7 +16,10 @@ fn main() {
                 )
             },
             async move |builder, args| {
-                let handle = builder.node(DogeosNodeTypes::new(args)).launch().await?;
+                let handle = builder
+                    .node(DogeosNodeTypes::new(args))
+                    .launch_with_debug_capabilities()
+                    .await?;
                 handle.wait_for_node_exit().await
             },
         )
