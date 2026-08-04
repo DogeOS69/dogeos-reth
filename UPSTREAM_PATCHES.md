@@ -8,7 +8,20 @@ rationale, a test, and a removal condition.
 
 | Candidate | Status | Required evidence before admission |
 | --- | --- | --- |
-| Reth PR #23603 (RocksDB synchronous-write durability fix) | **Unselected** | Exact Reth 2 / REVM 36-compatible revision or a documented backport; dependency-tree proof that it does not advance to REVM 38; crash/restart test |
+| Reth PR #23603 (RocksDB synchronous-write durability fix) | **Blocked: absent from selected revision** | Exact Reth 2 / REVM 36-compatible revision or a documented backport; dependency-tree proof that it does not advance to REVM 38; crash/restart test |
+
+The local source audit of locked Reth revision
+`eb4c15e5e36d8776d46629beae4c0a69af7ab04f` found production RocksDB commits
+using `WriteOptions::default()` and no `set_sync(true)` call. Therefore the
+current dependency selection is suitable for migration development but not a
+release-qualified Storage V2 selection. Reproduce the negative gate with:
+
+```sh
+scripts/audit-rocksdb-durability.sh
+```
+
+The command intentionally exits non-zero until a reviewed compatible revision
+or documented backport is selected. Do not weaken the gate to make it pass.
 
 ## Required DogeOS EVM dependency
 
