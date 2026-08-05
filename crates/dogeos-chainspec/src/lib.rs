@@ -28,7 +28,7 @@ use std::sync::LazyLock;
 mod constants;
 pub use constants::*;
 mod genesis;
-pub use genesis::{L1Config, ScrollChainConfig};
+pub use genesis::{DogeosHardforkInfo, L1Config, ScrollChainConfig};
 
 mod chikyu;
 pub use chikyu::DOGEOS_CHIKYU;
@@ -120,7 +120,10 @@ impl DogeosChainSpec {
     pub fn from_custom_genesis(genesis: Genesis) -> Self {
         let config = ScrollChainConfig::extract_from(&genesis.config.extra_fields)
             .expect("custom DogeOS genesis must contain the inherited scroll config");
-        build_spec(genesis, config, None, None)
+        let dogeos_forks = DogeosHardforkInfo::try_from(&genesis.config.extra_fields)
+            .expect("custom DogeOS genesis hardfork timestamps must be valid")
+            .activation_schedule();
+        build_spec(genesis, config, dogeos_forks, None, None)
     }
 }
 
@@ -209,6 +212,7 @@ impl From<Genesis> for DogeosChainSpec {
 pub(crate) fn build_spec(
     genesis: Genesis,
     config: ScrollChainConfig,
+    dogeos_forks: [(DogeosHardfork, ForkCondition); 4],
     known_hash: Option<B256>,
     chain_override: Option<Chain>,
 ) -> DogeosChainSpec {
@@ -224,7 +228,7 @@ pub(crate) fn build_spec(
             chain,
             genesis_header,
             genesis,
-            hardforks: feynman_hardforks(),
+            hardforks: feynman_hardforks(dogeos_forks),
             base_fee_params: BaseFeeParamsKind::Variable(
                 alloc::vec![(
                     DogeosHardfork::Feynman.boxed(),
@@ -239,7 +243,9 @@ pub(crate) fn build_spec(
     }
 }
 
-fn feynman_hardforks() -> ChainHardforks {
+fn feynman_hardforks(
+    dogeos_forks: impl IntoIterator<Item = (DogeosHardfork, ForkCondition)>,
+) -> ChainHardforks {
     let mut forks: Vec<(Box<dyn Hardfork>, ForkCondition)> = alloc::vec![
         (EthereumHardfork::Frontier.boxed(), ForkCondition::Block(0)),
         (EthereumHardfork::Homestead.boxed(), ForkCondition::Block(0)),
@@ -266,7 +272,7 @@ fn feynman_hardforks() -> ChainHardforks {
         ),
     ];
     forks.extend(
-        DogeosHardfork::mainnet()
+        dogeos_forks
             .into_iter()
             .map(|(fork, condition)| (Box::new(fork) as Box<dyn Hardfork>, condition)),
     );
@@ -307,9 +313,12 @@ mod tests {
     fn supported_specs_are_feynman_baseline_without_withdrawals() {
         for spec in [&*DOGEOS_MAINNET, &*DOGEOS_CHIKYU, &*DOGEOS_DEV] {
             assert!(spec.is_feynman_active_at_timestamp(0));
-            assert!(spec.is_tsuki_active_at_timestamp(0));
             assert!(spec.genesis_header().base_fee_per_gas.is_some());
         }
+        assert!(DOGEOS_MAINNET.is_tsuki_active_at_timestamp(0));
+        assert!(DOGEOS_DEV.is_tsuki_active_at_timestamp(0));
+        assert!(!DOGEOS_CHIKYU.is_tsuki_active_at_timestamp(0));
+        assert!(!DOGEOS_CHIKYU.is_tsuki_active_at_timestamp(u64::MAX));
     }
 
     #[test]
@@ -337,5 +346,33 @@ mod tests {
         assert_eq!(DOGEOS_MAINNET.chain().id(), 0xff);
         assert_eq!(DOGEOS_CHIKYU.chain().id(), 0x5fdaf3);
         assert_eq!(DOGEOS_DEV.chain(), Chain::dev());
+    }
+
+    #[test]
+    fn custom_genesis_preserves_dogeos_hardfork_boundaries() {
+        let mut genesis: Genesis =
+            serde_json::from_str(include_str!("../res/genesis/chikyu_dogeos.json")).unwrap();
+        genesis
+            .config
+            .extra_fields
+            .insert("feynmanTime".into(), 10.into());
+        genesis
+            .config
+            .extra_fields
+            .insert("galileoTime".into(), 20.into());
+        genesis
+            .config
+            .extra_fields
+            .insert("galileoV2Time".into(), 30.into());
+        genesis
+            .config
+            .extra_fields
+            .insert("tsukiTime".into(), 40.into());
+
+        let spec = DogeosChainSpec::from_custom_genesis(genesis);
+        assert!(!spec.is_feynman_active_at_timestamp(9));
+        assert!(spec.is_feynman_active_at_timestamp(10));
+        assert!(!spec.is_tsuki_active_at_timestamp(39));
+        assert!(spec.is_tsuki_active_at_timestamp(40));
     }
 }

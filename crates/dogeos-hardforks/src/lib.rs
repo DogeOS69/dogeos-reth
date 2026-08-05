@@ -28,20 +28,33 @@ impl DogeosHardfork {
     pub const fn chikyu() -> [(Self, ForkCondition); 4] {
         [
             (Self::Feynman, ForkCondition::Timestamp(0)),
+            // Chikyu remains on the Feynman rules at the frozen public checkpoint. Keep later
+            // forks fail-closed until authoritative activation timestamps are published and
+            // historical replay has qualified them.
+            (Self::Galileo, ForkCondition::Never),
+            (Self::GalileoV2, ForkCondition::Never),
+            (Self::Tsuki, ForkCondition::Never),
+        ]
+    }
+
+    /// DogeOS mainnet activation schedule.
+    pub const fn mainnet() -> [(Self, ForkCondition); 4] {
+        [
+            (Self::Feynman, ForkCondition::Timestamp(0)),
             (Self::Galileo, ForkCondition::Timestamp(0)),
             (Self::GalileoV2, ForkCondition::Timestamp(0)),
             (Self::Tsuki, ForkCondition::Timestamp(0)),
         ]
     }
 
-    /// DogeOS mainnet activation schedule.
-    pub const fn mainnet() -> [(Self, ForkCondition); 4] {
-        Self::chikyu()
-    }
-
     /// Development-network activation schedule.
     pub const fn dev() -> [(Self, ForkCondition); 4] {
-        Self::chikyu()
+        [
+            (Self::Feynman, ForkCondition::Timestamp(0)),
+            (Self::Galileo, ForkCondition::Timestamp(0)),
+            (Self::GalileoV2, ForkCondition::Timestamp(0)),
+            (Self::Tsuki, ForkCondition::Timestamp(0)),
+        ]
     }
 }
 
@@ -118,15 +131,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn supported_networks_activate_feynman_and_tsuki_at_genesis() {
-        for hardforks in [
-            DogeosChainHardforks::mainnet(),
-            DogeosChainHardforks::chikyu(),
-            DogeosChainHardforks::dev(),
-        ] {
+    fn mainnet_and_dev_activate_feynman_and_tsuki_at_genesis() {
+        for hardforks in [DogeosChainHardforks::mainnet(), DogeosChainHardforks::dev()] {
             assert!(hardforks.is_feynman_active_at_timestamp(0));
             assert!(hardforks.is_tsuki_active_at_timestamp(0));
         }
+    }
+
+    #[test]
+    fn chikyu_does_not_activate_tsuki_without_an_authoritative_timestamp() {
+        let hardforks = DogeosChainHardforks::chikyu();
+        assert!(hardforks.is_feynman_active_at_timestamp(0));
+        assert_eq!(
+            hardforks.dogeos_fork_activation(DogeosHardfork::Galileo),
+            ForkCondition::Never
+        );
+        assert_eq!(
+            hardforks.dogeos_fork_activation(DogeosHardfork::GalileoV2),
+            ForkCondition::Never
+        );
+        assert_eq!(
+            hardforks.dogeos_fork_activation(DogeosHardfork::Tsuki),
+            ForkCondition::Never
+        );
+        assert!(!hardforks.is_tsuki_active_at_timestamp(0));
+        assert!(!hardforks.is_tsuki_active_at_timestamp(u64::MAX));
     }
 
     #[test]

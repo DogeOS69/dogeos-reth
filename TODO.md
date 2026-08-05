@@ -1,6 +1,6 @@
 # DogeOS Reth 2 Migration TODO
 
-Last updated: 2026-08-03
+Last updated: 2026-08-04
 
 This list tracks the remaining work required to qualify and cut over to the standalone DogeOS Reth
 2 node. Completed migration evidence is recorded in [CAPABILITY_MATRIX.md](CAPABILITY_MATRIX.md),
@@ -8,6 +8,14 @@ This list tracks the remaining work required to qualify and cut over to the stan
 [SYNC_COMPATIBILITY_SMOKE.md](SYNC_COMPATIBILITY_SMOKE.md).
 
 ## P0 — Release Blockers
+
+- [x] **Separate the Chikyu hardfork schedule and restore custom-genesis parsing.**
+  - Chikyu is Feynman-active from genesis; Galileo, Galileo V2, and Tsuki fail closed until an
+    authoritative activation timestamp is published.
+  - Public checkpoint `0x676c32` confirms the Feynman oracle remains installed, the Galileo marker
+    is zero, and the Tsuki NativeDogeToken predeploy is absent.
+  - Custom genesis files preserve numeric, decimal-string, and hexadecimal fork timestamps.
+  - See [CHIKYU_HARDFORK_SCHEDULE.md](CHIKYU_HARDFORK_SCHEDULE.md) and the frozen fixture.
 
 - [ ] **Integrate the RocksDB synchronous-write durability fix.**
   - Select an upstream Reth revision or a minimal documented backport containing the equivalent of
@@ -23,6 +31,8 @@ This list tracks the remaining work required to qualify and cut over to the stan
   - Compare gas usage, base fee, logs bloom, receipt status, `l1Fee`, forced L1 messages, native
     DOGE/Tsuki state, and execution witnesses over representative historical ranges.
   - Freeze the compared height, node revisions, commands, and results as reproducible evidence.
+  - Use the frozen schedule checkpoint as the first full-replay target, then extend to the current
+    finalized head.
 
 - [ ] **Qualify the real rollup/consensus driver against the new execution node.**
   - Run `dogeos-rollup-node` against the new node through the Engine API.

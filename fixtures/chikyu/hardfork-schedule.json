@@ -1,0 +1,35 @@
+{
+  "schema": "dogeos/chikyu-hardfork-schedule/v1",
+  "provenance": "Public Chikyu RPC https://rpc.testnet.dogeos.com observed 2026-08-04; genesis allocation frozen in crates/dogeos-chainspec/res/genesis/chikyu_dogeos.json",
+  "chainId": "0x5fdaf3",
+  "genesis": {
+    "hash": "0xf9f7c524dce38b51a4d28ec2f18680773e5ba9d3f5f430d0e05f92cfeb65b1bc",
+    "timestamp": "0x68e7e322"
+  },
+  "checkpoint": {
+    "number": "0x676c32",
+    "numberDecimal": 6777906,
+    "hash": "0x2b499525a2b051242025c89bf4c0287e56ed26f52dc38ba5972751671fa6d86d",
+    "timestamp": "0x6a72906a",
+    "timestampDecimal": 1785892970,
+    "stateRoot": "0x8481f8c2311e75715b139e04e760f641cd68121ea91e4a37c771cd232e6d3fb9",
+    "transactionsRoot": "0x9a0813b5968cfb09e546cacae92d239d739b211e842a7e6f075a3b36610f899d",
+    "receiptsRoot": "0xf78dfb743fbd92ade140711c8bbc542b5e307f0ab7984eff35d751969fe57efa"
+  },
+  "schedule": {
+    "feynman": { "condition": "timestamp", "value": 0 },
+    "galileo": { "condition": "never" },
+    "galileoV2": { "condition": "never" },
+    "tsuki": { "condition": "never" }
+  },
+  "stateEvidence": {
+    "l1GasPriceOracle": "0x5300000000000000000000000000000000000002",
+    "genesisFeynmanMarkerSlot": "0xb",
+    "genesisFeynmanMarkerValue": "0x1",
+    "checkpointGalileoMarkerSlot": "0xc",
+    "checkpointGalileoMarkerValue": "0x0",
+    "checkpointOracleCodeMatchesGenesisFeynmanCode": true,
+    "nativeDogeToken": "0x530000000000000000000000000000000000d09e",
+    "checkpointNativeDogeTokenCode": "0x"
+  }
+}

@@ -1,3 +1,4 @@
+677db9ad6ff6ecd9ec9ab926324c198086b05ca1281466e4158f4058c7940354  fixtures/chikyu/hardfork-schedule.json
 0979cf5ebff48f90e20e62f0398ecf92209ec3da00594eae6e69c53f056c956b  fixtures/engine-v1/forced-l1-message.json
 6db351bfa255f48aa9ac59017cd052919d1e87fc5dd03513f65814a4dbd0f94e  fixtures/engine-v1/payload-id-scroll-v1.json
 f2686b152db3528a0c789e31c586c1d8facbf36a1662b46b1ba56a06c553cda5  fixtures/sync/dev-p2p-block-300.json

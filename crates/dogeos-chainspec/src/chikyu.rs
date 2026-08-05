@@ -1,5 +1,6 @@
 use crate::{DOGEOS_CHIKYU_GENESIS_HASH, DogeosChainSpec, LazyLock, ScrollChainConfig, build_spec};
 use alloc::sync::Arc;
+use dogeos_hardforks::DogeosHardfork;
 
 /// DogeOS Chikyu testnet specification.
 pub static DOGEOS_CHIKYU: LazyLock<Arc<DogeosChainSpec>> = LazyLock::new(|| {
@@ -8,6 +9,7 @@ pub static DOGEOS_CHIKYU: LazyLock<Arc<DogeosChainSpec>> = LazyLock::new(|| {
     build_spec(
         genesis,
         ScrollChainConfig::dogeos_chikyu(),
+        DogeosHardfork::chikyu(),
         Some(DOGEOS_CHIKYU_GENESIS_HASH),
         None,
     )

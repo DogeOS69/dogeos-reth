@@ -3,6 +3,7 @@ use crate::{
 };
 use alloc::sync::Arc;
 use alloy_chains::Chain;
+use dogeos_hardforks::DogeosHardfork;
 
 /// DogeOS mainnet specification retained from the current node.
 pub static DOGEOS_MAINNET: LazyLock<Arc<DogeosChainSpec>> = LazyLock::new(|| {
@@ -11,6 +12,7 @@ pub static DOGEOS_MAINNET: LazyLock<Arc<DogeosChainSpec>> = LazyLock::new(|| {
     build_spec(
         genesis,
         ScrollChainConfig::dogeos_mainnet(),
+        DogeosHardfork::mainnet(),
         Some(DOGEOS_MAINNET_GENESIS_HASH),
         Some(Chain::from_id(0xff)),
     )

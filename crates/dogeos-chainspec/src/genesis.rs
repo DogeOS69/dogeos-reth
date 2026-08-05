@@ -8,6 +8,8 @@ use alloy_primitives::Address;
 use alloy_serde::OtherFields;
 use serde::{Deserialize, Deserializer, de::Error};
 
+use dogeos_hardforks::{DogeosHardfork, ForkCondition};
+
 /// The inherited Scroll L1 configuration JSON contract.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -37,6 +39,68 @@ where
             u64::from_str_radix(digits, radix).map_err(D::Error::custom)
         }
         _ => Err(D::Error::custom("expected an unsigned integer or string")),
+    }
+}
+
+fn deserialize_optional_u64_flexible<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    value
+        .map(|value| match value {
+            serde_json::Value::Number(value) => value
+                .as_u64()
+                .ok_or_else(|| D::Error::custom("expected an unsigned integer")),
+            serde_json::Value::String(value) => {
+                let (digits, radix) = value
+                    .strip_prefix("0x")
+                    .map_or((value.as_str(), 10), |digits| (digits, 16));
+                u64::from_str_radix(digits, radix).map_err(D::Error::custom)
+            }
+            _ => Err(D::Error::custom("expected an unsigned integer or string")),
+        })
+        .transpose()
+}
+
+/// DogeOS hardfork timestamps encoded in a custom genesis config.
+#[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DogeosHardforkInfo {
+    #[serde(default, deserialize_with = "deserialize_optional_u64_flexible")]
+    pub feynman_time: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_optional_u64_flexible")]
+    pub galileo_time: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_optional_u64_flexible")]
+    pub galileo_v2_time: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_optional_u64_flexible")]
+    pub tsuki_time: Option<u64>,
+}
+
+impl DogeosHardforkInfo {
+    /// Converts genesis timestamps into an explicit, fail-closed activation schedule.
+    pub const fn activation_schedule(self) -> [(DogeosHardfork, ForkCondition); 4] {
+        const fn condition(timestamp: Option<u64>) -> ForkCondition {
+            match timestamp {
+                Some(timestamp) => ForkCondition::Timestamp(timestamp),
+                None => ForkCondition::Never,
+            }
+        }
+
+        [
+            (DogeosHardfork::Feynman, condition(self.feynman_time)),
+            (DogeosHardfork::Galileo, condition(self.galileo_time)),
+            (DogeosHardfork::GalileoV2, condition(self.galileo_v2_time)),
+            (DogeosHardfork::Tsuki, condition(self.tsuki_time)),
+        ]
+    }
+}
+
+impl TryFrom<&OtherFields> for DogeosHardforkInfo {
+    type Error = serde_json::Error;
+
+    fn try_from(others: &OtherFields) -> Result<Self, Self::Error> {
+        others.deserialize_as()
     }
 }
 
@@ -100,5 +164,28 @@ mod tests {
         let config = ScrollChainConfig::extract_from(&genesis.config.extra_fields).unwrap();
         assert_eq!(config.l1_config.l1_chain_id, 111111);
         assert_eq!(config.max_tx_payload_bytes_per_block, 120 * 1024);
+    }
+
+    #[test]
+    fn extracts_flexible_hardfork_timestamps_and_fails_closed_when_absent() {
+        let fields: OtherFields = serde_json::from_str(
+            r#"{
+                "feynmanTime": 10,
+                "galileoTime": "20",
+                "galileoV2Time": "0x1e"
+            }"#,
+        )
+        .unwrap();
+        let info = DogeosHardforkInfo::try_from(&fields).unwrap();
+
+        assert_eq!(
+            info.activation_schedule(),
+            [
+                (DogeosHardfork::Feynman, ForkCondition::Timestamp(10)),
+                (DogeosHardfork::Galileo, ForkCondition::Timestamp(20)),
+                (DogeosHardfork::GalileoV2, ForkCondition::Timestamp(30)),
+                (DogeosHardfork::Tsuki, ForkCondition::Never),
+            ]
+        );
     }
 }

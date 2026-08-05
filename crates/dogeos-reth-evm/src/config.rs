@@ -283,7 +283,7 @@ where
 mod tests {
     use super::*;
     use alloy_rpc_types_engine::{ExecutionPayload, ExecutionPayloadSidecar, ExecutionPayloadV1};
-    use dogeos_chainspec::DOGEOS_MAINNET;
+    use dogeos_chainspec::{DOGEOS_CHIKYU, DOGEOS_MAINNET};
 
     #[test]
     fn supported_mainnet_selects_tsuki_at_genesis() {
@@ -291,6 +291,15 @@ mod tests {
         assert_eq!(
             config.spec_id_at_timestamp_and_number(0, 0),
             ScrollSpecId::TSUKI
+        );
+    }
+
+    #[test]
+    fn chikyu_checkpoint_selects_feynman_without_later_forks() {
+        let config = ScrollEvmConfig::dogeos(DOGEOS_CHIKYU.clone());
+        assert_eq!(
+            config.spec_id_at_timestamp_and_number(1_785_892_970, 6_777_906),
+            ScrollSpecId::FEYNMAN
         );
     }
 
