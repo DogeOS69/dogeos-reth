@@ -22,6 +22,8 @@ jobs:
           toolchain: 1.93.0
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Fetch locked dependencies
+        run: cargo fetch --locked
       - name: Verify source provenance and frozen fixtures
         run: |
           scripts/verify-dependency-graph.sh
