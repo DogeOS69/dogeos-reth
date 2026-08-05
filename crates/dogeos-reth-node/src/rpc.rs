@@ -148,6 +148,14 @@ mod tests {
     use alloy_primitives::{Address, B256};
 
     #[test]
+    fn without_scroll_wire_cannot_launch_importer() {
+        let builder = DogeosEthApiBuilder::without_scroll_wire();
+
+        assert!(builder.scroll_wire.take().is_none());
+        assert!(builder.scroll_wire_signer.is_none());
+    }
+
+    #[test]
     fn pending_environment_preserves_equal_timestamp_policy() {
         let header = Header {
             timestamp: 42,
