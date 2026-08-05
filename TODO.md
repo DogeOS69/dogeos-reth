@@ -97,12 +97,17 @@ This list tracks the remaining work required to qualify and cut over to the stan
 
 ## P2 — Consumer Migration and Cleanup
 
-- [ ] **Migrate `dogeos-rollup-node` off the legacy Scroll Reth fork.**
-  - Remove `scroll-tech/reth` `scroll-v91.7`, `scroll-alloy-*`, and old `reth-scroll-*`
-    dependencies.
-  - Consume the standalone DogeOS execution node through the intended Engine/RPC boundary.
-  - Preserve required transaction bytes, receipt fields, payload IDs, RPC methods, and staged
-    compatibility aliases.
+- [x] **Migrate `dogeos-rollup-node` off the legacy Scroll Reth fork.**
+  - `DogeOS69/dogeos-rollup-node@d434e5f393e0136279e20d39ab4781f32b069fdc` removes the active
+    `scroll-tech/reth` `scroll-v91.7`, `scroll-alloy-*`, and old `reth-scroll-*` dependencies.
+  - The rollup node composes the standalone DogeOS Reth 2 execution components in-process and uses
+    a local authenticated Engine API adapter for the rollup-owned driver.
+  - Transaction bytes, receipt fields, payload IDs, RPC extensions, signed-header persistence,
+    `scroll/1`, and staged eth-wire compatibility are preserved.
+  - `rollup-node --lib`, `scroll-engine/test-utils`, and `scroll-network/test-utils` compile; the
+    Engine payload unit tests pass. The full rollup test feature remains blocked by the external
+    Scroll Foundry/`tempo-alloy` trait-implementation conflict and is tracked as a qualification
+    dependency rather than a legacy-Reth migration gap.
 
 - [ ] **Migrate `dogeos-core` to the Reth-free protocol package.**
   - Publish and pin `dogeos-protocol-types` at a reviewed revision/version.
