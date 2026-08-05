@@ -8,20 +8,30 @@ rationale, a test, and a removal condition.
 
 | Candidate | Status | Required evidence before admission |
 | --- | --- | --- |
-| Reth PR #23603 (RocksDB synchronous-write durability fix) | **Blocked: absent from selected revision** | Exact Reth 2 / REVM 36-compatible revision or a documented backport; dependency-tree proof that it does not advance to REVM 38; crash/restart test |
+| Reth PR #23603 (RocksDB synchronous-write durability fix) | **Admitted; crash qualification pending** | Exact upstream backport is pinned and the static durability gate passes; crash/restart/reorg qualification remains required |
 
-The local source audit of locked Reth revision
-`eb4c15e5e36d8776d46629beae4c0a69af7ab04f` found production RocksDB commits
-using `WriteOptions::default()` and no `set_sync(true)` call. Therefore the
-current dependency selection is suitable for migration development but not a
-release-qualified Storage V2 selection. Reproduce the negative gate with:
+## Reth RocksDB synchronous-write durability
+
+- Upstream PR: `reth-ethereum/reth#23603`
+- Upstream source commit: `3a136fc8c38221e060cbc31ef5c5fa345cf0e17a`
+- DogeOS backport commit: `d3f3a5899` on `codex/reth2-network-hooks`
+- Pinned Reth revision: `02880ca7055c32763de7418e9eb34831541ef971`
+- Generic rationale: successful RocksDB transactions and batch commits must enable WAL sync so
+  acknowledged writes survive a host crash. The patch contains no DogeOS protocol behavior and
+  does not change storage encodings.
+- Compatibility: the patch is an exact single-file backport onto the selected Reth 2 base. The
+  dependency graph remains on REVM 36; the required `revm-scroll` branch is unchanged.
+- Coverage: `cargo check -p reth-provider --lib`, `cargo check -p dogeos-reth-node --lib`, and the
+  following locked-source audit pass:
 
 ```sh
 scripts/audit-rocksdb-durability.sh
 ```
 
-The command intentionally exits non-zero until a reviewed compatible revision
-or documented backport is selected. Do not weaken the gate to make it pass.
+- Remaining qualification: add crash-during-write, restart, and reorg durability tests before a
+  Storage V2 release is approved.
+- Removal condition: move to an upstream Reth base containing PR #23603 or an equivalent audited
+  synchronous-write implementation, then remove the backport while retaining the durability gate.
 
 ## Required DogeOS EVM dependency
 

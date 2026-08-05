@@ -17,13 +17,18 @@ This list tracks the remaining work required to qualify and cut over to the stan
   - Custom genesis files preserve numeric, decimal-string, and hexadecimal fork timestamps.
   - See [CHIKYU_HARDFORK_SCHEDULE.md](CHIKYU_HARDFORK_SCHEDULE.md) and the frozen fixture.
 
-- [ ] **Integrate the RocksDB synchronous-write durability fix.**
-  - Select an upstream Reth revision or a minimal documented backport containing the equivalent of
-    Reth PR #23603.
-  - Preserve the Reth 2 and REVM 36 dependency family; do not upgrade to REVM 38 implicitly.
-  - Record the exact revision and rationale in [UPSTREAM_PATCHES.md](UPSTREAM_PATCHES.md).
-  - Make `scripts/audit-rocksdb-durability.sh` pass without weakening the audit.
+- [x] **Integrate the RocksDB synchronous-write durability fix.**
+  - The selected Reth revision `02880ca7055c32763de7418e9eb34831541ef971` includes an exact
+    backport of upstream Reth PR #23603.
+  - The Reth 2 / REVM 36 dependency family and `revm-scroll` branch remain unchanged.
+  - The exact revision, rationale, validation, and removal condition are recorded in
+    [UPSTREAM_PATCHES.md](UPSTREAM_PATCHES.md).
+  - `scripts/audit-rocksdb-durability.sh` passes without weakening the audit.
+
+- [ ] **Qualify RocksDB crash durability.**
   - Add crash-during-write, restart, and reorg durability tests.
+  - Verify acknowledged transactions, explicit batches, auto-committed batches, and final batch
+    commits survive abrupt process and host termination.
 
 - [ ] **Replay the Chikyu chain into a fresh Storage V2 datadir.**
   - Sync from genesis to an agreed finalized Chikyu height.
