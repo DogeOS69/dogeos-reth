@@ -1,13 +1,15 @@
-use crate::DogeosNodeTypes;
 use alloy_consensus::BlockHeader;
 use alloy_primitives::Address;
+use dogeos_chainspec::DogeosChainSpec;
+use dogeos_reth_engine::DogeosEngineTypes;
 use dogeos_reth_evm::{ScrollEvmConfig, ScrollNextBlockEnvAttributes};
-use dogeos_reth_primitives::ScrollReceipt;
+use dogeos_reth_primitives::{DogeosPrimitives, ScrollReceipt};
 use dogeos_reth_rpc::{DogeosRpcConverter, dogeos_rpc_converter};
 use reth_node_builder::{
     FullNodeComponents,
     rpc::{EthApiBuilder, EthApiCtx},
 };
+use reth_node_types::NodeTypes;
 use reth_primitives_traits::SealedHeader;
 use reth_rpc::EthApi;
 use reth_rpc_convert::RpcConvert;
@@ -84,7 +86,14 @@ impl DogeosEthApiBuilder {
 
 impl<N> EthApiBuilder<N> for DogeosEthApiBuilder
 where
-    N: FullNodeComponents<Types = DogeosNodeTypes, Evm = ScrollEvmConfig>,
+    N: FullNodeComponents<
+            Types: NodeTypes<
+                ChainSpec = DogeosChainSpec,
+                Primitives = DogeosPrimitives,
+                Payload = DogeosEngineTypes,
+            >,
+            Evm = ScrollEvmConfig,
+        >,
     N::Provider: ReceiptProvider<Receipt = ScrollReceipt>,
     DogeosRpcConverter<N::Provider>: RpcConvert<
             Primitives = dogeos_reth_primitives::DogeosPrimitives,
