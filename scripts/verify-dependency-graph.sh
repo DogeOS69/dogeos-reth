@@ -6,7 +6,7 @@ trap 'rm -f "$metadata_file"' EXIT
 
 cargo metadata --locked --offline --format-version 1 > "$metadata_file"
 
-reth_source="git+https://github.com/paradigmxyz/reth.git?rev=eb4c15e5e36d8776d46629beae4c0a69af7ab04f#eb4c15e5e36d8776d46629beae4c0a69af7ab04f"
+reth_source="git+https://github.com/DogeOS69/dogeos-reth.git?rev=83fde18d01ed0ef6b7bf501280116b4babc69bef#83fde18d01ed0ef6b7bf501280116b4babc69bef"
 revm_scroll_source="git+https://github.com/DogeOS69/dogeos-revm.git?branch=chore/upgrade-revm-v36#1b87ecf17af029ac2f39e8ad362f3503ff2f4583"
 da_codec_source="git+https://github.com/scroll-tech/da-codec?rev=54929786434f00efd00431517a332f1ec8ca58d4#54929786434f00efd00431517a332f1ec8ca58d4"
 
@@ -52,4 +52,6 @@ jq -e '
     | length == 0
 ' "$metadata_file" > /dev/null
 
-echo "dependency graph verified: upstream Reth 2 / REVM 36 / DogeOS revm-scroll"
+scripts/audit-rocksdb-durability.sh
+
+echo "dependency graph verified: Reth 2 + upstream durability backport / REVM 36 / DogeOS revm-scroll"

@@ -6,7 +6,7 @@
 //! dependency before component integration starts.
 
 /// The immutable Reth source revision selected for the Phase 0 spike.
-pub const RETH_V2_REVISION: &str = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f";
+pub const RETH_V2_REVISION: &str = "83fde18d01ed0ef6b7bf501280116b4babc69bef";
 
 /// The immutable DogeOS REVM revision evaluated by the Phase 0 spike.
 pub const DOGEOS_REVM_REVISION: &str = "1b87ecf17af029ac2f39e8ad362f3503ff2f4583";

@@ -1,6 +1,6 @@
 # DogeOS Reth 2 Migration TODO
 
-Last updated: 2026-08-04
+Last updated: 2026-08-05
 
 This list tracks the remaining work required to qualify and cut over to the standalone DogeOS Reth
 2 node. Completed migration evidence is recorded in [CAPABILITY_MATRIX.md](CAPABILITY_MATRIX.md),
@@ -17,13 +17,13 @@ This list tracks the remaining work required to qualify and cut over to the stan
   - Custom genesis files preserve numeric, decimal-string, and hexadecimal fork timestamps.
   - See [CHIKYU_HARDFORK_SCHEDULE.md](CHIKYU_HARDFORK_SCHEDULE.md) and the frozen fixture.
 
-- [ ] **Integrate the RocksDB synchronous-write durability fix.**
-  - Select an upstream Reth revision or a minimal documented backport containing the equivalent of
-    Reth PR #23603.
-  - Preserve the Reth 2 and REVM 36 dependency family; do not upgrade to REVM 38 implicitly.
-  - Record the exact revision and rationale in [UPSTREAM_PATCHES.md](UPSTREAM_PATCHES.md).
-  - Make `scripts/audit-rocksdb-durability.sh` pass without weakening the audit.
-  - Add crash-during-write, restart, and reorg durability tests.
+- [x] **Integrate the RocksDB synchronous-write durability fix.**
+  - Reth `v2.0.0` is pinned with the exact backport of upstream PR #23603 while retaining REVM 36.
+  - The revision, provenance, and removal condition are recorded in
+    [UPSTREAM_PATCHES.md](UPSTREAM_PATCHES.md).
+  - `scripts/audit-rocksdb-durability.sh` is part of the local and CI gates. Existing abrupt-stop
+    and restart coverage is recorded in [CAPABILITY_MATRIX.md](CAPABILITY_MATRIX.md); broader
+    reorg failure recovery remains tracked below.
 
 - [ ] **Replay the Chikyu chain into a fresh Storage V2 datadir.**
   - Sync from genesis to an agreed finalized Chikyu height.
@@ -93,7 +93,7 @@ This list tracks the remaining work required to qualify and cut over to the stan
   - Push the current workflow and run it on Rust 1.93.
   - Require formatting, dependency provenance, fixture integrity, workspace tests, Clippy with
     warnings denied, and no-default-features checks.
-  - Enable the RocksDB durability audit as a required release gate after the patch is integrated.
+  - Keep the RocksDB durability audit enabled as a required release gate.
 
 ## P2 — Consumer Migration and Cleanup
 
@@ -152,8 +152,7 @@ cargo clippy --workspace --all-targets --locked --offline -- -D warnings
 cargo check --workspace --no-default-features --locked --offline
 ```
 
-The durability audit remains intentionally failing until the release-blocking Reth patch is
-selected:
+The durability audit is part of `scripts/verify-workspace.sh` and can also be run directly:
 
 ```sh
 scripts/audit-rocksdb-durability.sh

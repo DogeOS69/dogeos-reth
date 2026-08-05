@@ -1,14 +1,14 @@
 # Phase 0 dependency audit
 
-Status: **passed on 2026-08-02**.
+Status: **passed on 2026-08-05**.
 
-The standalone spike resolves upstream Reth as a source dependency and retains
-DogeOS EVM behavior through `revm-scroll`; it contains no copied upstream Reth
-crate.
+The standalone spike resolves Reth v2.0.0 plus the exact upstream RocksDB durability fix as a
+source dependency and retains DogeOS EVM behavior through `revm-scroll`; it contains no copied
+upstream Reth crate.
 
 | Component | Locked selection |
 | --- | --- |
-| Reth | `v2.0.0` / `eb4c15e5e36d8776d46629beae4c0a69af7ab04f` |
+| Reth | `v2.0.0` plus upstream PR #23603 / `83fde18d01ed0ef6b7bf501280116b4babc69bef` |
 | REVM | `36.0.0` |
 | `revm-scroll` | `1b87ecf17af029ac2f39e8ad362f3503ff2f4583` (`chore/upgrade-revm-v36`) |
 | Alloy API family | `alloy-consensus 1.8.2` |
