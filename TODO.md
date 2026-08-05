@@ -82,6 +82,21 @@ This list tracks the remaining work required to qualify and cut over to the stan
   - Test equal, earlier, and future timestamps.
   - Test invalid payloads before and after restart and across reorg boundaries.
 
+- [ ] **Resolve the Scroll Foundry / `tempo-alloy` test dependency conflict.**
+  - The failing path is `dogeos-rollup-node` `test-utils` -> Scroll Foundry/Anvil revision
+    `e451ccfdf77f8f543e987703c66543c29eba9258` -> Tempo support -> `tempo-alloy` v1.0.0.
+  - `tempo-alloy` implements `NetworkWallet<TempoNetwork>` for `EthereumWallet`, which overlaps
+    with the blanket implementation in the Alloy 1.8 dependency family selected by Reth 2 and
+    fails with Rust error `E0119`.
+  - Prefer updating the Scroll Foundry revision to an Alloy-compatible version or disabling its
+    unused Tempo feature. If neither is available, carry a narrowly documented upstream test-only
+    patch; do not downgrade Reth 2, REVM 36, or `revm-scroll` to hide the conflict.
+  - Keep production qualification separate: `rollup-node --lib` is unaffected and already passes.
+  - Acceptance gates:
+    `cargo check -p rollup-node --features test-utils --lib`, the rollup integration tests, and
+    `cargo check --workspace --all-targets` must complete without the `tempo-alloy` coherence
+    error.
+
 - [ ] **Add real two-node `scroll/1` integration tests.**
   - Announce and import a correctly signed block.
   - Reject an unauthorized signer before the block reaches Engine import.
