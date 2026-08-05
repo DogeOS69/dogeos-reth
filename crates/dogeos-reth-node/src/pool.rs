@@ -1,4 +1,5 @@
-use crate::DogeosNodeTypes;
+use dogeos_chainspec::DogeosChainSpec;
+use dogeos_reth_primitives::DogeosPrimitives;
 use dogeos_reth_txpool::{
     DogeosPooledTransaction, DogeosTransactionPool, DogeosTransactionValidator,
 };
@@ -7,6 +8,7 @@ use reth_node_builder::{
     BuilderContext, FullNodeTypes,
     components::{PoolBuilder, PoolBuilderConfigOverrides},
 };
+use reth_node_types::NodeTypes;
 use reth_provider::CanonStateSubscriptions;
 use reth_transaction_pool::{
     CoinbaseTipOrdering, TransactionValidationTaskExecutor, blobstore::DiskFileBlobStore,
@@ -27,8 +29,9 @@ impl DogeosPoolBuilder {
 
 impl<Node, Evm> PoolBuilder<Node, Evm> for DogeosPoolBuilder
 where
-    Node: FullNodeTypes<Types = DogeosNodeTypes>,
-    Evm: ConfigureEvm<Primitives = dogeos_reth_primitives::DogeosPrimitives> + Clone + 'static,
+    Node:
+        FullNodeTypes<Types: NodeTypes<ChainSpec = DogeosChainSpec, Primitives = DogeosPrimitives>>,
+    Evm: ConfigureEvm<Primitives = DogeosPrimitives> + Clone + 'static,
 {
     type Pool =
         DogeosTransactionPool<Node::Provider, DiskFileBlobStore, DogeosPooledTransaction, Evm>;

@@ -1,6 +1,8 @@
-use crate::DogeosNodeTypes;
+use dogeos_chainspec::DogeosChainSpec;
 use dogeos_reth_consensus::DogeosConsensus;
+use dogeos_reth_primitives::DogeosPrimitives;
 use reth_node_builder::{BuilderContext, FullNodeTypes, components::ConsensusBuilder};
+use reth_node_types::NodeTypes;
 use std::sync::Arc;
 
 /// Installs DogeOS header, body, and receipt validation into the node pipeline.
@@ -9,7 +11,8 @@ pub struct DogeosConsensusBuilder;
 
 impl<Node> ConsensusBuilder<Node> for DogeosConsensusBuilder
 where
-    Node: FullNodeTypes<Types = DogeosNodeTypes>,
+    Node:
+        FullNodeTypes<Types: NodeTypes<ChainSpec = DogeosChainSpec, Primitives = DogeosPrimitives>>,
 {
     type Consensus = Arc<DogeosConsensus>;
 

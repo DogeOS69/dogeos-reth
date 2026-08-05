@@ -1,10 +1,12 @@
-use crate::DogeosNodeTypes;
+use dogeos_chainspec::DogeosChainSpec;
+use dogeos_reth_primitives::{DogeosPrimitives, ScrollTransactionSigned};
 use reth_network::{
     NetworkHandle, NetworkManager, PeersInfo,
     primitives::BasicNetworkPrimitives,
     protocol::{IntoRlpxSubProtocol, RlpxSubProtocol},
 };
 use reth_node_builder::{BuilderContext, FullNodeTypes, components::NetworkBuilder};
+use reth_node_types::NodeTypes;
 use reth_transaction_pool::{PoolPooledTx, PoolTransaction, TransactionPool};
 
 /// Builds the canonical eth-wire network; `scroll-wire` is attached as an extra RLPx protocol.
@@ -42,28 +44,22 @@ impl DogeosNetworkBuilder {
 
 impl<Node, Pool> NetworkBuilder<Node, Pool> for DogeosNetworkBuilder
 where
-    Node: FullNodeTypes<Types = DogeosNodeTypes>,
-    Pool: TransactionPool<
-            Transaction: PoolTransaction<
-                Consensus = dogeos_reth_primitives::ScrollTransactionSigned,
-            >,
-        > + Unpin
+    Node:
+        FullNodeTypes<Types: NodeTypes<ChainSpec = DogeosChainSpec, Primitives = DogeosPrimitives>>,
+    Pool: TransactionPool<Transaction: PoolTransaction<Consensus = ScrollTransactionSigned>>
+        + Unpin
         + 'static,
 {
-    type Network = NetworkHandle<
-        BasicNetworkPrimitives<dogeos_reth_primitives::DogeosPrimitives, PoolPooledTx<Pool>>,
-    >;
+    type Network = NetworkHandle<BasicNetworkPrimitives<DogeosPrimitives, PoolPooledTx<Pool>>>;
 
     async fn build_network(
         self,
         ctx: &BuilderContext<Node>,
         pool: Pool,
     ) -> eyre::Result<Self::Network> {
-        let mut config =
-            ctx.network_config_builder::<BasicNetworkPrimitives<
-                dogeos_reth_primitives::DogeosPrimitives,
-                PoolPooledTx<Pool>,
-            >>()?;
+        let mut config = ctx
+            .network_config_builder::<BasicNetworkPrimitives<DogeosPrimitives, PoolPooledTx<Pool>>>(
+            )?;
         for protocol in self.extra_protocols {
             config = config.add_rlpx_sub_protocol(protocol);
         }

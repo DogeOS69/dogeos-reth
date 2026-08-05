@@ -64,6 +64,13 @@ pub struct DogeosEthApiBuilder {
 }
 
 impl DogeosEthApiBuilder {
+    /// Creates an RPC builder without installing a scroll-wire importer.
+    ///
+    /// This is used by compositions where another crate owns the scroll-wire lifecycle.
+    pub fn without_scroll_wire() -> Self {
+        Self::default()
+    }
+
     pub(crate) const fn new(
         scroll_wire: ScrollWireRuntime,
         scroll_wire_signer: Option<Address>,
