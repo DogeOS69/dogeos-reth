@@ -59,6 +59,24 @@ pub type DogeosEthApi<Node> = reth_rpc::EthApi<
     dogeos_reth_rpc::DogeosRpcConverter<<Node as reth_node_builder::FullNodeTypes>::Provider>,
 >;
 
+/// Marker trait for custom node type sets that reuse the DogeOS protocol surface.
+///
+/// Downstream nodes can implement their own [`NodeTypes`] while still reusing DogeOS component,
+/// RPC, and Engine API builders by selecting the same primitives, chain spec, and payload types.
+pub trait DogeosCompatibleNodeTypes:
+    NodeTypes<Primitives = DogeosPrimitives, ChainSpec = DogeosChainSpec, Payload = DogeosEngineTypes>
+{
+}
+
+impl<T> DogeosCompatibleNodeTypes for T where
+    T: NodeTypes<
+            Primitives = DogeosPrimitives,
+            ChainSpec = DogeosChainSpec,
+            Payload = DogeosEngineTypes,
+        >
+{
+}
+
 impl DogeosNodeTypes {
     pub fn new(args: DogeosRollupArgs) -> Self {
         Self {

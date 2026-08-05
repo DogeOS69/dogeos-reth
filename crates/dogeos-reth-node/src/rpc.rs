@@ -1,4 +1,4 @@
-use crate::DogeosNodeTypes;
+use crate::DogeosCompatibleNodeTypes;
 use alloy_consensus::BlockHeader;
 use alloy_primitives::Address;
 use dogeos_reth_evm::{ScrollEvmConfig, ScrollNextBlockEnvAttributes};
@@ -73,11 +73,24 @@ impl DogeosEthApiBuilder {
             scroll_wire_signer,
         }
     }
+
+    /// Creates a DogeOS `eth_` API builder without installing the inherited `scroll/1` importer.
+    ///
+    /// This is intended for downstream nodes that own their own network import path but still want
+    /// DogeOS RPC schemas, conversion, pending-block policy, and gas-oracle behavior.
+    pub fn without_scroll_wire() -> Self {
+        Self {
+            scroll_wire: ScrollWireRuntime {
+                manager: Arc::new(Mutex::new(None)),
+            },
+            scroll_wire_signer: None,
+        }
+    }
 }
 
 impl<N> EthApiBuilder<N> for DogeosEthApiBuilder
 where
-    N: FullNodeComponents<Types = DogeosNodeTypes, Evm = ScrollEvmConfig>,
+    N: FullNodeComponents<Types: DogeosCompatibleNodeTypes, Evm = ScrollEvmConfig>,
     N::Provider: ReceiptProvider<Receipt = ScrollReceipt>,
     DogeosRpcConverter<N::Provider>: RpcConvert<
             Primitives = dogeos_reth_primitives::DogeosPrimitives,

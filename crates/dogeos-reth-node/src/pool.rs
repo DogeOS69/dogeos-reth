@@ -1,4 +1,4 @@
-use crate::DogeosNodeTypes;
+use crate::DogeosCompatibleNodeTypes;
 use dogeos_reth_txpool::{
     DogeosPooledTransaction, DogeosTransactionPool, DogeosTransactionValidator,
 };
@@ -27,7 +27,7 @@ impl DogeosPoolBuilder {
 
 impl<Node, Evm> PoolBuilder<Node, Evm> for DogeosPoolBuilder
 where
-    Node: FullNodeTypes<Types = DogeosNodeTypes>,
+    Node: FullNodeTypes<Types: DogeosCompatibleNodeTypes>,
     Evm: ConfigureEvm<Primitives = dogeos_reth_primitives::DogeosPrimitives> + Clone + 'static,
 {
     type Pool =

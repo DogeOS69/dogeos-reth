@@ -1,4 +1,4 @@
-use crate::DogeosNodeTypes;
+use crate::DogeosCompatibleNodeTypes;
 use dogeos_reth_engine::DogeosEngineValidator;
 use reth_node_builder::{AddOnsContext, FullNodeComponents, rpc::PayloadValidatorBuilder};
 
@@ -9,7 +9,7 @@ pub struct DogeosEngineValidatorBuilder;
 
 impl<Node> PayloadValidatorBuilder<Node> for DogeosEngineValidatorBuilder
 where
-    Node: FullNodeComponents<Types = DogeosNodeTypes>,
+    Node: FullNodeComponents<Types: DogeosCompatibleNodeTypes>,
 {
     type Validator = DogeosEngineValidator<dogeos_chainspec::DogeosChainSpec>;
 
