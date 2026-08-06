@@ -7,46 +7,47 @@ resolver = "2"
 edition = "2024"
 rust-version = "1.93"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/DogeOS69/dogeos-reth2"
+repository = "https://github.com/DogeOS69/dogeos-reth"
 
 [workspace.dependencies]
-# Reth v2.0.0. This is a source dependency, not a copied upstream workspace.
-reth-ethereum = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-ethereum-cli = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-cli = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-node-builder = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-node-types = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-chainspec = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-consensus = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-consensus-common = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-ethereum-forks = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-network-peers = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-network = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-network-api = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-eth-wire = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-trie-common = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-evm = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-execution-types = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-engine-primitives = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-engine-local = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-payload-primitives = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-storage-api = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-tasks = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-basic-payload-builder = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-errors = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-execution-cache = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-payload-builder-primitives = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-provider = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-db-api = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-revm = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-rpc-convert = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-rpc = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-rpc-builder = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-rpc-eth-api = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-rpc-eth-types = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
+# Official Reth v2.0.0 plus the reviewed RocksDB durability backport. This is a source
+# dependency, not a copied upstream workspace.
+reth-ethereum = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-ethereum-cli = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-cli = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-node-builder = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-node-types = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-chainspec = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-consensus = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-consensus-common = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-ethereum-forks = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-network-peers = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-network = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-network-api = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-eth-wire = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-trie-common = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-evm = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-execution-types = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-engine-primitives = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-engine-local = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-payload-primitives = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-storage-api = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-tasks = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-basic-payload-builder = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-errors = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-execution-cache = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-payload-builder-primitives = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-provider = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-db-api = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-revm = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-rpc-convert = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-rpc = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-rpc-builder = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-rpc-eth-api = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-rpc-eth-types = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
 reth-rpc-traits = { version = "=0.1.1", default-features = false }
-reth-storage-errors = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
-reth-transaction-pool = { git = "https://github.com/paradigmxyz/reth.git", rev = "eb4c15e5e36d8776d46629beae4c0a69af7ab04f", default-features = false }
+reth-storage-errors = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
+reth-transaction-pool = { git = "https://github.com/DogeOS69/reth.git", rev = "5235056be94c584edce6ba7900f163aaa9b8cda0", default-features = false }
 
 # The Reth 2.0 dependency family. Exact resolution is checked in CI below.
 alloy-consensus = { version = "=1.8.2", default-features = false }

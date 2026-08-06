@@ -1,6 +1,6 @@
 # DogeOS Reth 2 Migration TODO
 
-Last updated: 2026-08-04
+Last updated: 2026-08-05
 
 This list tracks the remaining work required to qualify and cut over to the standalone DogeOS Reth
 2 node. Completed migration evidence is recorded in [CAPABILITY_MATRIX.md](CAPABILITY_MATRIX.md),
@@ -17,13 +17,18 @@ This list tracks the remaining work required to qualify and cut over to the stan
   - Custom genesis files preserve numeric, decimal-string, and hexadecimal fork timestamps.
   - See [CHIKYU_HARDFORK_SCHEDULE.md](CHIKYU_HARDFORK_SCHEDULE.md) and the frozen fixture.
 
-- [ ] **Integrate the RocksDB synchronous-write durability fix.**
-  - Select an upstream Reth revision or a minimal documented backport containing the equivalent of
-    Reth PR #23603.
-  - Preserve the Reth 2 and REVM 36 dependency family; do not upgrade to REVM 38 implicitly.
-  - Record the exact revision and rationale in [UPSTREAM_PATCHES.md](UPSTREAM_PATCHES.md).
-  - Make `scripts/audit-rocksdb-durability.sh` pass without weakening the audit.
+- [x] **Integrate the RocksDB synchronous-write durability fix.**
+  - The selected `DogeOS69/reth` revision `5235056be94c584edce6ba7900f163aaa9b8cda0`
+    contains an exact backport of upstream Reth PR #23603.
+  - The Reth 2 / REVM 36 dependency family and `revm-scroll` branch remain unchanged.
+  - The exact revision, rationale, validation, and removal condition are recorded in
+    [UPSTREAM_PATCHES.md](UPSTREAM_PATCHES.md).
+  - `scripts/audit-rocksdb-durability.sh` passes without weakening the audit.
+
+- [ ] **Qualify RocksDB crash durability.**
   - Add crash-during-write, restart, and reorg durability tests.
+  - Verify acknowledged transactions, explicit batches, auto-committed batches, and final batch
+    commits survive abrupt process and host termination.
 
 - [ ] **Replay the Chikyu chain into a fresh Storage V2 datadir.**
   - Sync from genesis to an agreed finalized Chikyu height.
@@ -77,6 +82,14 @@ This list tracks the remaining work required to qualify and cut over to the stan
   - Test equal, earlier, and future timestamps.
   - Test invalid payloads before and after restart and across reorg boundaries.
 
+- [ ] **Resolve the Scroll Foundry / `tempo-alloy` test dependency conflict.**
+  - The failing path is `dogeos-rollup-node` `test-utils` -> Scroll Foundry/Anvil revision
+    `e451ccfdf77f8f543e987703c66543c29eba9258` -> Tempo support -> `tempo-alloy` v1.0.0.
+  - `tempo-alloy` overlaps with the Alloy 1.8 wallet implementation selected by Reth 2 and fails
+    with Rust error `E0119`; production `rollup-node --lib` is unaffected.
+  - Prefer updating Scroll Foundry or disabling its unused Tempo feature. Do not downgrade Reth 2,
+    REVM 36, or `revm-scroll` to hide the conflict.
+
 - [ ] **Add real two-node `scroll/1` integration tests.**
   - Announce and import a correctly signed block.
   - Reject an unauthorized signer before the block reaches Engine import.
@@ -128,7 +141,7 @@ This list tracks the remaining work required to qualify and cut over to the stan
   - Remove dead feature gates, unused aliases, and stale migration documentation.
 
 - [ ] **Promote the repository and binary to the canonical `dogeos-reth` identity.**
-  - Complete the cutover from the temporary `dogeos-reth2` workspace/repository name.
+  - The repository and workspace package metadata now use the canonical `dogeos-reth` identity.
   - Preserve the canonical `dogeos-reth` executable name.
   - Prove rollback by switching endpoints between independent legacy and new datadirs.
 
@@ -152,8 +165,7 @@ cargo clippy --workspace --all-targets --locked --offline -- -D warnings
 cargo check --workspace --no-default-features --locked --offline
 ```
 
-The durability audit remains intentionally failing until the release-blocking Reth patch is
-selected:
+The durability audit is part of `scripts/verify-workspace.sh` and must remain green:
 
 ```sh
 scripts/audit-rocksdb-durability.sh

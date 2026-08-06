@@ -28,6 +28,7 @@ jobs:
         run: |
           scripts/verify-dependency-graph.sh
           scripts/verify-fixtures.sh
+          scripts/audit-rocksdb-durability.sh
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Check workspace
