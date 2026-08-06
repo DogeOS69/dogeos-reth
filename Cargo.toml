@@ -7,7 +7,7 @@ resolver = "2"
 edition = "2024"
 rust-version = "1.93"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/DogeOS69/dogeos-reth"
+repository = "https://github.com/DogeOS69/dogeos-reth2"
 
 [workspace.dependencies]
 # Reth v2.0.0. This is a source dependency, not a copied upstream workspace.

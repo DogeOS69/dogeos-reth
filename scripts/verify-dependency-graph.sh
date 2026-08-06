@@ -35,6 +35,17 @@ jq -e --arg source "$reth_source" '
     == [$source]
 ' "$metadata_file" > /dev/null
 
+# Reth registry compatibility crates are allowed, but every git-sourced Reth
+# crate must come from the selected official commit. A null source here would
+# indicate a vendored or path-overridden Reth crate.
+jq -e --arg source "$reth_source" '
+    [.packages[]
+     | select(.name | test("^reth(-|$)"))
+     | select(.source == null or (.source | startswith("git+")))
+     | .source] as $sources
+    | ($sources | length > 0) and all($sources[]; . == $source)
+' "$metadata_file" > /dev/null
+
 jq -e \
     --arg reth "$reth_source" \
     --arg revm_scroll "$revm_scroll_source" \
@@ -52,4 +63,4 @@ jq -e '
     | length == 0
 ' "$metadata_file" > /dev/null
 
-echo "dependency graph verified: upstream Reth 2 / REVM 36 / DogeOS revm-scroll"
+echo "dependency graph verified: official paradigmxyz Reth 2 / REVM 36 / DogeOS revm-scroll"
