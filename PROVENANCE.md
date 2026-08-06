@@ -57,12 +57,11 @@ Neither command treats Storage V1 bytes as a protocol oracle.
 
 ## Phase 0 dependency spike inputs
 
-The standalone dependency spike uses upstream Reth `v2.0.0` plus the exact backport of upstream
-PR #23603 at `83fde18d01ed0ef6b7bf501280116b4babc69bef` and evaluates the
+The standalone dependency spike uses upstream Reth `v2.0.0` at
+`eb4c15e5e36d8776d46629beae4c0a69af7ab04f` and evaluates the
 `chore/upgrade-revm-v36` revision of `dogeos-revm` at
-`1b87ecf17af029ac2f39e8ad362f3503ff2f4583`. These are immutable inputs; `Cargo.lock` is the
-authoritative resolved graph once the spike succeeds. The backport provenance and removal
-condition are recorded in `UPSTREAM_PATCHES.md`.
+`1b87ecf17af029ac2f39e8ad362f3503ff2f4583`.  These are immutable inputs;
+Cargo.lock is the authoritative resolved graph once the spike succeeds.
 
 Reth v2.0.0 specifies the Alloy API crates at `1.8.2`, `alloy-evm` at
 `0.30.0`, and its lower-level `alloy-primitives`/`alloy-sol-types` pair at

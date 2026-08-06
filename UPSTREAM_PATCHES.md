@@ -1,28 +1,27 @@
 # Upstream patch allowlist
 
-Each dependency patch is recorded here with an upstream-generic rationale, coverage, and a removal
-condition.
+The allowlist is intentionally empty at migration start.  A dependency or
+patch is permitted only after it is recorded here with an upstream-generic
+rationale, a test, and a removal condition.
 
-## RocksDB synchronous writes
+## Required investigation before selecting Reth 2
 
-- Upstream PR: <https://github.com/paradigmxyz/reth/pull/23603>
-- Upstream commit: `3a136fc8c38221e060cbc31ef5c5fa345cf0e17a`
-- Pinned backport: `83fde18d01ed0ef6b7bf501280116b4babc69bef`, based directly on upstream Reth
-  `v2.0.0` (`eb4c15e5e36d8776d46629beae4c0a69af7ab04f`)
-- Generic rationale: use `WriteOptions::sync(true)` for RocksDB transactions and batches so a
-  successful commit is durable across a host crash.
-- Compatibility: the backport changes only `reth-provider` write options and preserves Reth 2.0.0,
-  REVM 36, Alloy 1.8, and the existing storage encoding.
-- Coverage: `scripts/verify-dependency-graph.sh`, `scripts/audit-rocksdb-durability.sh`, workspace
-  tests, and the abrupt-stop/restart qualification recorded in `CAPABILITY_MATRIX.md`.
-- Removal condition: select an upstream Reth release containing PR #23603 or equivalent synchronous
-  writes after its dependency family is qualified.
+| Candidate | Status | Required evidence before admission |
+| --- | --- | --- |
+| Reth PR #23603 (RocksDB synchronous-write durability fix) | **Blocked: absent from selected revision** | Exact Reth 2 / REVM 36-compatible revision or a documented backport; dependency-tree proof that it does not advance to REVM 38; crash/restart test |
 
-Verify the selected source directly with:
+The local source audit of locked Reth revision
+`eb4c15e5e36d8776d46629beae4c0a69af7ab04f` found production RocksDB commits
+using `WriteOptions::default()` and no `set_sync(true)` call. Therefore the
+current dependency selection is suitable for migration development but not a
+release-qualified Storage V2 selection. Reproduce the negative gate with:
 
 ```sh
 scripts/audit-rocksdb-durability.sh
 ```
+
+The command intentionally exits non-zero until a reviewed compatible revision
+or documented backport is selected. Do not weaken the gate to make it pass.
 
 ## Required DogeOS EVM dependency
 
