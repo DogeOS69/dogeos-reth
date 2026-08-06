@@ -65,7 +65,7 @@ where
         }
         tracing::info!(target: "reth::cli", "Initializing DogeOS P2P networking");
         let network = NetworkManager::builder(ctx.build_network_config(config)).await?;
-        let handle = ctx.start_network(network, pool, None);
+        let handle = ctx.start_network(network, pool);
         tracing::info!(
             target: "reth::cli",
             enode = %handle.local_node_record(),
