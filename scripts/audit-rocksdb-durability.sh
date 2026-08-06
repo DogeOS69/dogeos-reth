@@ -20,7 +20,7 @@ if [ -z "$provider_manifest" ]; then
 fi
 
 provider_source=$(dirname "$provider_manifest")/src/providers/rocksdb/provider.rs
-if rg -q 'set_sync\(true\)' "$provider_source"; then
+if grep -Eq 'set_sync\(true\)' "$provider_source"; then
     echo "RocksDB synchronous-write durability code is present"
     exit 0
 fi

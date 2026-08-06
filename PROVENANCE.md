@@ -1,14 +1,14 @@
 # Oracle provenance
 
-This repository starts as a standalone migration workspace.  The current
-`dogeos-reth` fork is the behavior oracle until a replacement has passed the
+This repository starts as a standalone migration workspace. The legacy
+`scroll-reth` fork is the behavior oracle until a replacement has passed the
 parity gates in `DOGEOS_RETH_MIGRATION_PLAN.md`.
 
 ## Pinned oracle
 
 | Field | Value |
 | --- | --- |
-| Source repository | `https://github.com/DogeOS69/dogeos-reth.git` |
+| Source repository | `https://github.com/DogeOS69/scroll-reth.git` |
 | Source revision | `6b62297a0a8a3d88c873a0fb2a11b52d2cc8824f` |
 | Source commit time | `2026-07-26T22:17:50-07:00` |
 | Source subject | `fix(scroll): address revm migration review` |
@@ -47,7 +47,7 @@ execution-witness comparisons remain blocking qualification work.
 ## Verification
 
 ```sh
-scripts/verify-oracle-baseline.sh /path/to/dogeos-reth
+scripts/verify-oracle-baseline.sh /path/to/scroll-reth
 scripts/verify-fixtures.sh
 ```
 

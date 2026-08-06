@@ -35,7 +35,7 @@ as an out-of-process database reader.
 ### `dogeos-core`
 
 - The workspace still consumes `scroll-alloy-consensus` from the old
-  `DogeOS69/dogeos-reth` fork at `39b31f822cc2b4c54db32ba2f0484ca2a157c3f5`.
+  `DogeOS69/scroll-reth` fork at `39b31f822cc2b4c54db32ba2f0484ca2a157c3f5`.
 - `tools/dogeos-fork-fixture-reth-generator` intentionally pins the old fork at
   `8594a121f9824538f0ebf78d763da561772d1bef` as its behavior owner.
 - No production `reth_db`, `reth_provider`, MDBX, or RocksDB API use was found.
