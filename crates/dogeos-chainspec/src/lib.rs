@@ -14,7 +14,7 @@ use derive_more::{Constructor, Deref, Into};
 use dogeos_hardforks::{DogeosHardfork, DogeosHardforks};
 use reth_chainspec::{
     BaseFeeParams, BaseFeeParamsKind, ChainSpec, ChainSpecBuilder, DepositContract, EthChainSpec,
-    EthereumHardforks, ForkFilter, ForkId, Hardforks, Head,
+    EthereumHardforks, ForkFilter, ForkFilterKey, ForkHash, ForkId, Hardforks, Head,
 };
 use reth_ethereum_forks::{ChainHardforks, EthereumHardfork, ForkCondition, Hardfork};
 use reth_network_peers::NodeRecord;
@@ -181,13 +181,59 @@ impl Hardforks for DogeosChainSpec {
         self.inner.forks_iter()
     }
     fn fork_id(&self, head: &Head) -> ForkId {
-        self.inner.fork_id(head)
+        // DogeOS inherited Scroll's legacy devp2p behavior, which excludes timestamp-based
+        // hardforks from EIP-2124 fork IDs. The timestamp schedule still remains available
+        // through `fork`/`forks_iter` for execution-rule activation.
+        let mut forkhash = ForkHash::from(self.genesis_hash());
+        let mut current_applied = 0;
+
+        for (_, condition) in self.inner.hardforks.forks_iter() {
+            let block = match condition {
+                ForkCondition::Block(block)
+                | ForkCondition::TTD {
+                    fork_block: Some(block),
+                    ..
+                } => block,
+                _ => continue,
+            };
+
+            if head.number < block {
+                return ForkId {
+                    hash: forkhash,
+                    next: block,
+                };
+            }
+
+            // Forks activated at genesis and duplicate block activations do not alter the hash.
+            if block != current_applied {
+                forkhash += block;
+                current_applied = block;
+            }
+        }
+
+        ForkId {
+            hash: forkhash,
+            next: 0,
+        }
     }
     fn latest_fork_id(&self) -> ForkId {
         self.inner.latest_fork_id()
     }
     fn fork_filter(&self, head: Head) -> ForkFilter {
-        self.inner.fork_filter(head)
+        let forks =
+            self.inner
+                .hardforks
+                .forks_iter()
+                .filter_map(|(_, condition)| match condition {
+                    ForkCondition::Block(block)
+                    | ForkCondition::TTD {
+                        fork_block: Some(block),
+                        ..
+                    } => Some(ForkFilterKey::Block(block)),
+                    _ => None,
+                });
+
+        ForkFilter::new(head, self.genesis_hash(), self.genesis_timestamp(), forks)
     }
 }
 
@@ -370,6 +416,58 @@ mod tests {
             .insert("tsukiTime".into(), 40.into());
 
         let spec = DogeosChainSpec::from_custom_genesis(genesis);
+        assert!(!spec.is_feynman_active_at_timestamp(9));
+        assert!(spec.is_feynman_active_at_timestamp(10));
+        assert!(!spec.is_tsuki_active_at_timestamp(39));
+        assert!(spec.is_tsuki_active_at_timestamp(40));
+    }
+
+    #[test]
+    fn timestamp_hardforks_do_not_change_p2p_fork_compatibility() {
+        let mut genesis: Genesis =
+            serde_json::from_str(include_str!("../res/genesis/chikyu_dogeos.json")).unwrap();
+        genesis.timestamp = 0;
+        genesis
+            .config
+            .extra_fields
+            .insert("feynmanTime".into(), 10.into());
+        genesis
+            .config
+            .extra_fields
+            .insert("galileoTime".into(), 20.into());
+        genesis
+            .config
+            .extra_fields
+            .insert("galileoV2Time".into(), 30.into());
+        genesis
+            .config
+            .extra_fields
+            .insert("tsukiTime".into(), 40.into());
+
+        let spec = DogeosChainSpec::from_custom_genesis(genesis);
+        let expected_fork_id = ForkId {
+            hash: ForkHash::from(spec.genesis_hash()),
+            next: 0,
+        };
+
+        for timestamp in [0, 10, 20, 30, 40, u64::MAX] {
+            let head = Head {
+                number: 1,
+                timestamp,
+                ..Default::default()
+            };
+            assert_eq!(spec.fork_id(&head), expected_fork_id);
+            assert_eq!(
+                spec.fork_filter(head),
+                ForkFilter::new(
+                    head,
+                    spec.genesis_hash(),
+                    spec.genesis_timestamp(),
+                    [ForkFilterKey::Block(0)],
+                )
+            );
+        }
+
         assert!(!spec.is_feynman_active_at_timestamp(9));
         assert!(spec.is_feynman_active_at_timestamp(10));
         assert!(!spec.is_tsuki_active_at_timestamp(39));
