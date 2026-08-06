@@ -14,8 +14,8 @@ rationale, a test, and a removal condition.
 
 - Upstream PR: `reth-ethereum/reth#23603`
 - Upstream source commit: `3a136fc8c38221e060cbc31ef5c5fa345cf0e17a`
-- DogeOS backport commit: `d3f3a5899` on `codex/reth2-network-hooks`
-- Pinned Reth revision: `02880ca7055c32763de7418e9eb34831541ef971`
+- DogeOS backport commit: `90e08ba40` in `DogeOS69/reth`
+- Pinned Reth revision: `5235056be94c584edce6ba7900f163aaa9b8cda0`
 - Generic rationale: successful RocksDB transactions and batch commits must enable WAL sync so
   acknowledged writes survive a host crash. The patch contains no DogeOS protocol behavior and
   does not change storage encodings.
