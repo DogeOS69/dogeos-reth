@@ -1,21 +1,26 @@
 # Upstream patch allowlist
 
-The allowlist is intentionally empty at migration start.  A dependency or
-patch is permitted only after it is recorded here with an upstream-generic
-rationale, a test, and a removal condition.
+A dependency or patch is permitted only after it is recorded here with an
+upstream-generic rationale, a test, and a removal condition. Production Reth
+crates must resolve from the clean upstream-lineage `DogeOS69/reth` repository;
+the legacy, heavily modified `DogeOS69/scroll-reth` fork is not permitted as a
+production dependency.
 
 ## Required investigation before selecting Reth 2
 
 | Candidate | Status | Required evidence before admission |
 | --- | --- | --- |
 | Reth PR #23603 (RocksDB synchronous-write durability fix) | **Admitted; crash qualification pending** | Exact upstream backport is pinned and the static durability gate passes; crash/restart/reorg qualification remains required |
+| Asynchronous Header transform hooks | **Admitted temporarily** | Required by the current geth/l2geth-compatible rollup integration; remove when the rollup path no longer transforms peer headers |
+| Composite RPC add-on handles | **Admitted temporarily** | Required by the current rollup-node RPC composition; its cleanup is independent of P2P fork-ID compatibility |
 
 ## Reth RocksDB synchronous-write durability
 
 - Upstream PR: `reth-ethereum/reth#23603`
 - Upstream source commit: `3a136fc8c38221e060cbc31ef5c5fa345cf0e17a`
 - DogeOS backport commit: `90e08ba40` in `DogeOS69/reth`
-- Pinned Reth revision: `5235056be94c584edce6ba7900f163aaa9b8cda0`
+- Stack base revision: `5235056be94c584edce6ba7900f163aaa9b8cda0`
+- Pinned stack revision: `ae160090003d9b04be0521e9e4760558798cdf40`
 - Generic rationale: successful RocksDB transactions and batch commits must enable WAL sync so
   acknowledged writes survive a host crash. The patch contains no DogeOS protocol behavior and
   does not change storage encodings.
@@ -32,6 +37,27 @@ scripts/audit-rocksdb-durability.sh
   Storage V2 release is approved.
 - Removal condition: move to an upstream Reth base containing PR #23603 or an equivalent audited
   synchronous-write implementation, then remove the backport while retaining the durability gate.
+
+## Asynchronous Header transform hooks
+
+- Patch PR: `DogeOS69/reth#1`
+- Layer revision: `2fe5183c7e6043ec1241716e9dd695fe2ae6682d`
+- Generic rationale: expose optional asynchronous inbound and outbound Header transforms through
+  the network builder. The current rollup integration uses the hooks to remain compatible with
+  geth/l2geth peers without embedding DogeOS consensus policy in Reth.
+- Coverage: the workspace build and tests exercise the opt-in builder API; passing `None` preserves
+  ordinary Reth behavior for the standalone node.
+- Removal condition: remove this layer after rollup-node no longer needs peer-header transforms.
+
+## Composite RPC add-on handles
+
+- Patch PR: `DogeOS69/reth#3`
+- Layer revision and selected Reth revision: `ae160090003d9b04be0521e9e4760558798cdf40`
+- Generic rationale: allow a node to compose more than one RPC add-on handle without replacing
+  upstream RPC modules. The current rollup-node builder uses this API surface.
+- Coverage: the full workspace check, tests, and Clippy pass against the selected revision.
+- Removal condition: remove this layer after rollup-node adopts a single upstream RPC add-on
+  handle. That refactor is independent of the DogeOS fork-ID compatibility fix in this repository.
 
 ## Required DogeOS EVM dependency
 

@@ -18,8 +18,9 @@ This list tracks the remaining work required to qualify and cut over to the stan
   - See [CHIKYU_HARDFORK_SCHEDULE.md](CHIKYU_HARDFORK_SCHEDULE.md) and the frozen fixture.
 
 - [x] **Integrate the RocksDB synchronous-write durability fix.**
-  - The selected `DogeOS69/reth` revision `5235056be94c584edce6ba7900f163aaa9b8cda0`
-    contains an exact backport of upstream Reth PR #23603.
+  - The selected `DogeOS69/reth` revision `ae160090003d9b04be0521e9e4760558798cdf40`
+    contains the exact backport of upstream Reth PR #23603 beneath the temporary, reviewed
+    Header-transform and Composite-RPC compatibility layers.
   - The Reth 2 / REVM 36 dependency family and `revm-scroll` branch remain unchanged.
   - The exact revision, rationale, validation, and removal condition are recorded in
     [UPSTREAM_PATCHES.md](UPSTREAM_PATCHES.md).
