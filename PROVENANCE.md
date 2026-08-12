@@ -69,9 +69,10 @@ Neither command treats Storage V1 bytes as a protocol oracle.
 
 These were the Phase 0 evaluation inputs. The production stack has since moved
 to `DogeOS69/reth` (stack base `5235056be94c584edce6ba7900f163aaa9b8cda0`,
-pinned `ae160090003d9b04be0521e9e4760558798cdf40`) as recorded in
-`UPSTREAM_PATCHES.md` and `DEPENDENCY_AUDIT.md`; `Cargo.lock` remains the
-authoritative resolved graph.
+pinned `f851224ee9aaf21c76a14e844cbd12d9756f5f3b` — the RocksDB durability layer
+plus the inbound/downloaded-header-only transform hook; the Composite-RPC layer
+is no longer selected) as recorded in `UPSTREAM_PATCHES.md` and
+`DEPENDENCY_AUDIT.md`; `Cargo.lock` remains the authoritative resolved graph.
 
 The standalone dependency spike used upstream Reth `v2.0.0` at
 `eb4c15e5e36d8776d46629beae4c0a69af7ab04f` and evaluated the

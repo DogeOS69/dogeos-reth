@@ -22,9 +22,10 @@ This list tracks the remaining work required to qualify and cut over to the stan
     boundary is a release blocker.
 
 - [x] **Integrate the RocksDB synchronous-write durability fix.**
-  - The selected `DogeOS69/reth` revision `ae160090003d9b04be0521e9e4760558798cdf40`
+  - The selected `DogeOS69/reth` revision `f851224ee9aaf21c76a14e844cbd12d9756f5f3b`
     contains the exact backport of upstream Reth PR #23603 beneath the temporary, reviewed
-    Header-transform and Composite-RPC compatibility layers.
+    inbound/downloaded-header-only transform hook. The Composite-RPC compatibility layer is
+    no longer selected.
   - The Reth 2 / REVM 36 dependency family and `revm-scroll` branch remain unchanged.
   - The exact revision, rationale, validation, and removal condition are recorded in
     [UPSTREAM_PATCHES.md](UPSTREAM_PATCHES.md).
