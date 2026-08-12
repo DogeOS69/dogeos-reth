@@ -32,7 +32,7 @@ reth-primitives-traits = { workspace = true, optional = true }
 modular-bitfield = { workspace = true, optional = true }
 
 # serde
-alloy-serde = { workspace = true, optional = true }
+alloy-serde = { version = "1.6", default-features = false, optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
 
 [dev-dependencies]
@@ -52,7 +52,6 @@ default = ["std"]
 std = [
     "serde/std",
     "alloy-primitives/std",
-    "reth-codecs?/std",
     "alloy-consensus/std",
     "alloy-eips/std",
     "alloy-rlp/std",
@@ -78,6 +77,8 @@ reth-codec = [
     "dep:bytes",
     "modular-bitfield",
     "std",
+    "reth-codecs/std",
+    "reth-codecs/serde",
 ]
 reth-compat = [
     "dep:reth-primitives-traits",
@@ -89,7 +90,6 @@ arbitrary = [
     "alloy-consensus/arbitrary",
     "alloy-eips/arbitrary",
     "alloy-serde/arbitrary",
-    "reth-codecs?/arbitrary",
     "alloy-primitives/rand",
 ]
 serde = [
@@ -99,7 +99,6 @@ serde = [
     "alloy-consensus/serde",
     "alloy-eips/serde",
     "rand/serde",
-    "reth-codecs?/serde",
 ]
 serde-bincode-compat = [
     "dep:serde_with",
