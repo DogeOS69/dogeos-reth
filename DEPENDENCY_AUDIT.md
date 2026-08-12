@@ -10,16 +10,19 @@ no copied upstream Reth crate and no production dependency on the legacy `scroll
 | --- | --- |
 | Reth | official `v2.0.0` plus RocksDB, Header-transform, and Composite-RPC layers / `ae160090003d9b04be0521e9e4760558798cdf40` |
 | REVM | `36.0.0` |
-| `revm-scroll` | `1b87ecf17af029ac2f39e8ad362f3503ff2f4583` (`chore/upgrade-revm-v36`) |
+| `revm-scroll` | `dcf087684f255131c96c0d20f3291eef9198e990` (`dogeos`) |
 | Alloy API family | `alloy-consensus 1.8.2` |
 | alloy-evm | `0.30.0` |
 | Alloy primitives / Solidity types | `1.5.7` |
 
 The first `feat/drop-scroll-patch` candidate resolved REVM 34 and
-`alloy-evm 0.27.3`, so it was rejected. The selected `chore/upgrade-revm-v36`
-revision resolves a single REVM 36 and a single alloy-evm 0.30.0 instance.
-The workspace intentionally selects that branch in `Cargo.toml`; the audit requires both the
-encoded branch source and the exact `1b87ecf...` commit resolved in `Cargo.lock`.
+`alloy-evm 0.27.3`, so it was rejected. The evaluation branch
+`chore/upgrade-revm-v36` (revision `1b87ecf...`) was merged into the canonical
+`dogeos` branch on 2026-08-12 (PRs #16/#17: drop the Scroll REVM fork, upgrade
+to REVM 36); the workspace now selects `dogeos`, which resolves the same single
+REVM 36 and single alloy-evm 0.30.0 instance. The audit requires both the
+encoded branch source and the exact `dcf08768...` commit resolved in
+`Cargo.lock`.
 
 The Reth source manifest uses compatible semver ranges for a subset of the
 Alloy 1.5 components. Cargo otherwise selected a newer incompatible parser

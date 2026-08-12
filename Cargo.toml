@@ -120,4 +120,4 @@ dogeos-scroll-wire = { path = "crates/dogeos-scroll-wire", default-features = fa
 
 # DogeOS-owned EVM behavior is retained outside upstream Reth. This revision
 # comes from the REVM 36 upgrade branch.
-revm-scroll = { git = "https://github.com/DogeOS69/dogeos-revm.git", branch = "chore/upgrade-revm-v36", default-features = false }
+revm-scroll = { git = "https://github.com/DogeOS69/dogeos-revm.git", branch = "dogeos", default-features = false }

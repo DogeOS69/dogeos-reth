@@ -65,7 +65,7 @@ The standalone node retains the DogeOS-owned EVM dependency used by the
 oracle:
 
 ```toml
-revm-scroll = { git = "https://github.com/DogeOS69/dogeos-revm", branch = "chore/upgrade-revm-v36", default-features = false }
+revm-scroll = { git = "https://github.com/DogeOS69/dogeos-revm", branch = "dogeos", default-features = false }
 ```
 
 `revm-scroll` is a required DogeOS dependency, not an upstream Reth patch. Its
@@ -79,12 +79,14 @@ The oracle lockfile currently resolves this branch to
 either retain that revision with a compatible dependency graph or record the
 replacement `dogeos-revm` revision and its parity evidence here.
 
-The spike evaluates `chore/upgrade-revm-v36` revision
-`1b87ecf17af029ac2f39e8ad362f3503ff2f4583`, observed on 2026-08-02. The branch
-is selected by `Cargo.toml` and the exact revision is pinned by `Cargo.lock`.
-The dependency spike passed: the locked graph contains
-one REVM 36.0.0 and one alloy-evm 0.30.0 instance. The exact audit and
-reproduction commands are in `DEPENDENCY_AUDIT.md`.
+The spike evaluated `chore/upgrade-revm-v36` revision
+`1b87ecf17af029ac2f39e8ad362f3503ff2f4583`, observed on 2026-08-02. That
+branch was merged into the canonical `dogeos` branch (PRs #16/#17) and deleted;
+since 2026-08-12 `Cargo.toml` selects `dogeos` and `Cargo.lock` pins its
+merge revision `dcf087684f255131c96c0d20f3291eef9198e990`. The dependency
+audit still passes: the locked graph contains one REVM 36.0.0 and one
+alloy-evm 0.30.0 instance. The exact audit and reproduction commands are in
+`DEPENDENCY_AUDIT.md`.
 
 This exception does not permit DogeOS-specific patches to upstream
 REVM/Reth/Alloy.  Any such patch still requires a separate allowlist entry.
