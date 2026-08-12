@@ -3,6 +3,13 @@
 This records the isolated local compatibility run performed on 2026-08-03
 between the pinned oracle node and the standalone migration node.
 
+**Validity window:** the run predates the NativeDogeToken bytecode correction
+(`ec85b4a`, which changes dev-chain state roots), the legacy fork-ID
+preservation (`88c0daf`, which changes the `eth` handshake this run
+exercises), and the move off the `eb4c15e5` upstream base. The frozen values
+in `fixtures/sync/` are a historical record of that stack; regeneration on the
+pinned current stack is tracked qualification work.
+
 ## Nodes
 
 | Role | Binary | Revision | Storage |

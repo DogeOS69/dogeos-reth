@@ -32,6 +32,13 @@ This consumer therefore needs an API/type migration to the standalone
 DogeOS-owned packages. The checked source does not, by itself, block Storage V2
 as an out-of-process database reader.
 
+**Update (2026-08-12):** the audited revision is superseded for the migration
+question — the rollup-node PR #12 branch pins `dogeos-chainspec`,
+`dogeos-hardforks`, `dogeos-protocol-types`, `dogeos-reth-engine`,
+`dogeos-reth-evm`, and `dogeos-reth-consensus` from this repository. The
+`scroll-v91.7` findings above continue to describe the unmigrated default
+branch.
+
 ### `dogeos-core`
 
 - The workspace still consumes `scroll-alloy-consensus` from the old
@@ -61,4 +68,12 @@ Search production code separately from test utilities:
 rg -n 'reth_db::|DatabaseEnv|libmdbx|rocksdb|open_db' \
   /path/to/dogeos-rollup-node/crates /path/to/dogeos-core/crates \
   --glob '*.rs' --glob '!**/tests/**' --glob '!**/test_utils/**'
+```
+
+Portable equivalent where `rg` is unavailable (as in CI):
+
+```sh
+grep -rEn 'reth_db::|DatabaseEnv|libmdbx|rocksdb|open_db' \
+  /path/to/dogeos-rollup-node/crates /path/to/dogeos-core/crates \
+  --include='*.rs' --exclude-dir=tests --exclude-dir=test_utils
 ```

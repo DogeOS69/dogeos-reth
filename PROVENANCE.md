@@ -2,7 +2,7 @@
 
 This repository starts as a standalone migration workspace. The legacy
 `scroll-reth` fork is the behavior oracle until a replacement has passed the
-parity gates in `DOGEOS_RETH_MIGRATION_PLAN.md`.
+qualification gates tracked in `TODO.md` and `CAPABILITY_MATRIX.md`.
 
 ## Pinned oracle
 
@@ -18,6 +18,11 @@ The source fork was derived from `https://github.com/scroll-tech/reth.git`.
 That is provenance only: no generic Reth crate from that fork may be copied
 into this repository.
 
+**Rename hazard:** the legacy fork previously lived at
+`https://github.com/DogeOS69/dogeos-reth.git` — the URL that now denotes *this*
+repository. Any downstream pin of that URL at a pre-rename revision refers to
+the legacy fork, not to this workspace; audit such pins before trusting them.
+
 ## Frozen source inputs
 
 The following files are the initial, byte-addressed source inputs for the
@@ -29,6 +34,11 @@ them against the pinned oracle checkout before an extraction changes them.
 | `crates/scroll/chainspec/res/genesis/dogeos.json` | `87b23f048986196bdcffe74159b1bdf2924865196af6bda98cabcb4d2cd842da` |
 | `crates/scroll/chainspec/res/genesis/chikyu_dogeos.json` | `c6effe795d7a5b000f07167ca1c97b6fa8c428acfdcf65641ee6bf9e4b32390b` |
 | `crates/scroll/chainspec/res/genesis/dev.json` | `2e450321d7bf396ca9597d86e1cc5e603065e1ee78663f4b3b85d8265ba92619` |
+
+These hashes address the *oracle-side* files. The repository-side Chikyu
+genesis intentionally diverges from the oracle copy: the incorrect
+`tsukiTime: 0` field was removed (see `CHIKYU_HARDFORK_SCHEDULE.md`), which
+changes the file hash without changing the genesis header.
 
 The oracle checkout does not contain a fixture generator or a complete
 differential replay corpus. This repository now freezes the initial byte-level
@@ -55,13 +65,19 @@ The baseline command intentionally validates source identity and chain inputs
 only. The fixture command validates JSON structure and the byte manifest.
 Neither command treats Storage V1 bytes as a protocol oracle.
 
-## Phase 0 dependency spike inputs
+## Phase 0 dependency spike inputs (historical)
 
-The standalone dependency spike uses upstream Reth `v2.0.0` at
-`eb4c15e5e36d8776d46629beae4c0a69af7ab04f` and evaluates the
+These were the Phase 0 evaluation inputs. The production stack has since moved
+to `DogeOS69/reth` (stack base `5235056be94c584edce6ba7900f163aaa9b8cda0`,
+pinned `ae160090003d9b04be0521e9e4760558798cdf40`) as recorded in
+`UPSTREAM_PATCHES.md` and `DEPENDENCY_AUDIT.md`; `Cargo.lock` remains the
+authoritative resolved graph.
+
+The standalone dependency spike used upstream Reth `v2.0.0` at
+`eb4c15e5e36d8776d46629beae4c0a69af7ab04f` and evaluated the
 `chore/upgrade-revm-v36` revision of `dogeos-revm` at
-`1b87ecf17af029ac2f39e8ad362f3503ff2f4583`.  These are immutable inputs;
-Cargo.lock is the authoritative resolved graph once the spike succeeds.
+`1b87ecf17af029ac2f39e8ad362f3503ff2f4583`.  These were immutable inputs to
+the spike.
 
 Reth v2.0.0 specifies the Alloy API crates at `1.8.2`, `alloy-evm` at
 `0.30.0`, and its lower-level `alloy-primitives`/`alloy-sol-types` pair at
