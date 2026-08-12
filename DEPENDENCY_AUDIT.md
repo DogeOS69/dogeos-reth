@@ -1,6 +1,7 @@
 # Phase 0 dependency audit
 
-Status: **passed on 2026-08-06**.
+Status: **passed on 2026-08-06; revalidated on 2026-08-12** after the repin to the
+inbound/downloaded-header-only clean-Reth commit `f851224ee9aaf21c76a14e844cbd12d9756f5f3b`.
 
 The standalone spike resolves official Reth v2.0.0 plus the reviewed clean-Reth compatibility
 stack as a source dependency and retains DogeOS EVM behavior through `revm-scroll`; it contains
@@ -8,7 +9,7 @@ no copied upstream Reth crate and no production dependency on the legacy `scroll
 
 | Component | Locked selection |
 | --- | --- |
-| Reth | official `v2.0.0` plus RocksDB, Header-transform, and Composite-RPC layers / `ae160090003d9b04be0521e9e4760558798cdf40` |
+| Reth | official `v2.0.0` plus the RocksDB durability layer and the inbound/downloaded-header-only transform layer / `f851224ee9aaf21c76a14e844cbd12d9756f5f3b` |
 | REVM | `36.0.0` |
 | `revm-scroll` | `dcf087684f255131c96c0d20f3291eef9198e990` (`dogeos`) |
 | Alloy API family | `alloy-consensus 1.8.2` |

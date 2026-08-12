@@ -11,8 +11,8 @@ production dependency.
 | Candidate | Status | Required evidence before admission |
 | --- | --- | --- |
 | Reth PR #23603 (RocksDB synchronous-write durability fix) | **Admitted; crash qualification pending** | Exact upstream backport is pinned and the static durability gate passes; crash/restart/reorg qualification remains required |
-| Asynchronous Header transform hooks | **Admitted temporarily** | Required by the current geth/l2geth-compatible rollup integration; remove when the rollup path no longer transforms peer headers |
-| Composite RPC add-on handles | **Admitted temporarily** | Required by the current rollup-node RPC composition; its cleanup is independent of P2P fork-ID compatibility |
+| Downloaded (inbound) Header transform hook | **Admitted temporarily** | Required only for the one-way Testnet geth-to-Reth crossover; the hook is optional, defaults to `None`, never transforms served headers, and is removed once the rollup path no longer canonicalizes downloaded peer headers |
+| Composite RPC add-on handles (Reth PR #3) | **Retired; not selected** | rollup-node PR #17 adopted Reth's standard `RpcHandle`, so this layer and its Reth revision `ae160090...` are removed from the selected stack |
 
 ## Reth RocksDB synchronous-write durability
 
@@ -20,7 +20,7 @@ production dependency.
 - Upstream source commit: `3a136fc8c38221e060cbc31ef5c5fa345cf0e17a`
 - DogeOS backport commit: `90e08ba40` in `DogeOS69/reth`
 - Stack base revision: `5235056be94c584edce6ba7900f163aaa9b8cda0`
-- Pinned stack revision: `ae160090003d9b04be0521e9e4760558798cdf40`
+- Pinned stack revision: `f851224ee9aaf21c76a14e844cbd12d9756f5f3b`
 - Generic rationale: successful RocksDB transactions and batch commits must enable WAL sync so
   acknowledged writes survive a host crash. The patch contains no DogeOS protocol behavior and
   does not change storage encodings.
@@ -38,26 +38,29 @@ scripts/audit-rocksdb-durability.sh
 - Removal condition: move to an upstream Reth base containing PR #23603 or an equivalent audited
   synchronous-write implementation, then remove the backport while retaining the durability gate.
 
-## Asynchronous Header transform hooks
+## Downloaded (inbound) Header transform hook
 
 - Patch PR: `DogeOS69/reth#1`
-- Layer revision: `2fe5183c7e6043ec1241716e9dd695fe2ae6682d`
-- Generic rationale: expose optional asynchronous inbound and outbound Header transforms through
-  the network builder. The current rollup integration uses the hooks to remain compatible with
-  geth/l2geth peers without embedding DogeOS consensus policy in Reth.
+- Layer revision: `f851224ee9aaf21c76a14e844cbd12d9756f5f3b`
+- Generic rationale: expose one optional asynchronous transform hook for downloaded (inbound)
+  headers through the network builder. Served/outbound response headers are never transformed. The
+  rollup integration uses the hook only for the temporary one-way Testnet geth-to-Reth crossover,
+  where downstream code performs legacy-signature removal/canonicalization on downloaded headers
+  without embedding DogeOS consensus policy in Reth. The downstream adapter canonicalizes inbound
+  headers; it does not restore signatures onto served headers.
 - Coverage: the workspace build and tests exercise the opt-in builder API; passing `None` preserves
-  ordinary Reth behavior for the standalone node.
-- Removal condition: remove this layer after rollup-node no longer needs peer-header transforms.
+  ordinary Reth behavior. The standalone DogeOS node and Mainnet pass `None` and use no legacy
+  transform.
+- Removal condition: remove this layer after the Testnet crossover completes and rollup-node no
+  longer canonicalizes downloaded peer headers.
 
-## Composite RPC add-on handles
+## Composite RPC add-on handles — retired, not selected
 
-- Patch PR: `DogeOS69/reth#3`
-- Layer revision and selected Reth revision: `ae160090003d9b04be0521e9e4760558798cdf40`
-- Generic rationale: allow a node to compose more than one RPC add-on handle without replacing
-  upstream RPC modules. The current rollup-node builder uses this API surface.
-- Coverage: the full workspace check, tests, and Clippy pass against the selected revision.
-- Removal condition: remove this layer after rollup-node adopts a single upstream RPC add-on
-  handle. That refactor is independent of the DogeOS fork-ID compatibility fix in this repository.
+- Patch PR: `DogeOS69/reth#3` (former revision `ae160090003d9b04be0521e9e4760558798cdf40`)
+- Status: **not selected.** This layer is no longer part of the Reth stack. rollup-node PR #17
+  adopted Reth's standard `RpcHandle`, so the composite add-on handle API is unnecessary and its
+  Reth revision `ae160090...` has been removed from this workspace. Recorded here only to explain
+  provenance; it must not be reintroduced.
 
 ## Required DogeOS EVM dependency
 
