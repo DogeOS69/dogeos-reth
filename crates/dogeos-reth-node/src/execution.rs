@@ -1,4 +1,4 @@
-use crate::DogeosNodeTypes;
+use crate::DogeosCompatibleNodeTypes;
 use dogeos_reth_evm::ScrollEvmConfig;
 use reth_node_builder::{BuilderContext, FullNodeTypes, components::ExecutorBuilder};
 
@@ -9,7 +9,7 @@ pub struct DogeosExecutorBuilder;
 
 impl<Node> ExecutorBuilder<Node> for DogeosExecutorBuilder
 where
-    Node: FullNodeTypes<Types = DogeosNodeTypes>,
+    Node: FullNodeTypes<Types: DogeosCompatibleNodeTypes>,
 {
     type EVM = ScrollEvmConfig<dogeos_chainspec::DogeosChainSpec>;
 

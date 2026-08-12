@@ -1,6 +1,6 @@
 # DogeOS Reth 2 Migration TODO
 
-Last updated: 2026-08-04
+Last updated: 2026-08-12
 
 This list tracks the remaining work required to qualify and cut over to the standalone DogeOS Reth
 2 node. Completed migration evidence is recorded in [CAPABILITY_MATRIX.md](CAPABILITY_MATRIX.md),
@@ -16,14 +16,24 @@ This list tracks the remaining work required to qualify and cut over to the stan
     is zero, and the Tsuki NativeDogeToken predeploy is absent.
   - Custom genesis files preserve numeric, decimal-string, and hexadecimal fork timestamps.
   - See [CHIKYU_HARDFORK_SCHEDULE.md](CHIKYU_HARDFORK_SCHEDULE.md) and the frozen fixture.
+  - **Re-opened follow-up (2026-08-12):** operations report Chikyu has since activated Tsuki
+    directly from Feynman. The built-in schedule still fails closed; encoding the operator-owned
+    activation timestamp, refreshing the frozen fixture, and qualifying replay through the
+    boundary is a release blocker.
 
-- [ ] **Integrate the RocksDB synchronous-write durability fix.**
-  - Select an upstream Reth revision or a minimal documented backport containing the equivalent of
-    Reth PR #23603.
-  - Preserve the Reth 2 and REVM 36 dependency family; do not upgrade to REVM 38 implicitly.
-  - Record the exact revision and rationale in [UPSTREAM_PATCHES.md](UPSTREAM_PATCHES.md).
-  - Make `scripts/audit-rocksdb-durability.sh` pass without weakening the audit.
+- [x] **Integrate the RocksDB synchronous-write durability fix.**
+  - The selected `DogeOS69/reth` revision `ae160090003d9b04be0521e9e4760558798cdf40`
+    contains the exact backport of upstream Reth PR #23603 beneath the temporary, reviewed
+    Header-transform and Composite-RPC compatibility layers.
+  - The Reth 2 / REVM 36 dependency family and `revm-scroll` branch remain unchanged.
+  - The exact revision, rationale, validation, and removal condition are recorded in
+    [UPSTREAM_PATCHES.md](UPSTREAM_PATCHES.md).
+  - `scripts/audit-rocksdb-durability.sh` passes without weakening the audit.
+
+- [ ] **Qualify RocksDB crash durability.**
   - Add crash-during-write, restart, and reorg durability tests.
+  - Verify acknowledged transactions, explicit batches, auto-committed batches, and final batch
+    commits survive abrupt process and host termination.
 
 - [ ] **Replay the Chikyu chain into a fresh Storage V2 datadir.**
   - Sync from genesis to an agreed finalized Chikyu height.
@@ -33,12 +43,20 @@ This list tracks the remaining work required to qualify and cut over to the stan
   - Freeze the compared height, node revisions, commands, and results as reproducible evidence.
   - Use the frozen schedule checkpoint as the first full-replay target, then extend to the current
     finalized head.
+  - **Status (2026-08-12):** a full old-peer P2P sync from genesis across the Feynman→Tsuki
+    boundary has been performed operationally and surfaced fixes now on this branch. The exact
+    binary revisions, genesis/config, and commands are not yet pinned in this repository; landing
+    that reproducible evidence is the remaining work of this item.
 
 - [ ] **Qualify the real rollup/consensus driver against the new execution node.**
   - Run `dogeos-rollup-node` against the new node through the Engine API.
   - Prove automatic live following without `--debug.tip`.
   - Test every rollup-node version required by the staged deployment plan.
   - Verify Engine `VALID`, `INVALID`, and `SYNCING` behavior during normal sync and recovery.
+  - **Status (2026-08-12):** a DA-only derivation sync through `dogeos-rollup-node` driving the
+    Engine API has been performed operationally; its provenance also needs pinning. Live
+    following without `--debug.tip`, the `VALID`/`INVALID`/`SYNCING` matrix, and multi-version
+    coverage remain open.
 
 - [ ] **Complete reorg and failure-recovery qualification.**
   - Exercise canonical extension, side chains, and multi-block reorgs.
@@ -77,6 +95,14 @@ This list tracks the remaining work required to qualify and cut over to the stan
   - Test equal, earlier, and future timestamps.
   - Test invalid payloads before and after restart and across reorg boundaries.
 
+- [ ] **Resolve the Scroll Foundry / `tempo-alloy` test dependency conflict.**
+  - The failing path is `dogeos-rollup-node` `test-utils` -> Scroll Foundry/Anvil revision
+    `e451ccfdf77f8f543e987703c66543c29eba9258` -> Tempo support -> `tempo-alloy` v1.0.0.
+  - `tempo-alloy` overlaps with the Alloy 1.8 wallet implementation selected by Reth 2 and fails
+    with Rust error `E0119`; production `rollup-node --lib` is unaffected.
+  - Prefer updating Scroll Foundry or disabling its unused Tempo feature. Do not downgrade Reth 2,
+    REVM 36, or `revm-scroll` to hide the conflict.
+
 - [ ] **Add real two-node `scroll/1` integration tests.**
   - Announce and import a correctly signed block.
   - Reject an unauthorized signer before the block reaches Engine import.
@@ -89,11 +115,11 @@ This list tracks the remaining work required to qualify and cut over to the stan
   - Exercise maximum-size blocks, cold start, cold cache, memory growth, and disk growth.
   - Run continuously for thousands of blocks with restart checkpoints.
 
-- [ ] **Verify CI on the remote repository.**
-  - Push the current workflow and run it on Rust 1.93.
-  - Require formatting, dependency provenance, fixture integrity, workspace tests, Clippy with
-    warnings denied, and no-default-features checks.
-  - Enable the RocksDB durability audit as a required release gate after the patch is integrated.
+- [x] **Verify CI on the remote repository.**
+  - `.github/workflows/ci.yml` runs on Rust 1.93.0 and requires formatting, dependency
+    provenance, fixture integrity, workspace tests, Clippy with warnings denied, and
+    no-default-features checks; the RocksDB durability audit is a required gate.
+  - Remaining: attach a green remote-run URL as a qualification record.
 
 ## P2 — Consumer Migration and Cleanup
 
@@ -103,6 +129,10 @@ This list tracks the remaining work required to qualify and cut over to the stan
   - Consume the standalone DogeOS execution node through the intended Engine/RPC boundary.
   - Preserve required transaction bytes, receipt fields, payload IDs, RPC methods, and staged
     compatibility aliases.
+  - **In progress (2026-08-12):** the rollup-node PR #12 branch pins `dogeos-chainspec`,
+    `dogeos-hardforks`, `dogeos-protocol-types`, `dogeos-reth-engine`, `dogeos-reth-evm`, and
+    `dogeos-reth-consensus` from this repository; residual work is removing the remaining
+    legacy `scroll-alloy-*`/`reth-scroll-*` dependencies.
 
 - [ ] **Migrate `dogeos-core` to the Reth-free protocol package.**
   - Publish and pin `dogeos-protocol-types` at a reviewed revision/version.
@@ -127,10 +157,11 @@ This list tracks the remaining work required to qualify and cut over to the stan
     are absent or remove any remaining paths.
   - Remove dead feature gates, unused aliases, and stale migration documentation.
 
-- [ ] **Promote the repository and binary to the canonical `dogeos-reth` identity.**
-  - Complete the cutover from the temporary `dogeos-reth2` workspace/repository name.
-  - Preserve the canonical `dogeos-reth` executable name.
-  - Prove rollback by switching endpoints between independent legacy and new datadirs.
+- [x] **Promote the repository and binary to the canonical `dogeos-reth` identity.**
+  - The repository, workspace package metadata, and executable use the canonical `dogeos-reth`
+    identity; the legacy fork was renamed to `DogeOS69/scroll-reth`.
+  - The rollback proof (switching endpoints between independent legacy and new datadirs) is
+    tracked under the reorg and failure-recovery qualification blocker.
 
 ## Required Decisions and External Inputs
 
@@ -139,8 +170,10 @@ This list tracks the remaining work required to qualify and cut over to the stan
 - [ ] Decide whether Storage V1 datadir migration is required; otherwise retain the fresh Storage
   V2 replay strategy.
 - [ ] Decide which old and new rollup-node versions must be supported during staged deployment.
-- [ ] Commit the migration plan currently referenced by repository documentation, or remove those
-  references if the plan will remain external.
+- [x] Commit the migration plan currently referenced by repository documentation, or remove those
+  references if the plan will remain external. (Resolved 2026-08-12: the dangling
+  `DOGEOS_RETH_MIGRATION_PLAN.md` reference was removed from `PROVENANCE.md`; the plan remains
+  external.)
 
 ## Standard Local Gates
 
@@ -152,8 +185,7 @@ cargo clippy --workspace --all-targets --locked --offline -- -D warnings
 cargo check --workspace --no-default-features --locked --offline
 ```
 
-The durability audit remains intentionally failing until the release-blocking Reth patch is
-selected:
+The durability audit is part of `scripts/verify-workspace.sh` and must remain green:
 
 ```sh
 scripts/audit-rocksdb-durability.sh

@@ -1,4 +1,4 @@
-use crate::DogeosNodeTypes;
+use crate::DogeosCompatibleNodeTypes;
 use reth_network::{
     NetworkHandle, NetworkManager, PeersInfo,
     primitives::BasicNetworkPrimitives,
@@ -42,7 +42,7 @@ impl DogeosNetworkBuilder {
 
 impl<Node, Pool> NetworkBuilder<Node, Pool> for DogeosNetworkBuilder
 where
-    Node: FullNodeTypes<Types = DogeosNodeTypes>,
+    Node: FullNodeTypes<Types: DogeosCompatibleNodeTypes>,
     Pool: TransactionPool<
             Transaction: PoolTransaction<
                 Consensus = dogeos_reth_primitives::ScrollTransactionSigned,
@@ -69,7 +69,7 @@ where
         }
         tracing::info!(target: "reth::cli", "Initializing DogeOS P2P networking");
         let network = NetworkManager::builder(ctx.build_network_config(config)).await?;
-        let handle = ctx.start_network(network, pool);
+        let handle = ctx.start_network(network, pool, None);
         tracing::info!(
             target: "reth::cli",
             enode = %handle.local_node_record(),

@@ -4,6 +4,12 @@ This records the standalone-node Engine API check performed on 2026-08-03 agains
 built `dogeos-reth` binary. It supplements unit tests with the same Engine method family used by
 `dogeos-rollup-node`.
 
+**Validity window:** the recorded block hash and state root predate the NativeDogeToken bytecode
+correction (`ec85b4a`). The `dev` chain activates Tsuki at genesis, so the predeploy's code hash
+is part of the block-1 state root and these exact values no longer reproduce on the current
+sources. The transcript remains a historical record; regeneration on the pinned current stack is
+tracked qualification work.
+
 ## Scope
 
 - Fresh `dev` Storage V2 datadir with local mining disabled.

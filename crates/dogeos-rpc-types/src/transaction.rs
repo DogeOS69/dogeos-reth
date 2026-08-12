@@ -146,17 +146,12 @@ impl From<ScrollL1MessageTransactionFields> for OtherFields {
     }
 }
 
+/// Fields that may also be consumed by the flattened transaction envelope.
+///
+/// Keep these in their own flattened object. Declaring `gasPrice` directly on
+/// [`TransactionSerde`] makes Serde consume it before legacy and EIP-2930 envelopes can see it.
 #[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct TransactionSerde {
-    #[serde(flatten)]
-    inner: ScrollTxEnvelope,
-    #[serde(default)]
-    block_hash: Option<BlockHash>,
-    #[serde(default, with = "alloy_serde::quantity::opt")]
-    block_number: Option<u64>,
-    #[serde(default, with = "alloy_serde::quantity::opt")]
-    transaction_index: Option<u64>,
+struct OptionalFields {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     from: Option<Address>,
     #[serde(
@@ -168,6 +163,21 @@ struct TransactionSerde {
     effective_gas_price: Option<u128>,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TransactionSerde {
+    #[serde(flatten)]
+    inner: ScrollTxEnvelope,
+    #[serde(default)]
+    block_hash: Option<BlockHash>,
+    #[serde(default, with = "alloy_serde::quantity::opt")]
+    block_number: Option<u64>,
+    #[serde(default, with = "alloy_serde::quantity::opt")]
+    transaction_index: Option<u64>,
+    #[serde(flatten)]
+    other: OptionalFields,
+}
+
 impl Serialize for ScrollRpcTransaction {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let recovered = &self.inner.inner;
@@ -176,11 +186,13 @@ impl Serialize for ScrollRpcTransaction {
             block_hash: self.inner.block_hash,
             block_number: self.inner.block_number,
             transaction_index: self.inner.transaction_index,
-            from: Some(recovered.signer()),
-            effective_gas_price: self
-                .inner
-                .effective_gas_price
-                .filter(|_| recovered.gas_price().is_none()),
+            other: OptionalFields {
+                from: Some(recovered.signer()),
+                effective_gas_price: self
+                    .inner
+                    .effective_gas_price
+                    .filter(|_| recovered.gas_price().is_none()),
+            },
         }
         .serialize(serializer)
     }
@@ -190,6 +202,7 @@ impl<'de> Deserialize<'de> for ScrollRpcTransaction {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = TransactionSerde::deserialize(deserializer)?;
         let from = value
+            .other
             .from
             .or_else(|| match &value.inner {
                 ScrollTxEnvelope::L1Message(transaction) => Some(transaction.sender),
@@ -197,6 +210,7 @@ impl<'de> Deserialize<'de> for ScrollRpcTransaction {
             })
             .ok_or_else(|| serde::de::Error::custom("missing `from` field"))?;
         let effective_gas_price = value
+            .other
             .effective_gas_price
             .or_else(|| value.inner.gas_price());
         Ok(Self {
@@ -214,8 +228,78 @@ impl<'de> Deserialize<'de> for ScrollRpcTransaction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_network_primitives::TransactionResponse;
+    use alloy_consensus::{SignableTransaction, TxEip1559, TxEip2930, TxLegacy};
+    use alloy_network_primitives::{BlockTransactions, TransactionResponse};
+    use alloy_primitives::Signature;
     use dogeos_protocol_types::TxL1Message;
+
+    fn rpc_transaction(
+        envelope: ScrollTxEnvelope,
+        sender: Address,
+        effective_gas_price: u128,
+    ) -> ScrollRpcTransaction {
+        ScrollRpcTransaction {
+            inner: alloy_rpc_types_eth::Transaction {
+                inner: Recovered::new_unchecked(envelope, sender),
+                block_hash: Some(B256::repeat_byte(0x11)),
+                block_number: Some(5_375_661),
+                transaction_index: Some(3),
+                effective_gas_price: Some(effective_gas_price),
+            },
+        }
+    }
+
+    fn assert_rpc_roundtrip(transaction: ScrollRpcTransaction) {
+        let json = serde_json::to_value(&transaction).unwrap();
+        let roundtrip: ScrollRpcTransaction = serde_json::from_value(json).unwrap();
+        assert_eq!(roundtrip, transaction);
+    }
+
+    #[test]
+    fn legacy_transaction_roundtrips() {
+        let sender = Address::repeat_byte(1);
+        let envelope = ScrollTxEnvelope::Legacy(
+            TxLegacy {
+                chain_id: Some(5_401),
+                gas_price: 17,
+                ..Default::default()
+            }
+            .into_signed(Signature::test_signature()),
+        );
+
+        assert_rpc_roundtrip(rpc_transaction(envelope, sender, 17));
+    }
+
+    #[test]
+    fn eip2930_transaction_roundtrips() {
+        let sender = Address::repeat_byte(2);
+        let envelope = ScrollTxEnvelope::Eip2930(
+            TxEip2930 {
+                chain_id: 5_401,
+                gas_price: 23,
+                ..Default::default()
+            }
+            .into_signed(Signature::test_signature()),
+        );
+
+        assert_rpc_roundtrip(rpc_transaction(envelope, sender, 23));
+    }
+
+    #[test]
+    fn eip1559_transaction_roundtrips() {
+        let sender = Address::repeat_byte(3);
+        let envelope = ScrollTxEnvelope::Eip1559(
+            TxEip1559 {
+                chain_id: 5_401,
+                max_fee_per_gas: 31,
+                max_priority_fee_per_gas: 7,
+                ..Default::default()
+            }
+            .into_signed(Signature::test_signature()),
+        );
+
+        assert_rpc_roundtrip(rpc_transaction(envelope, sender, 29));
+    }
 
     #[test]
     fn l1_message_uses_zero_rpc_gas_price_and_sender_fallback() {
@@ -239,5 +323,68 @@ mod tests {
         let roundtrip: ScrollRpcTransaction = serde_json::from_value(json).unwrap();
         assert_eq!(roundtrip.from(), sender);
         assert_eq!(roundtrip.inner.effective_gas_price, Some(0));
+    }
+
+    #[test]
+    fn full_block_with_all_scroll_transaction_types_roundtrips() {
+        let signature = Signature::test_signature();
+        let transactions = vec![
+            rpc_transaction(
+                ScrollTxEnvelope::Legacy(
+                    TxLegacy {
+                        chain_id: Some(5_401),
+                        gas_price: 17,
+                        ..Default::default()
+                    }
+                    .into_signed(signature),
+                ),
+                Address::repeat_byte(1),
+                17,
+            ),
+            rpc_transaction(
+                ScrollTxEnvelope::Eip2930(
+                    TxEip2930 {
+                        chain_id: 5_401,
+                        gas_price: 23,
+                        ..Default::default()
+                    }
+                    .into_signed(signature),
+                ),
+                Address::repeat_byte(2),
+                23,
+            ),
+            rpc_transaction(
+                ScrollTxEnvelope::Eip1559(
+                    TxEip1559 {
+                        chain_id: 5_401,
+                        max_fee_per_gas: 31,
+                        max_priority_fee_per_gas: 7,
+                        ..Default::default()
+                    }
+                    .into_signed(signature),
+                ),
+                Address::repeat_byte(3),
+                29,
+            ),
+            rpc_transaction(
+                TxL1Message {
+                    sender: Address::repeat_byte(4),
+                    queue_index: 9,
+                    ..Default::default()
+                }
+                .into(),
+                Address::repeat_byte(4),
+                0,
+            ),
+        ];
+        let block = alloy_rpc_types_eth::Block::new(
+            alloy_rpc_types_eth::Header::default(),
+            BlockTransactions::Full(transactions),
+        );
+
+        let json = serde_json::to_value(&block).unwrap();
+        let roundtrip: alloy_rpc_types_eth::Block<ScrollRpcTransaction> =
+            serde_json::from_value(json).unwrap();
+        assert_eq!(roundtrip, block);
     }
 }

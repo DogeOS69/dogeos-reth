@@ -1,4 +1,4 @@
-use crate::DogeosNodeTypes;
+use crate::DogeosCompatibleNodeTypes;
 use dogeos_reth_consensus::DogeosConsensus;
 use reth_node_builder::{BuilderContext, FullNodeTypes, components::ConsensusBuilder};
 use std::sync::Arc;
@@ -9,7 +9,7 @@ pub struct DogeosConsensusBuilder;
 
 impl<Node> ConsensusBuilder<Node> for DogeosConsensusBuilder
 where
-    Node: FullNodeTypes<Types = DogeosNodeTypes>,
+    Node: FullNodeTypes<Types: DogeosCompatibleNodeTypes>,
 {
     type Consensus = Arc<DogeosConsensus>;
 

@@ -2,7 +2,7 @@
 set -eu
 
 if [ "$#" -ne 1 ]; then
-    echo "usage: $0 /path/to/dogeos-reth" >&2
+    echo "usage: $0 /path/to/scroll-reth" >&2
     exit 64
 fi
 

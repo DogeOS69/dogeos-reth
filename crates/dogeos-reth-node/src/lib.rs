@@ -59,6 +59,24 @@ pub type DogeosEthApi<Node> = reth_rpc::EthApi<
     dogeos_reth_rpc::DogeosRpcConverter<<Node as reth_node_builder::FullNodeTypes>::Provider>,
 >;
 
+/// Marker trait for custom node type sets that reuse the DogeOS protocol surface.
+///
+/// Downstream nodes can implement their own [`NodeTypes`] while still reusing DogeOS component,
+/// RPC, and Engine API builders by selecting the same primitives, chain spec, and payload types.
+pub trait DogeosCompatibleNodeTypes:
+    NodeTypes<Primitives = DogeosPrimitives, ChainSpec = DogeosChainSpec, Payload = DogeosEngineTypes>
+{
+}
+
+impl<T> DogeosCompatibleNodeTypes for T where
+    T: NodeTypes<
+            Primitives = DogeosPrimitives,
+            ChainSpec = DogeosChainSpec,
+            Payload = DogeosEngineTypes,
+        >
+{
+}
+
 impl DogeosNodeTypes {
     pub fn new(args: DogeosRollupArgs) -> Self {
         Self {
@@ -315,12 +333,62 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use reth_db_api::mock::DatabaseMock;
+    use reth_node_builder::{
+        FullNodeComponents, FullNodeTypesAdapter,
+        components::{
+            ConsensusBuilder, ExecutorBuilder, NetworkBuilder, NodeComponentsBuilder, PoolBuilder,
+        },
+        rpc::{EthApiBuilder, PayloadValidatorBuilder},
+    };
+    use reth_provider::test_utils::NoopProvider;
+
+    /// A node type set that is deliberately distinct from [`DogeosNodeTypes`] while selecting the
+    /// same protocol-facing types required by [`DogeosCompatibleNodeTypes`].
+    #[derive(Clone, Debug, Default)]
+    struct CompatibleTestNodeTypes;
+
+    impl NodeTypes for CompatibleTestNodeTypes {
+        type Primitives = DogeosPrimitives;
+        type ChainSpec = DogeosChainSpec;
+        type Storage = DogeosStorage;
+        type Payload = DogeosEngineTypes;
+    }
+
+    type CompatibleTestProvider = NoopProvider<DogeosChainSpec, DogeosPrimitives>;
+    type CompatibleFullNode =
+        FullNodeTypesAdapter<CompatibleTestNodeTypes, DatabaseMock, CompatibleTestProvider>;
+    type CompatibleEvm = <DogeosExecutorBuilder as ExecutorBuilder<CompatibleFullNode>>::EVM;
+    type CompatiblePool =
+        <DogeosPoolBuilder as PoolBuilder<CompatibleFullNode, CompatibleEvm>>::Pool;
+    type CompatibleNode = DogeosNodeAdapter<CompatibleFullNode>;
+
+    fn requires_compatible_node_types<T: DogeosCompatibleNodeTypes>() {}
+
+    fn requires_compatible_builders()
+    where
+        DogeosConsensusBuilder: ConsensusBuilder<CompatibleFullNode>,
+        DogeosExecutorBuilder: ExecutorBuilder<CompatibleFullNode>,
+        DogeosPoolBuilder: PoolBuilder<CompatibleFullNode, CompatibleEvm>,
+        DogeosNetworkBuilder: NetworkBuilder<CompatibleFullNode, CompatiblePool>,
+        DogeosComponentsBuilder<CompatibleFullNode>: NodeComponentsBuilder<CompatibleFullNode>,
+        CompatibleNode: FullNodeComponents<Types = CompatibleTestNodeTypes>,
+        DogeosEthApiBuilder: EthApiBuilder<CompatibleNode>,
+        DogeosEngineValidatorBuilder: PayloadValidatorBuilder<CompatibleNode>,
+    {
+    }
 
     fn requires_node_types<T: NodeTypes>() {}
 
     #[test]
     fn dogeos_node_types_satisfy_reths_public_contract() {
         requires_node_types::<DogeosNodeTypes>();
+    }
+
+    #[test]
+    fn distinct_compatible_node_types_reuse_all_builders() {
+        requires_compatible_node_types::<CompatibleTestNodeTypes>();
+        requires_compatible_builders();
     }
 
     fn requires_protocol_types<

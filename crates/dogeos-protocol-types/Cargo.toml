@@ -2,16 +2,19 @@
 name = "dogeos-protocol-types"
 version = "0.1.0"
 edition.workspace = true
-rust-version.workspace = true
+rust-version = "1.91.0"
 license.workspace = true
 publish = false
 
 [dependencies]
-# alloy
-alloy-rlp.workspace = true
-alloy-eips.workspace = true
-alloy-consensus.workspace = true
-alloy-primitives = { workspace = true, features = ["rlp"] }
+# Alloy's protocol traits are semver-compatible across the supported consumer
+# range. Keep this Reth-free crate independent from the exact versions selected
+# by the surrounding Reth workspace so downstream applications can use their
+# own compatible Alloy patch releases.
+alloy-rlp = { version = "0.3", default-features = false }
+alloy-eips = { version = "1.6", default-features = false }
+alloy-consensus = { version = "1.6", default-features = false }
+alloy-primitives = { version = "1.5", default-features = false, features = ["rlp"] }
 
 # misc
 derive_more = { workspace = true, features = ["display"] }
@@ -29,7 +32,7 @@ reth-primitives-traits = { workspace = true, optional = true }
 modular-bitfield = { workspace = true, optional = true }
 
 # serde
-alloy-serde = { workspace = true, optional = true }
+alloy-serde = { version = "1.6", default-features = false, optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
 
 [dev-dependencies]
@@ -49,7 +52,6 @@ default = ["std"]
 std = [
     "serde/std",
     "alloy-primitives/std",
-    "reth-codecs?/std",
     "alloy-consensus/std",
     "alloy-eips/std",
     "alloy-rlp/std",
@@ -75,6 +77,8 @@ reth-codec = [
     "dep:bytes",
     "modular-bitfield",
     "std",
+    "reth-codecs/std",
+    "reth-codecs/serde",
 ]
 reth-compat = [
     "dep:reth-primitives-traits",
@@ -86,7 +90,6 @@ arbitrary = [
     "alloy-consensus/arbitrary",
     "alloy-eips/arbitrary",
     "alloy-serde/arbitrary",
-    "reth-codecs?/arbitrary",
     "alloy-primitives/rand",
 ]
 serde = [
@@ -96,7 +99,6 @@ serde = [
     "alloy-consensus/serde",
     "alloy-eips/serde",
     "rand/serde",
-    "reth-codecs?/serde",
 ]
 serde-bincode-compat = [
     "dep:serde_with",

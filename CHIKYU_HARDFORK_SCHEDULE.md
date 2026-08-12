@@ -17,6 +17,13 @@ file or from another DogeOS network.
 that a fork can never be activated. Before a future activation, replace it with the operator-owned
 timestamp, add boundary fixtures, and qualify replay through that boundary.
 
+**Operational update (2026-08-12):** the table above is the frozen 2026-08-04 snapshot.
+Operations report that Chikyu has since activated Tsuki directly from Feynman (no Galileo stage)
+and that a full old-peer sync crossed the boundary. The built-in schedule intentionally remains
+fail-closed until the operator-owned activation timestamp is published, encoded, and qualified per
+the procedure above; until then `--chain dogeos-chikyu` cannot follow the live network past the
+activation. This is tracked as a release blocker in `TODO.md`.
+
 The checked-in Chikyu genesis no longer contains the incorrect `tsukiTime: 0` field. This does not
 change the genesis block hash because chain configuration fields are not part of the genesis header.
 Built-in Chikyu, mainnet, and dev specifications each supply their own schedule. Custom genesis

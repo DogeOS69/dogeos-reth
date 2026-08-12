@@ -3,10 +3,10 @@ use alloy_consensus::{
     error::ValueError,
     transaction::{Recovered, TxHashRef},
 };
-use alloy_primitives::{Address, Signature};
+use alloy_primitives::{Address, Bytes, Signature};
 use alloy_rpc_types_eth::TransactionInfo;
 use dogeos_protocol_types::{ScrollAdditionalInfo, ScrollTransactionInfo, ScrollTxEnvelope};
-use dogeos_reth_evm::{ScrollEvmConfig, ScrollTransactionIntoTxEnv};
+use dogeos_reth_evm::{ScrollEvmConfig, ScrollTransactionIntoTxEnv, TX_L1_FEE_PRECISION_U256};
 use dogeos_reth_primitives::ScrollReceipt;
 use dogeos_rpc_types::{Scroll, ScrollRpcTransaction, ScrollTransactionRequest};
 use reth_errors::ProviderError;
@@ -120,7 +120,17 @@ impl TxEnvConverter<ScrollTransactionRequest, ScrollEvmConfig> for ScrollTxEnvCo
         evm_env: &EvmEnvFor<ScrollEvmConfig>,
     ) -> Result<ScrollTransactionIntoTxEnv<TxEnv>, Self::Error> {
         let tx_env = request.into_inner().try_into_tx_env(evm_env)?;
-        Ok(ScrollTransactionIntoTxEnv::new(tx_env, None, None, None))
+        // Model Feynman+ RPC requests as zero-L1-fee simulations without
+        // synthesizing a signed transaction or changing the caller: empty RLP bytes,
+        // the precision ratio, and a zero compressed size satisfy the Feynman
+        // (ratio >= precision) and Galileo (compressed_size <= rlp_len) fee-handler
+        // invariants and drive the L1 cost to zero.
+        Ok(ScrollTransactionIntoTxEnv::new(
+            tx_env,
+            Some(Bytes::new()),
+            Some(TX_L1_FEE_PRECISION_U256),
+            Some(0),
+        ))
     }
 }
 
@@ -177,5 +187,102 @@ mod tests {
             ScrollSimTxConverter.convert_sim_tx(request).unwrap(),
             ScrollTxEnvelope::Legacy(_)
         ));
+    }
+
+    #[test]
+    fn call_converter_preserves_caller_and_sets_scroll_simulation_metadata() {
+        use dogeos_chainspec::DOGEOS_MAINNET;
+        use reth_chainspec::EthChainSpec;
+        use reth_evm::ConfigureEvm;
+        use revm::context::Transaction;
+
+        let caller = Address::repeat_byte(0x42);
+        let config = ScrollEvmConfig::dogeos(DOGEOS_MAINNET.clone());
+        let evm_env = config.evm_env(DOGEOS_MAINNET.genesis_header()).unwrap();
+
+        let converted = ScrollTxEnvConverter
+            .convert_tx_env(ScrollTransactionRequest::default().from(caller), &evm_env)
+            .unwrap();
+
+        assert_eq!(converted.caller(), caller);
+        assert_eq!(converted.rlp_bytes, Some(Bytes::new()));
+        assert_eq!(converted.compression_ratio, Some(TX_L1_FEE_PRECISION_U256));
+        assert_eq!(converted.compressed_size, Some(0));
+    }
+
+    #[test]
+    fn converted_request_executes_under_supported_specs() {
+        use alloy_consensus::Header;
+        use alloy_rpc_types_eth::TransactionInput;
+        use dogeos_chainspec::{DOGEOS_CHIKYU, DOGEOS_MAINNET};
+        use dogeos_reth_evm::ScrollEvmFactory;
+        use reth_evm::{ConfigureEvm, Evm, EvmFactory};
+        use revm::{
+            context::result::ExecutionResult,
+            database::{EmptyDB, State},
+        };
+
+        let caller = Address::repeat_byte(0x42);
+        let callee = Address::repeat_byte(0x11);
+        let calldata = Bytes::from_static(&[0xab, 0xcd, 0xef, 0x01]);
+
+        // Chikyu is Feynman-only (compression-ratio branch); mainnet activates Tsuki
+        // at genesis, which runs the Galileo+ compressed-size branch. A zero base fee
+        // keeps gas cost at zero, so a zero-balance caller can only reach `Success`
+        // when the Scroll L1 fee handler consumes the simulation metadata and computes
+        // a zero L1 cost -- a missing field would instead error or panic there. This is
+        // handler-compatibility coverage, not a proof of fee economics: the empty test
+        // database leaves every L1 oracle parameter at zero.
+        let cases = [
+            (
+                DOGEOS_CHIKYU.clone(),
+                Header {
+                    number: 6_777_906,
+                    timestamp: 1_785_892_970,
+                    gas_limit: 30_000_000,
+                    base_fee_per_gas: Some(0),
+                    ..Default::default()
+                },
+                "feynman",
+            ),
+            (
+                DOGEOS_MAINNET.clone(),
+                Header {
+                    gas_limit: 30_000_000,
+                    base_fee_per_gas: Some(0),
+                    ..Default::default()
+                },
+                "tsuki",
+            ),
+        ];
+
+        for (chain_spec, header, label) in cases {
+            let config = ScrollEvmConfig::dogeos(chain_spec);
+            let evm_env = config.evm_env(&header).unwrap();
+
+            let request = ScrollTransactionRequest::default()
+                .from(caller)
+                .to(callee)
+                .gas_limit(1_000_000)
+                .input(TransactionInput::new(calldata.clone()));
+            let converted = ScrollTxEnvConverter
+                .convert_tx_env(request, &evm_env)
+                .unwrap();
+
+            let mut state = State::builder()
+                .with_database(EmptyDB::new())
+                .with_bundle_update()
+                .build();
+            let evm_factory: ScrollEvmFactory = ScrollEvmFactory::default();
+            let mut evm = evm_factory.create_evm(&mut state, evm_env);
+            let result = evm
+                .transact_commit(converted)
+                .unwrap_or_else(|error| panic!("{label} execution errored: {error:?}"));
+
+            assert!(
+                matches!(result, ExecutionResult::Success { .. }),
+                "{label} execution did not succeed: {result:?}",
+            );
+        }
     }
 }
