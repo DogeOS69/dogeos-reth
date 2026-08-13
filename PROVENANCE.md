@@ -69,9 +69,12 @@ Neither command treats Storage V1 bytes as a protocol oracle.
 
 These were the Phase 0 evaluation inputs. The production stack has since moved
 to `DogeOS69/reth` (stack base `5235056be94c584edce6ba7900f163aaa9b8cda0`,
-pinned `f851224ee9aaf21c76a14e844cbd12d9756f5f3b` — the RocksDB durability layer
-plus the inbound/downloaded-header-only transform hook; the Composite-RPC layer
-is no longer selected) as recorded in `UPSTREAM_PATCHES.md` and
+selected tip `972366a0bfc11cf6a0d5dc79d5e779cd81e32232` — the RocksDB durability,
+inbound/downloaded-header-only transform, and EIP-3607 empty-code sender layers;
+the prior selected tip was `f851224ee9aaf21c76a14e844cbd12d9756f5f3b`, and the Composite-RPC layer is
+no longer selected). The EIP-3607 layer backports upstream PR #26644 (merge
+`62808bd060e4c7398e3fb6df93881950b1433b18`) through DogeOS behavior commit
+`04e5c6ff415a3e8d1e299d6419b3b31ac88f3a8e` as recorded in `UPSTREAM_PATCHES.md` and
 `DEPENDENCY_AUDIT.md`; `Cargo.lock` remains the authoritative resolved graph.
 
 The standalone dependency spike used upstream Reth `v2.0.0` at

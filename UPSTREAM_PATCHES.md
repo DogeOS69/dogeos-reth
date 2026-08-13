@@ -12,6 +12,7 @@ production dependency.
 | --- | --- | --- |
 | Reth PR #23603 (RocksDB synchronous-write durability fix) | **Admitted; crash qualification pending** | Exact upstream backport is pinned and the static durability gate passes; crash/restart/reorg qualification remains required |
 | Downloaded (inbound) Header transform hook | **Admitted temporarily** | Required only for the one-way Testnet geth-to-Reth crossover; the hook is optional, defaults to `None`, never transforms served headers, and is removed once the rollup path no longer canonicalizes downloaded peer headers |
+| Reth PR #26644 (admit EIP-3607 senders with empty code hash) | **Admitted** | Exact upstream fix and DogeOS provider-backed Storage V2 regression are pinned; remove the backport when the selected upstream base contains equivalent behavior |
 | Composite RPC add-on handles (Reth PR #3) | **Retired; not selected** | rollup-node PR #17 adopted Reth's standard `RpcHandle`, so this layer and its Reth revision `ae160090...` are removed from the selected stack |
 
 ## Reth RocksDB synchronous-write durability
@@ -20,7 +21,7 @@ production dependency.
 - Upstream source commit: `3a136fc8c38221e060cbc31ef5c5fa345cf0e17a`
 - DogeOS backport commit: `90e08ba40` in `DogeOS69/reth`
 - Stack base revision: `5235056be94c584edce6ba7900f163aaa9b8cda0`
-- Pinned stack revision: `f851224ee9aaf21c76a14e844cbd12d9756f5f3b`
+- Selected stack revision: `972366a0bfc11cf6a0d5dc79d5e779cd81e32232`
 - Generic rationale: successful RocksDB transactions and batch commits must enable WAL sync so
   acknowledged writes survive a host crash. The patch contains no DogeOS protocol behavior and
   does not change storage encodings.
@@ -41,7 +42,8 @@ scripts/audit-rocksdb-durability.sh
 ## Downloaded (inbound) Header transform hook
 
 - Patch PR: `DogeOS69/reth#1`
-- Layer revision: `f851224ee9aaf21c76a14e844cbd12d9756f5f3b`
+- Layer revision and prior selected stack tip:
+  `f851224ee9aaf21c76a14e844cbd12d9756f5f3b`
 - Generic rationale: expose one optional asynchronous transform hook for downloaded (inbound)
   headers through the network builder. Served/outbound response headers are never transformed. The
   rollup integration uses the hook only for the temporary one-way Testnet geth-to-Reth crossover,
@@ -53,6 +55,25 @@ scripts/audit-rocksdb-durability.sh
   transform.
 - Removal condition: remove this layer after the Testnet crossover completes and rollup-node no
   longer canonicalizes downloaded peer headers.
+
+## EIP-3607 empty-code sender admission
+
+- Upstream PR: `paradigmxyz/reth#26644`
+- Upstream merge commit: `62808bd060e4c7398e3fb6df93881950b1433b18`
+- DogeOS patch PR: `DogeOS69/reth#5`
+- DogeOS behavior commit: `04e5c6ff415a3e8d1e299d6419b3b31ac88f3a8e`
+- Selected stack revision: `972366a0bfc11cf6a0d5dc79d5e779cd81e32232`
+- Generic rationale: EIP-3607 rejects a sender only when the account contains nonempty code.
+  Native Storage V2 represents an explicitly empty genesis `code` value as
+  `Some(KECCAK_EMPTY)`, which must remain eligible to send transactions. The change preserves
+  rejection for genuinely nonempty pre-Prague code and preserves Prague EIP-7702 delegation
+  handling.
+- Coverage: the provider patch includes focused unit boundaries and a native Storage V2 genesis
+  test. DogeOS additionally validates explicit-empty and nonempty genesis senders through the
+  complete DogeOS validator and native Storage V2 provider path.
+- Removal condition: move to an upstream Reth base containing PR #26644 or equivalent audited
+  EIP-3607 empty-code semantics, then remove the backport while retaining the Storage V2 boundary
+  regression.
 
 ## Composite RPC add-on handles — retired, not selected
 
