@@ -68,9 +68,9 @@ scripts/audit-rocksdb-durability.sh
   `Some(KECCAK_EMPTY)`, which must remain eligible to send transactions. The change preserves
   rejection for genuinely nonempty pre-Prague code and preserves Prague EIP-7702 delegation
   handling.
-- Coverage: the provider patch includes focused unit boundaries and a native Storage V2 genesis
-  test. DogeOS additionally validates explicit-empty and nonempty genesis senders through the
-  complete DogeOS validator and native Storage V2 provider path.
+- Coverage: the Reth transaction-pool patch includes focused unit boundaries and a native Storage
+  V2 genesis test. DogeOS additionally validates explicit-empty and nonempty genesis senders
+  through the complete DogeOS validator and native Storage V2 provider path.
 - Removal condition: move to an upstream Reth base containing PR #26644 or equivalent audited
   EIP-3607 empty-code semantics, then remove the backport while retaining the Storage V2 boundary
   regression.

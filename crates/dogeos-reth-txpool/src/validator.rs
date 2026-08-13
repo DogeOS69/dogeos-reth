@@ -25,6 +25,7 @@ use thiserror::Error;
 
 const MAX_ROLLUP_FEE_PRE_TSUKI: U256 = U256::from_limbs([u64::MAX, 0, 0, 0]);
 const MAX_ROLLUP_FEE_TSUKI: U256 = U256::from_limbs([u64::MAX, u32::MAX as u64, 0, 0]);
+const MAX_L1_FEE_REFRESH_ATTEMPTS: usize = 3;
 
 /// A complete L1 fee snapshot loaded from one sealed canonical head and its exact state.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -183,6 +184,22 @@ pub enum DogeosL1FeeError {
         #[source]
         source: ProviderError,
     },
+    /// The canonical head changed during every bounded refresh attempt.
+    #[error(
+        "DogeOS L1 fee refresh exhausted {attempts} attempts while the canonical head moved from {target_head} (block #{target_number}) to {latest_head} (block #{latest_number})"
+    )]
+    RefreshHeadMoved {
+        /// Number of exact-state refresh attempts made before failing closed.
+        attempts: usize,
+        /// Last head whose exact state was loaded.
+        target_head: B256,
+        /// Number of the last loaded head.
+        target_number: u64,
+        /// Canonical head observed after the last exact-state load.
+        latest_head: B256,
+        /// Number of the canonical head observed after the last load.
+        latest_number: u64,
+    },
     /// A prior canonical-head refresh failed, so the old snapshot cannot be used.
     #[error("{}", cache_unavailable_message(.source.as_ref()))]
     CacheUnavailable {
@@ -216,6 +233,11 @@ impl DogeosL1FeeError {
             | Self::OracleStorageRead {
                 head_hash, number, ..
             } => Some((*head_hash, *number)),
+            Self::RefreshHeadMoved {
+                latest_head,
+                latest_number,
+                ..
+            } => Some((*latest_head, *latest_number)),
             Self::CacheUnavailable { source } => source.head_context(),
             Self::LatestHeaderRead { .. } | Self::LatestHeaderNotFound => None,
         }
@@ -402,29 +424,32 @@ where
     /// Reconciles the fee cache with the provider's latest sealed canonical head.
     ///
     /// This is called by the dedicated canonical-notification task, including after notification
-    /// lag, and by the ordinary Reth validator callback. Refreshes are serialized, and the target
-    /// hash is verified again after exact-state I/O, so an older caller cannot publish over a
+    /// lag and by its unavailable-state retry timer. Refreshes are serialized defensively, and the
+    /// target hash is verified again after exact-state I/O, so an older read cannot publish over a
     /// newer canonical result.
-    pub fn refresh_l1_fee_cache_from_latest(&self)
+    ///
+    /// Returns `true` when validation can use a current snapshot after the refresh.
+    pub fn refresh_l1_fee_cache_from_latest(&self) -> bool
     where
         Client: BlockReaderIdExt,
     {
-        self.refresh_l1_fee_cache_from_latest_with_hooks(|_| {}, |_| {});
+        self.refresh_l1_fee_cache_from_latest_with_hooks(|_| {}, |_| {})
     }
 
     fn refresh_l1_fee_cache_from_latest_with_hooks(
         &self,
         mut target_hook: impl FnMut(B256),
         mut before_publish_hook: impl FnMut(B256),
-    ) where
+    ) -> bool
+    where
         Client: BlockReaderIdExt,
     {
         let _refresh_guard = self.l1_fee_refresh_lock.lock();
         if matches!(*self.l1_fee_cache.read(), DogeosL1FeeCache::Disabled) {
-            return;
+            return true;
         }
 
-        loop {
+        for attempt in 1..=MAX_L1_FEE_REFRESH_ATTEMPTS {
             let target = match self
                 .client()
                 .latest_header()
@@ -433,8 +458,7 @@ where
             {
                 Ok(header) => header,
                 Err(error) => {
-                    self.publish_l1_fee_refresh(Err(error));
-                    return;
+                    return self.publish_l1_fee_refresh(Err(error));
                 }
             };
             target_hook(target.hash());
@@ -443,7 +467,7 @@ where
                 &*self.l1_fee_cache.read(),
                 DogeosL1FeeCache::Ready(snapshot) if snapshot.head_hash == target.hash()
             ) {
-                return;
+                return true;
             }
 
             let snapshot = DogeosL1FeeSnapshot::load_for_head(
@@ -460,25 +484,51 @@ where
             {
                 Ok(header) => header,
                 Err(error) => {
-                    self.publish_l1_fee_refresh(Err(error));
-                    return;
+                    return self.publish_l1_fee_refresh(Err(error));
                 }
             };
 
             if verified_head.hash() != target.hash() {
+                if attempt == MAX_L1_FEE_REFRESH_ATTEMPTS {
+                    return self.publish_l1_fee_refresh(Err(DogeosL1FeeError::RefreshHeadMoved {
+                        attempts: MAX_L1_FEE_REFRESH_ATTEMPTS,
+                        target_head: target.hash(),
+                        target_number: target.number(),
+                        latest_head: verified_head.hash(),
+                        latest_number: verified_head.number(),
+                    }));
+                }
                 continue;
             }
 
             before_publish_hook(target.hash());
-            self.publish_l1_fee_refresh(snapshot);
-            return;
+            return self.publish_l1_fee_refresh(snapshot);
         }
+
+        unreachable!("bounded refresh attempts always return or continue")
     }
 
-    fn publish_l1_fee_refresh(&self, snapshot: Result<DogeosL1FeeSnapshot, DogeosL1FeeError>) {
+    fn publish_l1_fee_refresh(
+        &self,
+        snapshot: Result<DogeosL1FeeSnapshot, DogeosL1FeeError>,
+    ) -> bool {
         match snapshot {
             Ok(snapshot) => {
-                *self.l1_fee_cache.write() = DogeosL1FeeCache::Ready(Arc::new(snapshot));
+                let head_hash = snapshot.head_hash;
+                let number = snapshot.number;
+                let mut cache = self.l1_fee_cache.write();
+                let recovered = matches!(*cache, DogeosL1FeeCache::Unavailable(_));
+                *cache = DogeosL1FeeCache::Ready(Arc::new(snapshot));
+                drop(cache);
+                if recovered {
+                    tracing::info!(
+                        target: "reth::txpool",
+                        ?head_hash,
+                        block_number = number,
+                        "DogeOS L1 fee state recovered; transaction admission resumed"
+                    );
+                }
+                true
             }
             Err(error) => {
                 let head = error.head_context();
@@ -490,6 +540,7 @@ where
                     "failed to refresh DogeOS L1 fee state for canonical head"
                 );
                 *self.l1_fee_cache.write() = DogeosL1FeeCache::Unavailable(Arc::new(error));
+                false
             }
         }
     }
@@ -514,7 +565,6 @@ where
 
     fn on_new_head_block(&self, block: &SealedBlock<Self::Block>) {
         self.inner.on_new_head_block(block);
-        self.refresh_l1_fee_cache_from_latest();
     }
 }
 
@@ -751,7 +801,7 @@ mod tests {
         let block = block.seal_slow();
         provider.add_block(block.hash(), block.clone().unseal());
 
-        validator.on_new_head_block(&block);
+        assert!(validator.refresh_l1_fee_cache_from_latest());
 
         let refreshed = cache_snapshot(&validator);
         assert_eq!(refreshed.head_hash(), block.hash());
@@ -772,6 +822,85 @@ mod tests {
             Some(U256::from(46))
         );
         assert_eq!(refreshed.l1_block_info.penalty_factor, Some(U256::from(47)));
+    }
+
+    #[test]
+    fn unchanged_head_refresh_does_not_reopen_state() {
+        let provider = provider(DOGEOS_CHIKYU.clone());
+        let initial = DogeosL1FeeSnapshot::load_latest(&provider).unwrap();
+        let validator = validator(provider.clone(), initial.clone());
+        provider
+            .accounts
+            .lock()
+            .remove(&L1_GAS_PRICE_ORACLE_ADDRESS);
+
+        assert!(validator.refresh_l1_fee_cache_from_latest());
+        assert_eq!(cache_snapshot(&validator), initial);
+    }
+
+    #[test]
+    fn ordinary_reth_head_callback_does_not_run_synchronous_fee_io() {
+        let provider = provider(DOGEOS_CHIKYU.clone());
+        let initial = DogeosL1FeeSnapshot::load_latest(&provider).unwrap();
+        let validator = validator(provider.clone(), initial.clone());
+        let block = add_oracle_head(
+            &provider,
+            initial.head_hash(),
+            1,
+            initial.timestamp() + 1,
+            U256::from(99),
+        );
+
+        validator.on_new_head_block(&block);
+
+        assert_eq!(cache_snapshot(&validator), initial);
+    }
+
+    #[test]
+    fn moving_head_retry_exhaustion_is_typed_and_fail_closed() {
+        let provider = provider(DOGEOS_CHIKYU.clone());
+        let initial = DogeosL1FeeSnapshot::load_latest(&provider).unwrap();
+        let validator = validator(provider.clone(), initial.clone());
+        let h1 = add_oracle_head(
+            &provider,
+            initial.head_hash(),
+            1,
+            initial.timestamp() + 1,
+            U256::from(1),
+        );
+        let mut latest_hash = h1.hash();
+        let mut latest_number = 1;
+        let mut latest_timestamp = initial.timestamp() + 1;
+
+        let available = validator.refresh_l1_fee_cache_from_latest_with_hooks(
+            |target| {
+                latest_number += 1;
+                latest_timestamp += 1;
+                let next = add_oracle_head(
+                    &provider,
+                    target,
+                    latest_number,
+                    latest_timestamp,
+                    U256::from(latest_number),
+                );
+                latest_hash = next.hash();
+            },
+            |_| {},
+        );
+
+        assert!(!available);
+        match &*validator.l1_fee_cache.read() {
+            DogeosL1FeeCache::Unavailable(error) => assert!(matches!(
+                error.as_ref(),
+                DogeosL1FeeError::RefreshHeadMoved {
+                    attempts: MAX_L1_FEE_REFRESH_ATTEMPTS,
+                    latest_head,
+                    latest_number: 4,
+                    ..
+                } if *latest_head == latest_hash
+            )),
+            state => panic!("expected unavailable cache after retry exhaustion, got {state:?}"),
+        }
     }
 
     #[test]
@@ -966,7 +1095,7 @@ mod tests {
             .lock()
             .remove(&L1_GAS_PRICE_ORACLE_ADDRESS);
 
-        validator.on_new_head_block(&block);
+        assert!(!validator.refresh_l1_fee_cache_from_latest());
         let candidate = transaction(sender);
         let expected_hash = *candidate.hash();
         let outcome = validator.validate_one(TransactionOrigin::External, candidate);
@@ -1003,7 +1132,7 @@ mod tests {
             L1_GAS_PRICE_ORACLE_ADDRESS,
             oracle_account(&DOGEOS_CHIKYU, []),
         );
-        validator.on_new_head_block(&block);
+        assert!(validator.refresh_l1_fee_cache_from_latest());
 
         assert!(
             validator

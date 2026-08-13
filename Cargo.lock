@@ -2868,6 +2868,7 @@ dependencies = [
  "alloy-rpc-types-eth",
  "clap",
  "dogeos-chainspec",
+ "dogeos-hardforks",
  "dogeos-reth-consensus",
  "dogeos-reth-engine",
  "dogeos-reth-evm",

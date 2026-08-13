@@ -5,7 +5,7 @@
 //! Reth 2 / REVM 36 / Alloy 1.8 family together with the DogeOS-owned EVM
 //! dependency before component integration starts.
 
-/// The immutable Reth source revision selected for the Phase 0 spike.
+/// The pinned Reth production-stack revision selected by the dependency audit.
 pub const RETH_V2_REVISION: &str = "972366a0bfc11cf6a0d5dc79d5e779cd81e32232";
 
 /// The immutable DogeOS REVM revision evaluated by the Phase 0 spike.

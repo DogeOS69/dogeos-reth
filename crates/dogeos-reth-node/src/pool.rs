@@ -14,17 +14,48 @@ use reth_transaction_pool::{
 };
 use tokio::sync::{broadcast::error, oneshot};
 
+#[derive(Clone, Copy)]
+struct L1FeeRetryBackoff {
+    initial: std::time::Duration,
+    max: std::time::Duration,
+}
+
+const L1_FEE_RETRY_BACKOFF: L1FeeRetryBackoff = L1FeeRetryBackoff {
+    initial: std::time::Duration::from_secs(1),
+    max: std::time::Duration::from_secs(30),
+};
+
+#[cfg(test)]
+const TEST_L1_FEE_RETRY_BACKOFF: L1FeeRetryBackoff = L1FeeRetryBackoff {
+    initial: std::time::Duration::from_millis(10),
+    max: std::time::Duration::from_millis(40),
+};
+
+async fn wait_for_l1_fee_retry(deadline: Option<tokio::time::Instant>) {
+    match deadline {
+        Some(deadline) => tokio::time::sleep_until(deadline).await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Maintains L1-fee state using subscribe → drain → reconcile → ready startup ordering.
+///
+/// Canonical notifications trigger immediate reconciliation. An unavailable cache is retried with
+/// bounded exponential backoff so admission can recover even when no new block is published.
 async fn run_dogeos_l1_fee_cache_maintenance<N, Refresh>(
     mut notifications: CanonStateNotifications<N>,
     mut refresh: Refresh,
     ready: oneshot::Sender<()>,
+    retry_backoff: L1FeeRetryBackoff,
 ) where
     N: NodePrimitives,
-    Refresh: FnMut() + Send + 'static,
+    Refresh: FnMut() -> bool + Send + 'static,
 {
     loop {
         match notifications.try_recv() {
-            Ok(_) => refresh(),
+            Ok(_) => {
+                refresh();
+            }
             Err(error::TryRecvError::Lagged(skipped)) => {
                 tracing::warn!(
                     target: "reth::txpool",
@@ -35,31 +66,63 @@ async fn run_dogeos_l1_fee_cache_maintenance<N, Refresh>(
                 refresh();
             }
             Err(error::TryRecvError::Empty) => break,
-            Err(error::TryRecvError::Closed) => return,
+            Err(error::TryRecvError::Closed) => {
+                tracing::warn!(
+                    target: "reth::txpool",
+                    "DogeOS L1 fee canonical notifications closed before startup reconciliation"
+                );
+                return;
+            }
         }
     }
 
     // Close the subscribe-then-hydrate construction window before the pool can be returned.
-    refresh();
+    let mut available = refresh();
     if ready.send(()).is_err() {
         return;
     }
 
+    let mut retry_delay = retry_backoff.initial;
+    let mut retry_deadline = (!available).then(|| tokio::time::Instant::now() + retry_delay);
+
     loop {
-        match notifications.recv().await {
-            Ok(_) => refresh(),
-            Err(error::RecvError::Lagged(skipped)) => {
-                tracing::warn!(
-                    target: "reth::txpool",
-                    skipped,
-                    "DogeOS L1 fee canonical notifications lagged; resynchronizing from latest"
-                );
-                // Subscribe first so a head published during the latest-state refresh remains
-                // queued for the next iteration instead of falling into another gap.
-                notifications = notifications.resubscribe();
-                refresh();
+        tokio::select! {
+            result = notifications.recv() => {
+                match result {
+                    Ok(_) => {}
+                    Err(error::RecvError::Lagged(skipped)) => {
+                        tracing::warn!(
+                            target: "reth::txpool",
+                            skipped,
+                            "DogeOS L1 fee canonical notifications lagged; resynchronizing from latest"
+                        );
+                        // Subscribe first so a head published during the latest-state refresh remains
+                        // queued for the next iteration instead of falling into another gap.
+                        notifications = notifications.resubscribe();
+                    }
+                    Err(error::RecvError::Closed) => {
+                        tracing::warn!(
+                            target: "reth::txpool",
+                            "DogeOS L1 fee canonical notifications closed; fee maintenance stopped"
+                        );
+                        return;
+                    }
+                }
+                available = refresh();
+                retry_delay = retry_backoff.initial;
+                retry_deadline =
+                    (!available).then(|| tokio::time::Instant::now() + retry_delay);
             }
-            Err(error::RecvError::Closed) => return,
+            () = wait_for_l1_fee_retry(retry_deadline) => {
+                available = refresh();
+                if available {
+                    retry_delay = retry_backoff.initial;
+                    retry_deadline = None;
+                } else {
+                    retry_delay = retry_delay.saturating_mul(2).min(retry_backoff.max);
+                    retry_deadline = Some(tokio::time::Instant::now() + retry_delay);
+                }
+            }
         }
     }
 }
@@ -99,6 +162,12 @@ where
             .pool_config_overrides
             .additional_validation_tasks
             .unwrap_or(ctx.config().txpool.additional_validation_tasks);
+        if !require_l1_data_gas_fee {
+            tracing::info!(
+                target: "reth::txpool",
+                "DogeOS L1 fee enforcement disabled in development mode"
+            );
+        }
         let l1_fee_notifications =
             require_l1_data_gas_fee.then(|| ctx.provider().subscribe_to_canonical_state());
         let canonical_state_stream = ctx.provider().canonical_state_stream();
@@ -129,14 +198,13 @@ where
         if let Some(notifications) = l1_fee_notifications {
             let synchronizer = validator.clone();
             let (ready_tx, ready_rx) = oneshot::channel();
-            ctx.task_executor().spawn_critical_task(
+            ctx.task_executor().spawn_critical_blocking_task(
                 "DogeOS L1 fee canonical state task",
                 run_dogeos_l1_fee_cache_maintenance(
                     notifications,
-                    move || {
-                        synchronizer.validator().refresh_l1_fee_cache_from_latest();
-                    },
+                    move || synchronizer.validator().refresh_l1_fee_cache_from_latest(),
                     ready_tx,
+                    L1_FEE_RETRY_BACKOFF,
                 ),
             );
             ready_rx.await.map_err(|_| {
@@ -198,9 +266,10 @@ mod tests {
         Address, B256, Bytes, Signature, TxKind, U256, keccak256, map::HashMap,
     };
     use dogeos_chainspec::{DOGEOS_CHIKYU, DOGEOS_DEV, DogeosChainSpec, DogeosChainSpecBuilder};
+    use dogeos_hardforks::{DogeosHardfork, ForkCondition};
     use dogeos_reth_evm::ScrollEvmConfig;
     use dogeos_reth_primitives::{DogeosBlock, DogeosPrimitives, ScrollTransactionSigned};
-    use dogeos_reth_txpool::DogeosPooledTransaction;
+    use dogeos_reth_txpool::{DogeosL1FeeError, DogeosPooledTransaction};
     use reth_chainspec::{ChainSpecProvider, EthChainSpec};
     use reth_db_common::init::init_genesis_with_settings;
     use reth_primitives_traits::{
@@ -328,11 +397,7 @@ mod tests {
         }
     }
 
-    fn assert_rollup_fee_overflow(
-        validator: &MockValidator,
-        sender: Address,
-        chain_id: u64,
-    ) -> bool {
+    fn rollup_fee_overflows(validator: &MockValidator, sender: Address, chain_id: u64) -> bool {
         matches!(
             validator
                 .validate_one(
@@ -402,7 +467,7 @@ mod tests {
         let sender = Address::repeat_byte(0x41);
         let provider = mock_provider(Arc::clone(&chain_spec), sender);
         let validator = mock_validator(provider.clone());
-        assert!(!assert_rollup_fee_overflow(
+        assert!(!rollup_fee_overflows(
             &validator,
             sender,
             chain_spec.chain().id()
@@ -425,22 +490,100 @@ mod tests {
         let (ready_tx, ready_rx) = oneshot::channel();
         let cache_task = tokio::spawn(run_dogeos_l1_fee_cache_maintenance(
             notifications_rx,
-            move || {
-                synchronizer.validator().refresh_l1_fee_cache_from_latest();
-            },
+            move || synchronizer.validator().refresh_l1_fee_cache_from_latest(),
             ready_tx,
+            TEST_L1_FEE_RETRY_BACKOFF,
         ));
         tokio::time::timeout(Duration::from_secs(1), ready_rx)
             .await
             .unwrap()
             .unwrap();
 
-        assert!(assert_rollup_fee_overflow(
+        assert!(rollup_fee_overflows(
             executor.validator(),
             sender,
             chain_spec.chain().id()
         ));
         cache_task.abort();
+    }
+
+    #[tokio::test]
+    async fn unavailable_fee_cache_recovers_on_retry_without_a_new_head() {
+        let chain_spec = DOGEOS_CHIKYU.clone();
+        let sender = Address::repeat_byte(0x44);
+        let provider = mock_provider(Arc::clone(&chain_spec), sender);
+        let validator = mock_validator(provider.clone());
+        let blocks = std::mem::take(&mut *provider.blocks.lock());
+        let headers = std::mem::take(&mut *provider.headers.lock());
+        let (executor, _validation_task) = TransactionValidationTaskExecutor::new(validator);
+        let (_notifications_tx, notifications_rx) =
+            tokio::sync::broadcast::channel::<CanonStateNotification<DogeosPrimitives>>(16);
+        let synchronizer = executor.clone();
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let cache_task = tokio::spawn(run_dogeos_l1_fee_cache_maintenance(
+            notifications_rx,
+            move || synchronizer.validator().refresh_l1_fee_cache_from_latest(),
+            ready_tx,
+            TEST_L1_FEE_RETRY_BACKOFF,
+        ));
+        ready_rx.await.unwrap();
+
+        let unavailable = executor.validator().validate_one(
+            TransactionOrigin::External,
+            transaction(sender, chain_spec.chain().id(), 0x56),
+        );
+        let reth_transaction_pool::TransactionValidationOutcome::Error(_, error) = unavailable
+        else {
+            panic!("expected transient latest-header failure to block admission")
+        };
+        assert!(matches!(
+            error.downcast_ref::<DogeosL1FeeError>(),
+            Some(DogeosL1FeeError::CacheUnavailable { source })
+                if matches!(source.as_ref(), DogeosL1FeeError::LatestHeaderRead { .. })
+        ));
+
+        *provider.blocks.lock() = blocks;
+        *provider.headers.lock() = headers;
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !executor
+                .validator()
+                .validate_one(
+                    TransactionOrigin::External,
+                    transaction(sender, chain_spec.chain().id(), 0x57),
+                )
+                .is_valid()
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        cache_task.abort();
+    }
+
+    #[tokio::test]
+    async fn closed_startup_channel_fails_readiness() {
+        let (notifications_tx, notifications_rx) =
+            tokio::sync::broadcast::channel::<CanonStateNotification<DogeosPrimitives>>(1);
+        drop(notifications_tx);
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let cache_task = tokio::spawn(run_dogeos_l1_fee_cache_maintenance(
+            notifications_rx,
+            || true,
+            ready_tx,
+            TEST_L1_FEE_RETRY_BACKOFF,
+        ));
+
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), ready_rx)
+                .await
+                .unwrap()
+                .is_err()
+        );
+        tokio::time::timeout(Duration::from_secs(1), cache_task)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]
@@ -460,7 +603,7 @@ mod tests {
         let cache_task = tokio::spawn(run_dogeos_l1_fee_cache_maintenance(
             notifications_rx,
             move || {
-                synchronizer.validator().refresh_l1_fee_cache_from_latest();
+                let available = synchronizer.validator().refresh_l1_fee_cache_from_latest();
                 refresh_count += 1;
                 if refresh_count == 2 {
                     let head = provider_for_refresh.latest_header().unwrap().unwrap();
@@ -474,8 +617,10 @@ mod tests {
                     );
                     notifications_during_refresh.send(notification).unwrap();
                 }
+                available
             },
             ready_tx,
+            TEST_L1_FEE_RETRY_BACKOFF,
         ));
         ready_rx.await.unwrap();
 
@@ -493,7 +638,85 @@ mod tests {
         }
 
         tokio::time::timeout(Duration::from_secs(1), async {
-            while !assert_rollup_fee_overflow(executor.validator(), sender, chain_spec.chain().id())
+            while !rollup_fee_overflows(executor.validator(), sender, chain_spec.chain().id()) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        cache_task.abort();
+    }
+
+    #[tokio::test]
+    async fn same_height_sibling_reorg_refreshes_fee_state() {
+        let chain_spec = DOGEOS_CHIKYU.clone();
+        let sender = Address::repeat_byte(0x45);
+        let provider = mock_provider(Arc::clone(&chain_spec), sender);
+        let validator = mock_validator(provider.clone());
+        let (executor, _validation_task) = TransactionValidationTaskExecutor::new(validator);
+        let (notifications_tx, notifications_rx) = tokio::sync::broadcast::channel(16);
+        let synchronizer = executor.clone();
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let cache_task = tokio::spawn(run_dogeos_l1_fee_cache_maintenance(
+            notifications_rx,
+            move || synchronizer.validator().refresh_l1_fee_cache_from_latest(),
+            ready_tx,
+            TEST_L1_FEE_RETRY_BACKOFF,
+        ));
+        ready_rx.await.unwrap();
+
+        let genesis = provider.latest_header().unwrap().unwrap();
+        let old_notification = add_mock_head(
+            &provider,
+            &chain_spec,
+            genesis.hash(),
+            1,
+            genesis.timestamp + 1,
+            U256::from(u64::MAX),
+        );
+        let CanonStateNotification::Commit { new: old } = old_notification else {
+            unreachable!("helper always creates a commit")
+        };
+        let old_hash = old.tip().hash();
+        notifications_tx
+            .send(CanonStateNotification::Commit {
+                new: Arc::clone(&old),
+            })
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !rollup_fee_overflows(executor.validator(), sender, chain_spec.chain().id()) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        provider.headers.lock().remove(&old_hash);
+        provider.blocks.lock().remove(&old_hash);
+        let new_notification = add_mock_head(
+            &provider,
+            &chain_spec,
+            genesis.hash(),
+            1,
+            genesis.timestamp + 2,
+            U256::ONE,
+        );
+        let CanonStateNotification::Commit { new } = new_notification else {
+            unreachable!("helper always creates a commit")
+        };
+        assert_ne!(old.tip().hash(), new.tip().hash());
+        notifications_tx
+            .send(CanonStateNotification::Reorg { old, new })
+            .unwrap();
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !executor
+                .validator()
+                .validate_one(
+                    TransactionOrigin::External,
+                    transaction(sender, chain_spec.chain().id(), 0x58),
+                )
+                .is_valid()
             {
                 tokio::task::yield_now().await;
             }
@@ -518,10 +741,9 @@ mod tests {
         let (ready_tx, ready_rx) = oneshot::channel();
         let cache_task = tokio::spawn(run_dogeos_l1_fee_cache_maintenance(
             notifications_rx,
-            move || {
-                synchronizer.validator().refresh_l1_fee_cache_from_latest();
-            },
+            move || synchronizer.validator().refresh_l1_fee_cache_from_latest(),
             ready_tx,
+            TEST_L1_FEE_RETRY_BACKOFF,
         ));
         ready_rx.await.unwrap();
 
@@ -566,11 +788,7 @@ mod tests {
 
         tokio::time::timeout(Duration::from_secs(1), async {
             while pool.block_info().last_seen_block_number != 65
-                || !assert_rollup_fee_overflow(
-                    executor.validator(),
-                    sender,
-                    chain_spec.chain().id(),
-                )
+                || !rollup_fee_overflows(executor.validator(), sender, chain_spec.chain().id())
             {
                 tokio::task::yield_now().await;
             }
@@ -580,6 +798,60 @@ mod tests {
 
         maintenance_task.abort();
         cache_task.abort();
+    }
+
+    #[test]
+    fn fee_cap_uses_the_hydrated_snapshot_timestamp_across_tsuki() {
+        let sender = Address::repeat_byte(0x46);
+        let activation = DOGEOS_CHIKYU.genesis().timestamp + 2;
+        let chain_spec = Arc::new(
+            DogeosChainSpecBuilder::dogeos_chikyu()
+                .with_fork(DogeosHardfork::Tsuki, ForkCondition::Timestamp(activation))
+                .build(DOGEOS_CHIKYU.config),
+        );
+        let provider = mock_provider(Arc::clone(&chain_spec), sender);
+        let validator = mock_validator(provider.clone());
+        let genesis = provider.latest_header().unwrap().unwrap();
+
+        add_mock_head(
+            &provider,
+            &chain_spec,
+            genesis.hash(),
+            1,
+            activation - 1,
+            U256::from(u64::MAX),
+        );
+        assert!(validator.refresh_l1_fee_cache_from_latest());
+        assert!(matches!(
+            validator
+                .validate_one(
+                    TransactionOrigin::External,
+                    transaction(sender, chain_spec.chain().id(), 0x31),
+                )
+                .as_invalid(),
+            Some(InvalidPoolTransactionError::Consensus(
+                InvalidTransactionError::GasUintOverflow
+            ))
+        ));
+        let pre_tsuki_head = provider.latest_header().unwrap().unwrap();
+
+        add_mock_head(
+            &provider,
+            &chain_spec,
+            pre_tsuki_head.hash(),
+            2,
+            activation,
+            U256::from(u64::MAX),
+        );
+        assert!(validator.refresh_l1_fee_cache_from_latest());
+        assert!(
+            validator
+                .validate_one(
+                    TransactionOrigin::External,
+                    transaction(sender, chain_spec.chain().id(), 0x59),
+                )
+                .is_valid()
+        );
     }
 
     #[test]
@@ -704,7 +976,9 @@ mod tests {
     #[test]
     fn restart_hydrates_persisted_native_v2_head_before_next_callback() {
         use revm::{database::BundleState, state::AccountInfo};
-        use revm_scroll::l1block::{L1_BASE_FEE_SLOT, L1_GAS_PRICE_ORACLE_ADDRESS};
+        use revm_scroll::l1block::{
+            L1_BASE_FEE_SLOT, L1_COMMIT_SCALAR_SLOT, L1_GAS_PRICE_ORACLE_ADDRESS,
+        };
 
         let sender = Address::repeat_byte(0x31);
         let mut genesis = DOGEOS_CHIKYU.genesis().clone();
@@ -726,6 +1000,23 @@ mod tests {
         init_genesis_with_settings(&factory, StorageSettings::v2()).unwrap();
         let first_provider = BlockchainProvider::new(factory.clone()).unwrap();
         let genesis_head = first_provider.latest_header().unwrap().unwrap();
+        let genesis_snapshot = DogeosL1FeeSnapshot::load_latest(&first_provider).unwrap();
+        let genesis_inner = EthTransactionValidatorBuilder::new(
+            first_provider.clone(),
+            ScrollEvmConfig::dogeos(Arc::clone(&chain_spec)),
+        )
+        .no_eip4844()
+        .build(InMemoryBlobStore::default());
+        let genesis_validator =
+            DogeosTransactionValidator::new(genesis_inner, genesis_snapshot, false);
+        assert!(
+            genesis_validator
+                .validate_one(
+                    TransactionOrigin::External,
+                    transaction(sender, chain_spec.chain().id(), 0x30),
+                )
+                .is_valid()
+        );
         let state = first_provider.latest().unwrap();
         let oracle = state
             .basic_account(&L1_GAS_PRICE_ORACLE_ADDRESS)
@@ -734,6 +1025,13 @@ mod tests {
         let slot_key = B256::from(L1_BASE_FEE_SLOT);
         let old_fee = state
             .storage(L1_GAS_PRICE_ORACLE_ADDRESS, slot_key)
+            .unwrap()
+            .unwrap_or_default();
+        let old_commit_scalar = state
+            .storage(
+                L1_GAS_PRICE_ORACLE_ADDRESS,
+                B256::from(L1_COMMIT_SCALAR_SLOT),
+            )
             .unwrap()
             .unwrap_or_default();
         drop(state);
@@ -745,18 +1043,28 @@ mod tests {
             code: None,
             ..Default::default()
         };
-        let new_fee = U256::from(777);
+        let new_fee = U256::MAX;
+        let new_commit_scalar = U256::from(1_000_000_000_u64);
         let bundle = BundleState::builder(1..=1)
             .state_present_account_info(L1_GAS_PRICE_ORACLE_ADDRESS, oracle_info.clone())
             .state_storage(
                 L1_GAS_PRICE_ORACLE_ADDRESS,
-                HashMap::from_iter([(L1_BASE_FEE_SLOT, (old_fee, new_fee))]),
+                HashMap::from_iter([
+                    (L1_BASE_FEE_SLOT, (old_fee, new_fee)),
+                    (
+                        L1_COMMIT_SCALAR_SLOT,
+                        (old_commit_scalar, new_commit_scalar),
+                    ),
+                ]),
             )
             .revert_account_info(1, L1_GAS_PRICE_ORACLE_ADDRESS, Some(Some(oracle_info)))
             .revert_storage(
                 1,
                 L1_GAS_PRICE_ORACLE_ADDRESS,
-                vec![(L1_BASE_FEE_SLOT, old_fee)],
+                vec![
+                    (L1_BASE_FEE_SLOT, old_fee),
+                    (L1_COMMIT_SCALAR_SLOT, old_commit_scalar),
+                ],
             )
             .build();
         let outcome = ExecutionOutcome::new(bundle, vec![vec![]], 1, Vec::new());
@@ -803,13 +1111,16 @@ mod tests {
         .no_eip4844()
         .build(InMemoryBlobStore::default());
         let validator = DogeosTransactionValidator::new(inner, snapshot, false);
-        assert!(
+        assert!(matches!(
             validator
                 .validate_one(
                     TransactionOrigin::External,
                     transaction(sender, chain_spec.chain().id(), 0x31),
                 )
-                .is_valid()
-        );
+                .as_invalid(),
+            Some(InvalidPoolTransactionError::Consensus(
+                InvalidTransactionError::GasUintOverflow
+            ))
+        ));
     }
 }
