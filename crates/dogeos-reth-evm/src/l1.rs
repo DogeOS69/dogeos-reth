@@ -7,7 +7,7 @@ use revm_scroll::l1block::L1BlockInfo;
 /// Reth-facing L1 data-fee calculation for `revm-scroll` block information.
 pub trait RethL1BlockInfo {
     fn l1_tx_data_fee(
-        &mut self,
+        &self,
         chain_spec: impl DogeosHardforks,
         timestamp: u64,
         block_number: u64,
@@ -19,7 +19,7 @@ pub trait RethL1BlockInfo {
 
 impl RethL1BlockInfo for L1BlockInfo {
     fn l1_tx_data_fee(
-        &mut self,
+        &self,
         chain_spec: impl DogeosHardforks,
         timestamp: u64,
         block_number: u64,

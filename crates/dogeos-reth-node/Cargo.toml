@@ -44,10 +44,19 @@ reth-storage-api = { workspace = true, features = ["std", "db-api"] }
 reth-transaction-pool.workspace = true
 reqwest.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "time"] }
 tracing.workspace = true
 
 [dev-dependencies]
+alloy-eips.workspace = true
+alloy-genesis.workspace = true
+dogeos-hardforks = { workspace = true, features = ["std"] }
 futures.workspace = true
 reth-consensus.workspace = true
+reth-db.workspace = true
+reth-db-common.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
-tokio.workspace = true
+reth-tasks.workspace = true
+reth-trie-common.workspace = true
+revm.workspace = true
+revm-scroll.workspace = true

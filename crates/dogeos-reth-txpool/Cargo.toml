@@ -22,10 +22,17 @@ reth-evm.workspace = true
 reth-primitives-traits = { workspace = true, features = ["std"] }
 reth-revm.workspace = true
 reth-storage-api = { workspace = true, features = ["std"] }
+reth-storage-errors.workspace = true
 reth-transaction-pool.workspace = true
 revm-scroll.workspace = true
+thiserror.workspace = true
 tracing.workspace = true
 
 [features]
 default = ["std"]
 std = []
+
+[dev-dependencies]
+dogeos-chainspec = { workspace = true, features = ["std"] }
+dogeos-reth-primitives = { workspace = true, features = ["serde"] }
+reth-provider = { workspace = true, features = ["test-utils"] }

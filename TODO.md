@@ -1,6 +1,6 @@
 # DogeOS Reth 2 Migration TODO
 
-Last updated: 2026-08-12
+Last updated: 2026-08-13
 
 This list tracks the remaining work required to qualify and cut over to the standalone DogeOS Reth
 2 node. Completed migration evidence is recorded in [CAPABILITY_MATRIX.md](CAPABILITY_MATRIX.md),
@@ -22,10 +22,10 @@ This list tracks the remaining work required to qualify and cut over to the stan
     boundary is a release blocker.
 
 - [x] **Integrate the RocksDB synchronous-write durability fix.**
-  - The selected `DogeOS69/reth` revision `f851224ee9aaf21c76a14e844cbd12d9756f5f3b`
+  - The selected `DogeOS69/reth` revision `972366a0bfc11cf6a0d5dc79d5e779cd81e32232`
     contains the exact backport of upstream Reth PR #23603 beneath the temporary, reviewed
-    inbound/downloaded-header-only transform hook. The Composite-RPC compatibility layer is
-    no longer selected.
+    inbound/downloaded-header-only transform hook and the generic EIP-3607 empty-code sender
+    backport from upstream PR #26644. The Composite-RPC compatibility layer is no longer selected.
   - The Reth 2 / REVM 36 dependency family and `revm-scroll` branch remain unchanged.
   - The exact revision, rationale, validation, and removal condition are recorded in
     [UPSTREAM_PATCHES.md](UPSTREAM_PATCHES.md).

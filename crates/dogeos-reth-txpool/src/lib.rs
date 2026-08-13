@@ -3,7 +3,7 @@
 mod transaction;
 pub use transaction::DogeosPooledTransaction;
 mod validator;
-pub use validator::{DogeosL1BlockInfo, DogeosTransactionValidator};
+pub use validator::{DogeosL1FeeError, DogeosL1FeeSnapshot, DogeosTransactionValidator};
 
 use dogeos_reth_evm::ScrollEvmConfig;
 use reth_transaction_pool::{CoinbaseTipOrdering, Pool, TransactionValidationTaskExecutor};
