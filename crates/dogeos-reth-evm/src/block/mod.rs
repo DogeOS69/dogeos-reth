@@ -2,10 +2,14 @@ pub use receipt_builder::{ReceiptBuilderCtx, ScrollReceiptBuilder};
 mod receipt_builder;
 
 use crate::{
-    FromTxWithCompressionInfo, ScrollDefaultPrecompilesFactory, ScrollEvm, ScrollEvmFactory,
-    ScrollPrecompilesFactory, ScrollTransactionIntoTxEnv, ToTxWithCompressionInfo,
+    FromTxWithCompressionInfo, ScrollBaseFeeProvider, ScrollDefaultPrecompilesFactory, ScrollEvm,
+    ScrollEvmFactory, ScrollPrecompilesFactory, ScrollTransactionIntoTxEnv,
+    ToTxWithCompressionInfo, calculate_next_controlled_base_fee,
     system_caller::ScrollSystemCaller,
-    transitions::{apply_feynman_hard_fork, apply_galileo_v2_hard_fork, apply_tsuki_hard_fork},
+    transitions::{
+        apply_feynman_hard_fork, apply_galileo_v2_hard_fork, apply_tsuki_hard_fork,
+        store_next_controlled_base_fee,
+    },
 };
 
 use alloc::{boxed::Box, format, vec::Vec};
@@ -81,6 +85,8 @@ pub struct ScrollBlockExecutor<Evm, R: ScrollReceiptBuilder, Spec> {
     receipts: Vec<R::Receipt>,
     /// Total gas used by executed transactions.
     gas_used: u64,
+    /// Tsuki controlled component accepted for the block currently being executed.
+    current_controlled_base_fee: Option<u64>,
     /// Utility to call system smart contracts.
     system_caller: ScrollSystemCaller<Spec>,
 }
@@ -108,6 +114,7 @@ where
             receipt_builder,
             receipts: Vec::new(),
             gas_used: 0,
+            current_controlled_base_fee: None,
         }
     }
 }
@@ -122,7 +129,7 @@ where
                     + FromTxWithCompressionInfo<R::Transaction>,
         >,
     R: ScrollReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
-    Spec: DogeosHardforks + ChainConfig<Config = ScrollChainConfig>,
+    Spec: DogeosHardforks + ChainConfig<Config = ScrollChainConfig> + Clone,
 {
     /// Executes all transactions in a block, applying pre and post execution changes. The provided
     /// transaction compression infos are expected to be in the same order as the
@@ -156,7 +163,7 @@ where
     DB: StateDB,
     E: EvmExt<DB = DB, Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction>>,
     R: ScrollReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
-    Spec: DogeosHardforks + ChainConfig<Config = ScrollChainConfig>,
+    Spec: DogeosHardforks + ChainConfig<Config = ScrollChainConfig> + Clone,
 {
     type Transaction = R::Transaction;
     type Receipt = R::Receipt;
@@ -164,6 +171,25 @@ where
     type Result = ScrollTxResult<<E as Evm>::HaltReason>;
 
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
+        let timestamp = self.evm.block().timestamp().to();
+        if self.spec.is_tsuki_active_at_timestamp(timestamp) {
+            let actual_base_fee = self.evm.block().basefee();
+            let state = ScrollBaseFeeProvider::new(self.spec.clone())
+                .dynamic_base_fee_state(self.evm.db_mut())
+                .map_err(|error| {
+                    BlockExecutionError::msg(format!(
+                        "failed to derive Tsuki base fee from parent state: {error}"
+                    ))
+                })?;
+            let expected_base_fee = state.header_base_fee();
+            if actual_base_fee != expected_base_fee {
+                return Err(BlockExecutionError::msg(format!(
+                    "invalid Tsuki base fee: expected {expected_base_fee}, got {actual_base_fee}"
+                )));
+            }
+            self.current_controlled_base_fee = Some(state.controlled_fee);
+        }
+
         // apply gas oracle predeploy upgrade at Feynman transition block.
         #[allow(clippy::collapsible_if)]
         if self
@@ -298,7 +324,27 @@ where
         Ok(gas_used)
     }
 
-    fn finish(self) -> Result<(Self::Evm, BlockExecutionResult<R::Receipt>), BlockExecutionError> {
+    fn finish(
+        mut self,
+    ) -> Result<(Self::Evm, BlockExecutionResult<R::Receipt>), BlockExecutionError> {
+        if let Some(controlled_fee) = self.current_controlled_base_fee {
+            let next_controlled_fee =
+                calculate_next_controlled_base_fee(controlled_fee, self.gas_used).map_err(
+                    |error| {
+                        BlockExecutionError::msg(format!(
+                            "failed to calculate next controlled base fee: {error}"
+                        ))
+                    },
+                )?;
+            let system_config = self.spec.chain_config().l1_config.l2_system_config_address;
+            store_next_controlled_base_fee(self.evm.db_mut(), system_config, next_controlled_fee)
+                .map_err(|error| {
+                BlockExecutionError::msg(format!(
+                    "failed to persist next controlled base fee: {error:?}"
+                ))
+            })?;
+        }
+
         Ok((
             self.evm,
             BlockExecutionResult {
@@ -435,5 +481,194 @@ where
         I: Inspector<<Self::EvmFactory as EvmFactory>::Context<DB>> + 'a,
     {
         ScrollBlockExecutor::new(evm, ctx, self.spec.clone(), &self.receipt_builder)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        DEFAULT_BASE_FEE_OVERHEAD, INITIAL_CONTROLLED_BASE_FEE, NEXT_CONTROLLED_BASE_FEE_SLOT,
+        ScrollRethReceiptBuilder,
+    };
+    use alloy_evm::{EvmEnv, EvmFactory};
+    use dogeos_chainspec::{DOGEOS_CHIKYU, DOGEOS_MAINNET, DogeosChainSpec};
+    use revm::{
+        Database,
+        context::{BlockEnv, CfgEnv},
+        database::{EmptyDB, State, states::plain_account::PlainStorage},
+        state::AccountInfo,
+    };
+    use revm_scroll::ScrollSpecId;
+
+    fn executor(
+        chain_spec: alloc::sync::Arc<DogeosChainSpec>,
+        spec_id: ScrollSpecId,
+        base_fee: u64,
+    ) -> ScrollBlockExecutor<
+        ScrollEvm<
+            State<EmptyDB>,
+            revm::inspector::NoOpInspector,
+            alloy_evm::precompiles::PrecompilesMap,
+        >,
+        ScrollRethReceiptBuilder,
+        alloc::sync::Arc<DogeosChainSpec>,
+    > {
+        let state = State::builder()
+            .with_database(EmptyDB::default())
+            .with_bundle_update()
+            .build();
+        executor_with_state(state, chain_spec, spec_id, base_fee)
+    }
+
+    fn executor_with_state(
+        state: State<EmptyDB>,
+        chain_spec: alloc::sync::Arc<DogeosChainSpec>,
+        spec_id: ScrollSpecId,
+        base_fee: u64,
+    ) -> ScrollBlockExecutor<
+        ScrollEvm<
+            State<EmptyDB>,
+            revm::inspector::NoOpInspector,
+            alloy_evm::precompiles::PrecompilesMap,
+        >,
+        ScrollRethReceiptBuilder,
+        alloc::sync::Arc<DogeosChainSpec>,
+    > {
+        let env = EvmEnv::new(
+            CfgEnv::new_with_spec(spec_id),
+            BlockEnv {
+                number: U256::ONE,
+                timestamp: U256::ONE,
+                gas_limit: 20_000_000,
+                basefee: base_fee,
+                ..Default::default()
+            },
+        );
+        let evm =
+            ScrollEvmFactory::<ScrollDefaultPrecompilesFactory>::default().create_evm(state, env);
+        ScrollBlockExecutor::new(
+            evm,
+            ScrollBlockExecutionCtx::default(),
+            chain_spec,
+            ScrollRethReceiptBuilder,
+        )
+    }
+
+    fn tsuki_executor(
+        base_fee: u64,
+    ) -> ScrollBlockExecutor<
+        ScrollEvm<
+            State<EmptyDB>,
+            revm::inspector::NoOpInspector,
+            alloy_evm::precompiles::PrecompilesMap,
+        >,
+        ScrollRethReceiptBuilder,
+        alloc::sync::Arc<DogeosChainSpec>,
+    > {
+        executor(DOGEOS_MAINNET.clone(), ScrollSpecId::TSUKI, base_fee)
+    }
+
+    #[test]
+    fn tsuki_executor_validates_seed_and_persists_next_controlled_fee() -> eyre::Result<()> {
+        let mut state = State::builder()
+            .with_database(EmptyDB::default())
+            .with_bundle_update()
+            .build();
+        let expected = ScrollBaseFeeProvider::new(DOGEOS_MAINNET.clone()).next_block_base_fee(
+            &mut state,
+            &alloy_consensus::Header::default(),
+            1,
+        )?;
+        assert_eq!(
+            expected,
+            INITIAL_CONTROLLED_BASE_FEE + DEFAULT_BASE_FEE_OVERHEAD.to::<u64>()
+        );
+        let mut executor =
+            executor_with_state(state, DOGEOS_MAINNET.clone(), ScrollSpecId::TSUKI, expected);
+
+        executor.apply_pre_execution_changes()?;
+        let (mut evm, result) = executor.finish()?;
+
+        assert_eq!(result.gas_used, 0);
+        let system_config = DOGEOS_MAINNET.config.l1_config.l2_system_config_address;
+        assert_eq!(
+            evm.db_mut()
+                .storage(system_config, NEXT_CONTROLLED_BASE_FEE_SLOT)?,
+            U256::from(437_500_000_000u64)
+        );
+        assert_eq!(evm.db_mut().basic(system_config)?.unwrap().nonce, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn tsuki_executor_rejects_a_header_fee_mismatch() {
+        let expected = INITIAL_CONTROLLED_BASE_FEE + DEFAULT_BASE_FEE_OVERHEAD.to::<u64>();
+        let mut executor = tsuki_executor(expected + 1);
+
+        assert!(
+            executor
+                .apply_pre_execution_changes()
+                .unwrap_err()
+                .to_string()
+                .contains("invalid Tsuki base fee")
+        );
+    }
+
+    #[test]
+    fn later_tsuki_block_uses_persisted_components() -> eyre::Result<()> {
+        let system_config = DOGEOS_MAINNET.config.l1_config.l2_system_config_address;
+        let mut state = State::builder()
+            .with_database(EmptyDB::default())
+            .with_bundle_update()
+            .build();
+        state.insert_account_with_storage(
+            system_config,
+            AccountInfo {
+                nonce: 1,
+                ..Default::default()
+            },
+            PlainStorage::from_iter([
+                (U256::from(101), U256::from(100_000_000)),
+                (
+                    NEXT_CONTROLLED_BASE_FEE_SLOT,
+                    U256::from(600_000_000_000u64),
+                ),
+            ]),
+        );
+        let expected = ScrollBaseFeeProvider::new(DOGEOS_MAINNET.clone()).next_block_base_fee(
+            &mut state,
+            &alloy_consensus::Header::default(),
+            1,
+        )?;
+        assert_eq!(expected, 600_100_000_000);
+        let mut executor =
+            executor_with_state(state, DOGEOS_MAINNET.clone(), ScrollSpecId::TSUKI, expected);
+
+        executor.apply_pre_execution_changes()?;
+        let (mut evm, _) = executor.finish()?;
+
+        assert_eq!(
+            evm.db_mut()
+                .storage(system_config, NEXT_CONTROLLED_BASE_FEE_SLOT)?,
+            U256::from(525_000_000_000u64)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn pre_tsuki_executor_does_not_write_controller_state() -> eyre::Result<()> {
+        let mut executor = executor(DOGEOS_CHIKYU.clone(), ScrollSpecId::FEYNMAN, 1_000_000_000);
+
+        executor.apply_pre_execution_changes()?;
+        let (mut evm, _) = executor.finish()?;
+
+        let system_config = DOGEOS_CHIKYU.config.l1_config.l2_system_config_address;
+        assert_eq!(
+            evm.db_mut()
+                .storage(system_config, NEXT_CONTROLLED_BASE_FEE_SLOT)?,
+            U256::ZERO
+        );
+        Ok(())
     }
 }

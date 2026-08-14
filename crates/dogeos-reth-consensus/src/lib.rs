@@ -4,6 +4,8 @@ use alloy_consensus::{
     BlockHeader as _, EMPTY_OMMER_ROOT_HASH, TxReceipt, proofs::calculate_receipt_root,
 };
 use alloy_primitives::{Address, B64, B256, Bloom, U256};
+use dogeos_chainspec::{DOGEOS_MAINNET, DogeosChainSpec, LEGACY_MAX_L2_BASE_FEE, MAX_L2_BASE_FEE};
+use dogeos_hardforks::DogeosHardforks;
 use dogeos_protocol_types::ScrollTransaction;
 use dogeos_reth_primitives::{DogeosBlock, DogeosPrimitives, ScrollReceipt};
 use reth_consensus::{Consensus, ConsensusError, FullConsensus, HeaderValidator, ReceiptRootBloom};
@@ -17,7 +19,6 @@ use reth_primitives_traits::{
     receipt::gas_spent_by_transactions,
 };
 
-pub const DOGEOS_MAXIMUM_BASE_FEE: u64 = 10_000_000_000;
 pub const DOGEOS_BLOCK_DIFFICULTY: U256 = U256::from_limbs([1, 0, 0, 0]);
 
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
@@ -36,8 +37,8 @@ pub enum DogeosConsensusError {
     ExtraDataNotEmpty,
     #[error("base fee missing")]
     BaseFeeMissing,
-    #[error("base fee exceeds {DOGEOS_MAXIMUM_BASE_FEE}")]
-    BaseFeeOverLimit,
+    #[error("base fee exceeds protocol maximum {maximum}")]
+    BaseFeeOverLimit { maximum: u64 },
     #[error("withdrawals are not supported")]
     WithdrawalsPresent,
     #[error("blob fields are not supported")]
@@ -50,8 +51,22 @@ impl From<DogeosConsensusError> for ConsensusError {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct DogeosConsensus;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DogeosConsensus {
+    chain_spec: std::sync::Arc<DogeosChainSpec>,
+}
+
+impl DogeosConsensus {
+    pub const fn new(chain_spec: std::sync::Arc<DogeosChainSpec>) -> Self {
+        Self { chain_spec }
+    }
+}
+
+impl Default for DogeosConsensus {
+    fn default() -> Self {
+        Self::new(DOGEOS_MAINNET.clone())
+    }
+}
 
 impl FullConsensus<DogeosPrimitives> for DogeosConsensus {
     fn validate_block_post_execution(
@@ -172,8 +187,16 @@ impl HeaderValidator<alloy_consensus::Header> for DogeosConsensus {
         let Some(base_fee) = header.base_fee_per_gas() else {
             return Err(DogeosConsensusError::BaseFeeMissing.into());
         };
-        if base_fee > DOGEOS_MAXIMUM_BASE_FEE {
-            return Err(DogeosConsensusError::BaseFeeOverLimit.into());
+        let maximum = if self
+            .chain_spec
+            .is_tsuki_active_at_timestamp(header.timestamp())
+        {
+            MAX_L2_BASE_FEE
+        } else {
+            LEGACY_MAX_L2_BASE_FEE
+        };
+        if base_fee > maximum {
+            return Err(DogeosConsensusError::BaseFeeOverLimit { maximum }.into());
         }
         if header.withdrawals_root().is_some()
             || header.blob_gas_used().is_some()
@@ -274,6 +297,8 @@ mod tests {
     use super::*;
     use alloy_consensus::{Signed, TxEip1559};
     use alloy_primitives::Signature;
+    use dogeos_chainspec::{DOGEOS_CHIKYU, DogeosChainSpecBuilder};
+    use dogeos_hardforks::{DogeosHardfork, ForkCondition};
     use dogeos_protocol_types::TxL1Message;
 
     fn l2() -> dogeos_reth_primitives::ScrollTransactionSigned {
@@ -334,7 +359,7 @@ mod tests {
             ..Default::default()
         });
         assert!(
-            DogeosConsensus
+            DogeosConsensus::default()
                 .validate_header_against_parent(&child, &parent)
                 .is_ok()
         );
@@ -342,7 +367,7 @@ mod tests {
 
     #[test]
     fn post_euclid_header_fields_are_enforced() {
-        let consensus = DogeosConsensus;
+        let consensus = DogeosConsensus::default();
         assert!(
             consensus
                 .validate_header(&SealedHeader::seal_slow(valid_header()))
@@ -383,8 +408,45 @@ mod tests {
         let mut header = valid_header();
         header.timestamp = u64::MAX;
         assert!(matches!(
-            DogeosConsensus.validate_header(&SealedHeader::seal_slow(header)),
+            DogeosConsensus::default().validate_header(&SealedHeader::seal_slow(header)),
             Err(ConsensusError::TimestampIsInPast { .. })
+        ));
+    }
+
+    #[test]
+    fn base_fee_cap_changes_at_tsuki() {
+        let chain_spec = std::sync::Arc::new(
+            DogeosChainSpecBuilder::dogeos_chikyu()
+                .with_fork(DogeosHardfork::Tsuki, ForkCondition::Timestamp(40))
+                .build(DOGEOS_CHIKYU.config),
+        );
+        let consensus = DogeosConsensus::new(chain_spec);
+
+        let mut header = valid_header();
+        header.timestamp = 39;
+        header.base_fee_per_gas = Some(LEGACY_MAX_L2_BASE_FEE);
+        assert!(
+            consensus
+                .validate_header(&SealedHeader::seal_slow(header.clone()))
+                .is_ok()
+        );
+        header.base_fee_per_gas = Some(LEGACY_MAX_L2_BASE_FEE + 1);
+        assert!(matches!(
+            consensus.validate_header(&SealedHeader::seal_slow(header.clone())),
+            Err(ConsensusError::Other(message)) if message.contains("10000000000")
+        ));
+
+        header.timestamp = 40;
+        header.base_fee_per_gas = Some(MAX_L2_BASE_FEE);
+        assert!(
+            consensus
+                .validate_header(&SealedHeader::seal_slow(header.clone()))
+                .is_ok()
+        );
+        header.base_fee_per_gas = Some(MAX_L2_BASE_FEE + 1);
+        assert!(matches!(
+            consensus.validate_header(&SealedHeader::seal_slow(header)),
+            Err(ConsensusError::Other(message)) if message.contains("1000000000000")
         ));
     }
 }

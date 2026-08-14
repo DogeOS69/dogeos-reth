@@ -1,0 +1,6 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"The fee rule crosses hardfork, chainspec, executor state, consensus, payload, and RPC boundaries."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Keep one canonical controller and avoid duplicated fee arithmetic across consumers."}
+{"file":".trellis/spec/dogeos-reth-evm/backend/index.md","reason":"Primary package for controller arithmetic, validation, and protocol-state transition."}
+{"file":".trellis/spec/dogeos-chainspec/backend/index.md","reason":"Own DogeOS-specific parameters and fail-closed activation configuration."}
+{"file":".trellis/spec/dogeos-reth-consensus/backend/index.md","reason":"Preserve header validation while selecting the fork-appropriate cap."}
+{"file":".trellis/tasks/08-13-tip-1067-integration/research/repository-findings.md","reason":"Code-backed findings for slot layout, EIP-161 persistence, execution ordering, arithmetic, and compatibility."}

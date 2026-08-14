@@ -1,0 +1,5 @@
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify end-to-end producer, importer, state, consensus, and RPC agreement."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check that the controller and slot semantics have one canonical owner."}
+{"file":".trellis/spec/dogeos-reth-evm/backend/quality-guidelines.md","reason":"Quality gate for the consensus-critical arithmetic and state transition."}
+{"file":".trellis/spec/dogeos-reth-consensus/backend/quality-guidelines.md","reason":"Quality gate for legacy/new header cap validation."}
+{"file":".trellis/tasks/08-13-tip-1067-integration/research/repository-findings.md","reason":"Verify implementation against researched slot, EIP-161, bounds, and compatibility constraints."}

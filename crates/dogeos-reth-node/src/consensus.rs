@@ -13,8 +13,8 @@ where
 {
     type Consensus = Arc<DogeosConsensus>;
 
-    async fn build_consensus(self, _ctx: &BuilderContext<Node>) -> eyre::Result<Self::Consensus> {
-        Ok(Arc::new(DogeosConsensus))
+    async fn build_consensus(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::Consensus> {
+        Ok(Arc::new(DogeosConsensus::new(ctx.chain_spec())))
     }
 }
 
