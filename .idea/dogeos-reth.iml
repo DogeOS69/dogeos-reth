@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module type="EMPTY_MODULE" version="4">
+  <component name="NewModuleRootManager">
+    <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$/bin/dogeos-reth/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/dogeos-chainspec/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/dogeos-hardforks/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/dogeos-protocol-types/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/dogeos-reth-consensus/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/dogeos-reth-engine/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/dogeos-reth-evm/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/dogeos-reth-node/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/dogeos-reth-payload/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/dogeos-reth-primitives/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/dogeos-reth-rpc/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/dogeos-reth-spike/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/dogeos-reth-txpool/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/dogeos-rpc-types/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/dogeos-scroll-wire/src" isTestSource="false" />
+      <excludeFolder url="file://$MODULE_DIR$/target" />
+    </content>
+    <orderEntry type="inheritedJdk" />
+    <orderEntry type="sourceFolder" forTests="false" />
+  </component>
+</module>
