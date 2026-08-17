@@ -181,7 +181,7 @@ mod tests {
     use alloy_consensus::Header;
     use alloy_primitives::{Address, B256, U256};
     use dogeos_chainspec::DOGEOS_MAINNET;
-    use dogeos_reth_evm::NEXT_CONTROLLED_BASE_FEE_SLOT;
+    use dogeos_reth_evm::dynamic_base_fee_slots;
     use dogeos_reth_primitives::DogeosPrimitives;
     use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
 
@@ -203,7 +203,7 @@ mod tests {
             ExtendedAccount::new(1, U256::ZERO).extend_storage([
                 (B256::from(U256::from(101)), U256::from(100_000_000u64)),
                 (
-                    B256::from(NEXT_CONTROLLED_BASE_FEE_SLOT),
+                    B256::from(dynamic_base_fee_slots::NEXT_CONTROLLED_FEE.value()),
                     U256::from(600_000_000_000u64),
                 ),
             ]),

@@ -161,8 +161,9 @@ impl DynamicBaseFeeParams {
     }
 
     /// Rebase a previously valid controller value into a newly configured range.
-    pub fn rebase_controlled_fee(self, controlled_fee: u64) -> u64 {
-        controlled_fee.clamp(self.floor, self.maximum)
+    pub fn rebase_controlled_fee(self, controlled_fee: u64) -> Result<u64, DynamicBaseFeeError> {
+        let params = self.validate()?;
+        Ok(controlled_fee.clamp(params.floor, params.maximum))
     }
 }
 
@@ -835,7 +836,7 @@ mod tests {
             30_000_000_000
         );
         assert_eq!(
-            params.rebase_controlled_fee(200_000_000_000),
+            params.rebase_controlled_fee(200_000_000_000).unwrap(),
             100_000_000_000
         );
     }
@@ -859,6 +860,14 @@ mod tests {
             ..Default::default()
         };
         assert!(calculate_next_controlled_base_fee(BASE_FEE_FLOOR, 0, params).is_err());
+
+        let params = DynamicBaseFeeParams {
+            floor: 100_000_000_000,
+            initial_controlled_fee: 100_000_000_000,
+            maximum: 10_000_000_000,
+            ..Default::default()
+        };
+        assert!(params.rebase_controlled_fee(50_000_000_000).is_err());
     }
 
     #[test]

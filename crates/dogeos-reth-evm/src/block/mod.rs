@@ -339,7 +339,13 @@ where
                         "failed to read next dynamic base-fee parameters: {error}"
                     ))
                 })?;
-            let controlled_fee = params.rebase_controlled_fee(controlled_fee);
+            let controlled_fee = params
+                .rebase_controlled_fee(controlled_fee)
+                .map_err(|error| {
+                    BlockExecutionError::msg(format!(
+                        "failed to rebase controlled base fee: {error}"
+                    ))
+                })?;
             let next_controlled_fee =
                 calculate_next_controlled_base_fee(controlled_fee, self.gas_used, params).map_err(
                     |error| {

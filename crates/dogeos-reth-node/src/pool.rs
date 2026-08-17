@@ -629,7 +629,7 @@ mod tests {
     };
     use dogeos_chainspec::{DOGEOS_CHIKYU, DOGEOS_DEV, DogeosChainSpec, DogeosChainSpecBuilder};
     use dogeos_hardforks::{DogeosHardfork, ForkCondition};
-    use dogeos_reth_evm::{NEXT_CONTROLLED_BASE_FEE_SLOT, ScrollEvmConfig};
+    use dogeos_reth_evm::{ScrollEvmConfig, dynamic_base_fee_slots};
     use dogeos_reth_primitives::{DogeosBlock, DogeosPrimitives, ScrollTransactionSigned};
     use dogeos_reth_txpool::{DogeosL1FeeError, DogeosPooledTransaction};
     use reth_chainspec::{ChainSpecProvider, EthChainSpec};
@@ -675,7 +675,7 @@ mod tests {
             ExtendedAccount::new(1, U256::ZERO).extend_storage([
                 (B256::from(U256::from(101)), U256::from(100_000_000u64)),
                 (
-                    B256::from(NEXT_CONTROLLED_BASE_FEE_SLOT),
+                    B256::from(dynamic_base_fee_slots::NEXT_CONTROLLED_FEE.value()),
                     U256::from(600_000_000_000u64),
                 ),
             ]),
