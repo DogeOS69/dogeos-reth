@@ -1,19 +1,25 @@
 use crate::DogeosCompatibleNodeTypes;
 use alloy_consensus::BlockHeader;
 use alloy_primitives::Address;
-use dogeos_reth_evm::{ScrollEvmConfig, ScrollNextBlockEnvAttributes};
+use dogeos_chainspec::DogeosChainSpec;
+use dogeos_reth_evm::{
+    ScrollBaseFeeProvider, ScrollEvmConfig, ScrollNextBlockEnvAttributes,
+    predict_next_payload_timestamp,
+};
 use dogeos_reth_primitives::ScrollReceipt;
 use dogeos_reth_rpc::{DogeosRpcConverter, dogeos_rpc_converter};
+use reth_chainspec::ChainSpecProvider;
 use reth_node_builder::{
     FullNodeComponents,
     rpc::{EthApiBuilder, EthApiCtx},
 };
 use reth_primitives_traits::SealedHeader;
+use reth_revm::database::StateProviderDatabase;
 use reth_rpc::EthApi;
 use reth_rpc_convert::RpcConvert;
 use reth_rpc_eth_api::{FullEthApiServer, helpers::pending_block::PendingEnvBuilder};
 use reth_rpc_eth_types::{EthApiError, error::FromEvmError};
-use reth_storage_api::ReceiptProvider;
+use reth_storage_api::{ReceiptProvider, StateProviderFactory};
 use std::sync::{Arc, Mutex};
 
 /// One-shot handoff from the network component builder to the RPC launch phase, where Reth makes
@@ -36,21 +42,47 @@ impl ScrollWireRuntime {
     }
 }
 
-/// Derives a best-effort pending environment without introducing an RPC dependency into the EVM
-/// owner crate. Canonical payload construction continues to use the state-aware base-fee provider.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct DogeosPendingEnvBuilder;
+/// Derives a pending environment from the canonical parent's post-state.
+#[derive(Debug, Clone)]
+pub struct DogeosPendingEnvBuilder<Provider> {
+    provider: Provider,
+}
 
-impl PendingEnvBuilder<ScrollEvmConfig> for DogeosPendingEnvBuilder {
+impl<Provider> DogeosPendingEnvBuilder<Provider> {
+    pub const fn new(provider: Provider) -> Self {
+        Self { provider }
+    }
+}
+
+impl<Provider> PendingEnvBuilder<ScrollEvmConfig> for DogeosPendingEnvBuilder<Provider>
+where
+    Provider: StateProviderFactory
+        + ChainSpecProvider<ChainSpec = DogeosChainSpec>
+        + Clone
+        + Send
+        + Sync
+        + Unpin
+        + 'static,
+{
     fn pending_env_attributes(
         &self,
         parent: &SealedHeader<alloy_consensus::Header>,
     ) -> Result<ScrollNextBlockEnvAttributes, EthApiError> {
+        let timestamp = predict_next_payload_timestamp(parent.timestamp());
+        let state = self
+            .provider
+            .state_by_block_hash(parent.hash())
+            .map_err(EthApiError::from)?;
+        let mut state = StateProviderDatabase::new(state.as_ref());
+        let base_fee = ScrollBaseFeeProvider::new(self.provider.chain_spec())
+            .next_block_base_fee(&mut state, parent.header(), timestamp)
+            .map_err(|error| EthApiError::EvmCustom(error.to_string()))?;
+
         Ok(ScrollNextBlockEnvAttributes {
-            timestamp: parent.timestamp(),
+            timestamp,
             suggested_fee_recipient: parent.beneficiary(),
             gas_limit: parent.gas_limit(),
-            base_fee: parent.base_fee_per_gas().unwrap_or_default(),
+            base_fee,
         })
     }
 }
@@ -135,7 +167,9 @@ where
                 .evm_memory_limit(config.rpc_evm_memory_limit)
                 .force_blob_sidecar_upcasting(config.force_blob_sidecar_upcasting)
                 .with_rpc_converter(converter)
-                .with_pending_env_builder(DogeosPendingEnvBuilder)
+                .with_pending_env_builder(DogeosPendingEnvBuilder::new(
+                    ctx.components.provider().clone(),
+                ))
                 .build(),
         )
     }
@@ -145,7 +179,11 @@ where
 mod tests {
     use super::*;
     use alloy_consensus::Header;
-    use alloy_primitives::{Address, B256};
+    use alloy_primitives::{Address, B256, U256};
+    use dogeos_chainspec::DOGEOS_MAINNET;
+    use dogeos_reth_evm::NEXT_CONTROLLED_BASE_FEE_SLOT;
+    use dogeos_reth_primitives::DogeosPrimitives;
+    use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
 
     #[test]
     fn without_scroll_wire_cannot_launch_importer() {
@@ -156,7 +194,20 @@ mod tests {
     }
 
     #[test]
-    fn pending_environment_preserves_equal_timestamp_policy() {
+    fn pending_environment_reads_the_next_fee_from_parent_state() {
+        let provider = MockEthProvider::<DogeosPrimitives>::new()
+            .with_chain_spec(DOGEOS_MAINNET.as_ref().clone());
+        let system_config = DOGEOS_MAINNET.config.l1_config.l2_system_config_address;
+        provider.add_account(
+            system_config,
+            ExtendedAccount::new(1, U256::ZERO).extend_storage([
+                (B256::from(U256::from(101)), U256::from(100_000_000u64)),
+                (
+                    B256::from(NEXT_CONTROLLED_BASE_FEE_SLOT),
+                    U256::from(600_000_000_000u64),
+                ),
+            ]),
+        );
         let header = Header {
             timestamp: 42,
             beneficiary: Address::repeat_byte(1),
@@ -165,11 +216,11 @@ mod tests {
             ..Default::default()
         };
         let parent = SealedHeader::new(header, B256::ZERO);
-        let attributes = DogeosPendingEnvBuilder
+        let attributes = DogeosPendingEnvBuilder::new(provider)
             .pending_env_attributes(&parent)
             .unwrap();
-        assert_eq!(attributes.timestamp, 42);
-        assert_eq!(attributes.base_fee, 7);
+        assert_eq!(attributes.timestamp, 43);
+        assert_eq!(attributes.base_fee, 600_100_000_000);
         assert_eq!(attributes.gas_limit, 30_000_000);
     }
 }

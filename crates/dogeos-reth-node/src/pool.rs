@@ -1,16 +1,35 @@
 use crate::DogeosCompatibleNodeTypes;
+use alloy_consensus::BlockHeader;
+use alloy_eips::BlockNumberOrTag;
+use alloy_primitives::{Address, BlockHash, map::HashSet};
+use dogeos_chainspec::DogeosChainSpec;
+use dogeos_reth_evm::{ScrollBaseFeeProvider, predict_next_payload_timestamp};
 use dogeos_reth_txpool::{
     DogeosL1FeeSnapshot, DogeosPooledTransaction, DogeosTransactionPool, DogeosTransactionValidator,
 };
+use futures::{
+    FutureExt, Stream, StreamExt,
+    future::{Fuse, FusedFuture},
+};
+use reth_chainspec::ChainSpecProvider;
 use reth_evm::ConfigureEvm;
+use reth_execution_types::ChangedAccount;
 use reth_node_builder::{
     BuilderContext, FullNodeTypes,
     components::{PoolBuilder, PoolBuilderConfigOverrides},
 };
-use reth_primitives_traits::NodePrimitives;
-use reth_provider::{CanonStateNotifications, CanonStateSubscriptions};
+use reth_primitives_traits::{NodePrimitives, SealedHeader, transaction::TxHashRef};
+use reth_provider::{CanonStateNotification, CanonStateNotifications, CanonStateSubscriptions};
+use reth_revm::database::StateProviderDatabase;
+use reth_storage_api::{BlockReaderIdExt, StateProviderFactory, errors::provider::ProviderError};
 use reth_transaction_pool::{
-    CoinbaseTipOrdering, TransactionValidationTaskExecutor, blobstore::DiskFileBlobStore,
+    BlockInfo, CanonicalStateUpdate, CoinbaseTipOrdering, PoolTransaction, PoolUpdateKind,
+    TransactionPool, TransactionPoolExt, TransactionValidationTaskExecutor,
+    blobstore::DiskFileBlobStore, maintain::MaintainPoolConfig,
+};
+use std::{
+    borrow::Borrow,
+    hash::{Hash, Hasher},
 };
 use tokio::sync::{broadcast::error, oneshot};
 
@@ -122,6 +141,350 @@ async fn run_dogeos_l1_fee_cache_maintenance<N, Refresh>(
                     retry_delay = retry_delay.saturating_mul(2).min(retry_backoff.max);
                     retry_deadline = Some(tokio::time::Instant::now() + retry_delay);
                 }
+            }
+        }
+    }
+}
+
+fn state_backed_pending_base_fee<Client, H>(
+    client: &Client,
+    parent: &H,
+    parent_hash: BlockHash,
+) -> Result<u64, String>
+where
+    Client: StateProviderFactory + ChainSpecProvider<ChainSpec = DogeosChainSpec>,
+    H: BlockHeader,
+{
+    let state = client
+        .state_by_block_hash(parent_hash)
+        .map_err(|error| error.to_string())?;
+    let mut state = StateProviderDatabase::new(state.as_ref());
+    ScrollBaseFeeProvider::new(client.chain_spec())
+        .next_block_base_fee(
+            &mut state,
+            parent,
+            predict_next_payload_timestamp(parent.timestamp()),
+        )
+        .map_err(|error| error.to_string())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum MaintainedPoolState {
+    InSync,
+    Drifted,
+}
+
+impl MaintainedPoolState {
+    const fn is_drifted(&self) -> bool {
+        matches!(self, Self::Drifted)
+    }
+}
+
+#[derive(Eq)]
+struct ChangedAccountEntry(ChangedAccount);
+
+impl PartialEq for ChangedAccountEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.address == other.0.address
+    }
+}
+
+impl Hash for ChangedAccountEntry {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.address.hash(state);
+    }
+}
+
+impl Borrow<Address> for ChangedAccountEntry {
+    fn borrow(&self) -> &Address {
+        &self.0.address
+    }
+}
+
+#[derive(Default)]
+struct LoadedAccounts {
+    accounts: Vec<ChangedAccount>,
+    failed_to_load: Vec<Address>,
+}
+
+fn load_accounts<Client, I>(
+    client: Client,
+    at: BlockHash,
+    addresses: I,
+) -> Result<LoadedAccounts, (Vec<Address>, ProviderError)>
+where
+    I: IntoIterator<Item = Address>,
+    Client: StateProviderFactory,
+{
+    let addresses = addresses.into_iter().collect::<Vec<_>>();
+    let state = client
+        .history_by_block_hash(at)
+        .map_err(|error| (addresses.clone(), error))?;
+    let mut loaded = LoadedAccounts::default();
+    for address in addresses {
+        match state.basic_account(&address) {
+            Ok(account) => loaded.accounts.push(
+                account
+                    .map(|account| ChangedAccount {
+                        address,
+                        nonce: account.nonce,
+                        balance: account.balance,
+                    })
+                    .unwrap_or_else(|| ChangedAccount::empty(address)),
+            ),
+            Err(_) => loaded.failed_to_load.push(address),
+        }
+    }
+    Ok(loaded)
+}
+
+/// DogeOS variant of Reth's canonical txpool maintenance.
+///
+/// DogeOS does not support blob transactions, so this keeps the canonical account, mining, reorg,
+/// and stale-transaction behavior while deriving every pending base fee from the canonical tip's
+/// post-state. The generic Reth task cannot do that because its fee callback only receives a
+/// header.
+async fn maintain_dogeos_transaction_pool<N, Client, P, St>(
+    client: Client,
+    pool: P,
+    mut events: St,
+    config: MaintainPoolConfig,
+) where
+    N: NodePrimitives,
+    Client: StateProviderFactory
+        + BlockReaderIdExt<Header = N::BlockHeader>
+        + ChainSpecProvider<ChainSpec = DogeosChainSpec>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+    P: TransactionPoolExt<Transaction: PoolTransaction<Consensus = N::SignedTx>, Block = N::Block>
+        + 'static,
+    St: Stream<Item = CanonStateNotification<N>> + Send + Unpin + 'static,
+{
+    let MaintainPoolConfig {
+        max_update_depth,
+        max_reload_accounts,
+        ..
+    } = config;
+
+    if let Ok(Some(latest)) = client.header_by_number_or_tag(BlockNumberOrTag::Latest) {
+        let latest = SealedHeader::seal_slow(latest);
+        let pending_basefee =
+            match state_backed_pending_base_fee(&client, latest.header(), latest.hash()) {
+                Ok(base_fee) => base_fee,
+                Err(error) => {
+                    tracing::error!(
+                        target: "reth::txpool",
+                        %error,
+                        "failed to initialize DogeOS state-backed pending base fee"
+                    );
+                    return;
+                }
+            };
+        pool.set_block_info(BlockInfo {
+            block_gas_limit: latest.gas_limit(),
+            last_seen_block_hash: latest.hash(),
+            last_seen_block_number: latest.number(),
+            pending_basefee,
+            pending_blob_fee: None,
+        });
+    }
+
+    let mut dirty_addresses = HashSet::default();
+    let mut maintained_state = MaintainedPoolState::InSync;
+    let mut reload_accounts_fut = Fuse::terminated();
+    let mut stale_eviction_interval = tokio::time::interval(config.max_tx_lifetime);
+    let mut first_event = true;
+
+    loop {
+        let pool_info = pool.block_info();
+        if maintained_state.is_drifted() {
+            dirty_addresses = pool.unique_senders();
+            maintained_state = MaintainedPoolState::InSync;
+        }
+
+        if !dirty_addresses.is_empty() && reload_accounts_fut.is_terminated() {
+            let (tx, rx) = oneshot::channel();
+            let client = client.clone();
+            let at = pool_info.last_seen_block_hash;
+            let accounts = dirty_addresses
+                .iter()
+                .copied()
+                .take(max_reload_accounts)
+                .collect::<Vec<_>>();
+            for address in &accounts {
+                dirty_addresses.remove(address);
+            }
+            tokio::task::spawn_blocking(move || {
+                let _ = tx.send(load_accounts(client, at, accounts));
+            });
+            reload_accounts_fut = rx.fuse();
+        }
+
+        let mut event = None;
+        let mut reloaded = None;
+        tokio::select! {
+            result = &mut reload_accounts_fut => reloaded = Some(result),
+            next = events.next() => {
+                let Some(next) = next else { break };
+                event = Some(next);
+                if first_event {
+                    maintained_state = MaintainedPoolState::Drifted;
+                    first_event = false;
+                }
+            }
+            _ = stale_eviction_interval.tick() => {
+                let now = std::time::Instant::now();
+                let stale = pool
+                    .queued_transactions()
+                    .into_iter()
+                    .filter(|tx| {
+                        (tx.origin.is_external() || config.no_local_exemptions) &&
+                            now.duration_since(tx.timestamp) > config.max_tx_lifetime
+                    })
+                    .map(|tx| *tx.hash())
+                    .collect();
+                pool.remove_transactions(stale);
+            }
+        }
+
+        match reloaded {
+            Some(Ok(Ok(LoadedAccounts {
+                accounts,
+                failed_to_load,
+            }))) => {
+                dirty_addresses.extend(failed_to_load);
+                pool.update_accounts(accounts);
+            }
+            Some(Ok(Err((accounts, error)))) => {
+                tracing::debug!(target: "reth::txpool", %error, "failed to reload accounts");
+                dirty_addresses.extend(accounts);
+            }
+            Some(Err(_)) => maintained_state = MaintainedPoolState::Drifted,
+            None => {}
+        }
+
+        let Some(event) = event else { continue };
+        match event {
+            CanonStateNotification::Reorg { old, new } => {
+                let (old_blocks, old_state) = old.inner();
+                let (new_blocks, new_state) = new.inner();
+                let new_tip = new_blocks.tip();
+                let new_first = new_blocks.first();
+                let old_first = old_blocks.first();
+
+                if !(old_first.parent_hash() == pool_info.last_seen_block_hash
+                    || new_first.parent_hash() == pool_info.last_seen_block_hash)
+                {
+                    maintained_state = MaintainedPoolState::Drifted;
+                }
+
+                let pending_block_base_fee = match state_backed_pending_base_fee(
+                    &client,
+                    new_tip.header(),
+                    new_tip.hash(),
+                ) {
+                    Ok(base_fee) => base_fee,
+                    Err(error) => {
+                        tracing::error!(target: "reth::txpool", %error, "failed to derive pending base fee after reorg");
+                        return;
+                    }
+                };
+
+                let new_changed_accounts: HashSet<_> = new_state
+                    .changed_accounts()
+                    .map(ChangedAccountEntry)
+                    .collect();
+                let missing_changed_accounts = old_state
+                    .accounts_iter()
+                    .map(|(address, _)| address)
+                    .filter(|address| !new_changed_accounts.contains(address));
+                let mut changed_accounts = match load_accounts(
+                    client.clone(),
+                    new_tip.hash(),
+                    missing_changed_accounts,
+                ) {
+                    Ok(LoadedAccounts {
+                        accounts,
+                        failed_to_load,
+                    }) => {
+                        dirty_addresses.extend(failed_to_load);
+                        accounts
+                    }
+                    Err((addresses, error)) => {
+                        tracing::debug!(target: "reth::txpool", %error, "failed to load reorged accounts");
+                        dirty_addresses.extend(addresses);
+                        Vec::new()
+                    }
+                };
+                changed_accounts.extend(new_changed_accounts.into_iter().map(|entry| entry.0));
+
+                let new_mined_transactions: HashSet<_> = new_blocks.transaction_hashes().collect();
+                let pruned_old_transactions = old_blocks
+                    .transactions_ecrecovered()
+                    .filter(|tx| !new_mined_transactions.contains(tx.tx_hash()))
+                    .filter_map(|tx| {
+                        <P as TransactionPool>::Transaction::try_from_consensus(tx).ok()
+                    })
+                    .collect::<Vec<_>>();
+
+                pool.on_canonical_state_change(CanonicalStateUpdate {
+                    new_tip: new_tip.sealed_block(),
+                    pending_block_base_fee,
+                    pending_block_blob_fee: None,
+                    changed_accounts,
+                    mined_transactions: new_blocks.transaction_hashes().collect(),
+                    update_kind: PoolUpdateKind::Reorg,
+                });
+                let _ = pool
+                    .add_external_transactions(pruned_old_transactions)
+                    .await;
+            }
+            CanonStateNotification::Commit { new } => {
+                let (blocks, state) = new.inner();
+                let tip = blocks.tip();
+                let pending_block_base_fee = match state_backed_pending_base_fee(
+                    &client,
+                    tip.header(),
+                    tip.hash(),
+                ) {
+                    Ok(base_fee) => base_fee,
+                    Err(error) => {
+                        tracing::error!(target: "reth::txpool", %error, "failed to derive pending base fee after commit");
+                        return;
+                    }
+                };
+                let first_block = blocks.first();
+                let depth = tip.number().abs_diff(pool_info.last_seen_block_number);
+                if depth > max_update_depth {
+                    maintained_state = MaintainedPoolState::Drifted;
+                    pool.set_block_info(BlockInfo {
+                        block_gas_limit: tip.gas_limit(),
+                        last_seen_block_hash: tip.hash(),
+                        last_seen_block_number: tip.number(),
+                        pending_basefee: pending_block_base_fee,
+                        pending_blob_fee: None,
+                    });
+                    continue;
+                }
+
+                let mut changed_accounts = Vec::with_capacity(state.state().len());
+                for account in state.changed_accounts() {
+                    dirty_addresses.remove(&account.address);
+                    changed_accounts.push(account);
+                }
+                if first_block.parent_hash() != pool_info.last_seen_block_hash {
+                    maintained_state = MaintainedPoolState::Drifted;
+                }
+                pool.on_canonical_state_change(CanonicalStateUpdate {
+                    new_tip: tip.sealed_block(),
+                    pending_block_base_fee,
+                    pending_block_blob_fee: None,
+                    changed_accounts,
+                    mined_transactions: blocks.transaction_hashes().collect(),
+                    update_kind: PoolUpdateKind::Commit,
+                });
             }
         }
     }
@@ -239,11 +602,10 @@ where
 
         ctx.task_executor().spawn_critical_task(
             "txpool maintenance task",
-            reth_transaction_pool::maintain::maintain_transaction_pool_future(
+            maintain_dogeos_transaction_pool(
                 ctx.provider().clone(),
                 pool.clone(),
                 canonical_state_stream,
-                ctx.task_executor().clone(),
                 reth_transaction_pool::maintain::MaintainPoolConfig {
                     max_tx_lifetime: pool.config().max_queued_lifetime,
                     ..Default::default()
@@ -267,7 +629,7 @@ mod tests {
     };
     use dogeos_chainspec::{DOGEOS_CHIKYU, DOGEOS_DEV, DogeosChainSpec, DogeosChainSpecBuilder};
     use dogeos_hardforks::{DogeosHardfork, ForkCondition};
-    use dogeos_reth_evm::ScrollEvmConfig;
+    use dogeos_reth_evm::{NEXT_CONTROLLED_BASE_FEE_SLOT, ScrollEvmConfig};
     use dogeos_reth_primitives::{DogeosBlock, DogeosPrimitives, ScrollTransactionSigned};
     use dogeos_reth_txpool::{DogeosL1FeeError, DogeosPooledTransaction};
     use reth_chainspec::{ChainSpecProvider, EthChainSpec};
@@ -302,6 +664,33 @@ mod tests {
     type MockProvider = MockEthProvider<DogeosPrimitives, DogeosChainSpec>;
     type MockValidator =
         DogeosTransactionValidator<MockProvider, DogeosPooledTransaction, ScrollEvmConfig>;
+
+    #[test]
+    fn pending_pool_fee_reads_tsuki_controller_from_tip_state() {
+        let provider =
+            MockEthProvider::<DogeosPrimitives>::new().with_chain_spec(DOGEOS_DEV.as_ref().clone());
+        let system_config = DOGEOS_DEV.config.l1_config.l2_system_config_address;
+        provider.add_account(
+            system_config,
+            ExtendedAccount::new(1, U256::ZERO).extend_storage([
+                (B256::from(U256::from(101)), U256::from(100_000_000u64)),
+                (
+                    B256::from(NEXT_CONTROLLED_BASE_FEE_SLOT),
+                    U256::from(600_000_000_000u64),
+                ),
+            ]),
+        );
+        let header = alloy_consensus::Header {
+            timestamp: 1,
+            base_fee_per_gas: Some(7),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            state_backed_pending_base_fee(&provider, &header, B256::ZERO).unwrap(),
+            600_100_000_000
+        );
+    }
 
     fn oracle_account(chain_spec: &DogeosChainSpec, l1_base_fee: U256) -> ExtendedAccount {
         use revm_scroll::l1block::{

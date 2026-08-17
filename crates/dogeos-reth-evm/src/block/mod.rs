@@ -8,7 +8,7 @@ use crate::{
     system_caller::ScrollSystemCaller,
     transitions::{
         apply_feynman_hard_fork, apply_galileo_v2_hard_fork, apply_tsuki_hard_fork,
-        store_next_controlled_base_fee,
+        store_next_controlled_base_fee_with_state,
     },
 };
 
@@ -338,12 +338,17 @@ where
                     },
                 )?;
             let system_config = self.spec.chain_config().l1_config.l2_system_config_address;
-            store_next_controlled_base_fee(self.evm.db_mut(), system_config, next_controlled_fee)
-                .map_err(|error| {
+            let state = store_next_controlled_base_fee_with_state(
+                self.evm.db_mut(),
+                system_config,
+                next_controlled_fee,
+            )
+            .map_err(|error| {
                 BlockExecutionError::msg(format!(
                     "failed to persist next controlled base fee: {error:?}"
                 ))
             })?;
+            self.system_caller.on_post_block_state(&state);
         }
 
         Ok((
@@ -503,6 +508,7 @@ mod tests {
         state::AccountInfo,
     };
     use revm_scroll::ScrollSpecId;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     fn executor(
         chain_spec: alloc::sync::Arc<DogeosChainSpec>,
@@ -589,18 +595,30 @@ mod tests {
         );
         let mut executor =
             executor_with_state(state, DOGEOS_MAINNET.clone(), ScrollSpecId::TSUKI, expected);
+        let system_config = DOGEOS_MAINNET.config.l1_config.l2_system_config_address;
+        let saw_controller_update = alloc::sync::Arc::new(AtomicBool::new(false));
+        let hook_flag = saw_controller_update.clone();
+        executor.set_state_hook(Some(Box::new(move |_, state: &revm::state::EvmState| {
+            if state
+                .get(&system_config)
+                .and_then(|account| account.storage.get(&NEXT_CONTROLLED_BASE_FEE_SLOT))
+                .is_some_and(|slot| slot.present_value == U256::from(437_500_000_000u64))
+            {
+                hook_flag.store(true, Ordering::Relaxed);
+            }
+        })));
 
         executor.apply_pre_execution_changes()?;
         let (mut evm, result) = executor.finish()?;
 
         assert_eq!(result.gas_used, 0);
-        let system_config = DOGEOS_MAINNET.config.l1_config.l2_system_config_address;
         assert_eq!(
             evm.db_mut()
                 .storage(system_config, NEXT_CONTROLLED_BASE_FEE_SLOT)?,
             U256::from(437_500_000_000u64)
         );
         assert_eq!(evm.db_mut().basic(system_config)?.unwrap().nonce, 1);
+        assert!(saw_controller_update.load(Ordering::Relaxed));
         Ok(())
     }
 

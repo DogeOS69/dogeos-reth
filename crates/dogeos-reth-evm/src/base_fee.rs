@@ -30,6 +30,16 @@ pub const DEFAULT_BASE_FEE_OVERHEAD: U256 = U256::from_limbs([15_680_000, 0, 0, 
 /// Precision retained for external callers that share the inherited Scroll fee constants.
 pub const L1_BASE_FEE_PRECISION: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 
+/// Predicts the timestamp used by local next-block views when no payload attributes exist.
+///
+/// The local payload builder enforces a timestamp of at least `parent + 1`. Pending RPC, txpool,
+/// and the trailing prediction in `eth_feeHistory` use that deterministic lower bound instead of
+/// wall-clock time. Canonical historical queries still prefer the actual successor timestamp and
+/// fee whenever that block exists.
+pub const fn predict_next_payload_timestamp(parent_timestamp: u64) -> u64 {
+    parent_timestamp.saturating_add(1)
+}
+
 /// Protocol-level failures in the Tsuki utilization controller.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DynamicBaseFeeError {

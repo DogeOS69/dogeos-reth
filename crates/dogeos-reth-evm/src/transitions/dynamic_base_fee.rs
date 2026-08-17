@@ -2,7 +2,7 @@
 
 use crate::NEXT_CONTROLLED_BASE_FEE_SLOT;
 use alloy_primitives::{Address, U256};
-use revm::{Database, DatabaseCommit};
+use revm::{Database, DatabaseCommit, state::EvmState};
 
 /// Persists the controlled component that the next block must use.
 ///
@@ -14,6 +14,18 @@ pub fn store_next_controlled_base_fee<DB>(
     system_config: Address,
     next_controlled_fee: u64,
 ) -> Result<(), DB::Error>
+where
+    DB: Database + DatabaseCommit,
+{
+    store_next_controlled_base_fee_with_state(db, system_config, next_controlled_fee).map(drop)
+}
+
+/// Persists the controlled fee and returns the committed update for state-root hooks.
+pub(crate) fn store_next_controlled_base_fee_with_state<DB>(
+    db: &mut DB,
+    system_config: Address,
+    next_controlled_fee: u64,
+) -> Result<EvmState, DB::Error>
 where
     DB: Database + DatabaseCommit,
 {

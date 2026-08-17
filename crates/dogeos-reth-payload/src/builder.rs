@@ -344,17 +344,26 @@ where
         block,
     } = if let Some(mut handle) = trie_handle.take() {
         builder.executor_mut().set_state_hook(None);
-        match handle.state_root() {
-            Ok(outcome) => builder.finish(
-                state_provider.as_ref(),
-                Some((
-                    outcome.state_root,
-                    Arc::unwrap_or_clone(outcome.trie_updates),
-                )),
-            )?,
-            Err(err) => {
-                warn!(target: "payload_builder", %err, "sparse trie failed; computing state root synchronously");
-                builder.finish(state_provider.as_ref(), None)?
+        if chain_spec.is_tsuki_active_at_timestamp(attributes.payload_attributes.timestamp) {
+            // The Tsuki controller persists the next controlled fee from executor.finish(). Reth's
+            // sparse-trie handle must be finalized before BlockBuilder::finish consumes the builder,
+            // so its precomputed root cannot include that final write. Use the canonical synchronous
+            // root path until BlockBuilder can expose finish-state updates before finalizing the hook.
+            drop(handle);
+            builder.finish(state_provider.as_ref(), None)?
+        } else {
+            match handle.state_root() {
+                Ok(outcome) => builder.finish(
+                    state_provider.as_ref(),
+                    Some((
+                        outcome.state_root,
+                        Arc::unwrap_or_clone(outcome.trie_updates),
+                    )),
+                )?,
+                Err(err) => {
+                    warn!(target: "payload_builder", %err, "sparse trie failed; computing state root synchronously");
+                    builder.finish(state_provider.as_ref(), None)?
+                }
             }
         }
     } else {

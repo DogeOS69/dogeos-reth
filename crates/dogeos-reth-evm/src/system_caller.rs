@@ -5,8 +5,8 @@ use alloy_eips::eip2935::HISTORY_STORAGE_ADDRESS;
 use alloy_evm::{
     Evm,
     block::{
-        BlockExecutionError, BlockValidationError, OnStateHook, StateChangePreBlockSource,
-        StateChangeSource,
+        BlockExecutionError, BlockValidationError, OnStateHook, StateChangePostBlockSource,
+        StateChangePreBlockSource, StateChangeSource,
     },
 };
 use alloy_primitives::B256;
@@ -58,6 +58,15 @@ impl<Spec> ScrollSystemCaller<Spec> {
         // the source is only a phase label, so use the existing pre-block category.
         self.on_state(
             StateChangeSource::PreBlock(StateChangePreBlockSource::BlockHashesContract),
+            state,
+        );
+    }
+
+    /// Notifies the hook about a rollup-native post-block transition.
+    pub(crate) fn on_post_block_state(&mut self, state: &EvmState) {
+        // See on_pre_block_state: this is the available post-block phase category.
+        self.on_state(
+            StateChangeSource::PostBlock(StateChangePostBlockSource::BalanceIncrements),
             state,
         );
     }

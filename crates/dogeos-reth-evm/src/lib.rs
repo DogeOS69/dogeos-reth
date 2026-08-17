@@ -19,7 +19,7 @@ pub use base_fee::{
     DYNAMIC_BASE_FEE_MAX_CHANGE_DENOMINATOR, DynamicBaseFeeError, DynamicBaseFeeState,
     INITIAL_CONTROLLED_BASE_FEE, L1_BASE_FEE_PRECISION, LEGACY_MAX_L2_BASE_FEE, MAX_L2_BASE_FEE,
     NEXT_CONTROLLED_BASE_FEE_SLOT, NEXT_CONTROLLED_BASE_FEE_SLOT_NAMESPACE, ScrollBaseFeeProvider,
-    calculate_next_controlled_base_fee,
+    calculate_next_controlled_base_fee, predict_next_payload_timestamp,
 };
 mod l1;
 pub use l1::RethL1BlockInfo;
