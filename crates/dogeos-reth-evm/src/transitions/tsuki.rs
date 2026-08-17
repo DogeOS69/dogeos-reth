@@ -34,7 +34,8 @@ const TSUKI_NATIVE_DOGE_TOKEN_STORAGE: [(U256, U256); 1] =
 /// its only allowed caller, and this migration only creates the account if it is still empty. This
 /// makes the transition compatible with mainnet genesis predeploys: if genesis already contains
 /// code at the same address, the migration is a no-op and does not overwrite it.
-/// Applies the transition and returns its committed update for state-root hooks.
+///
+/// Returns the committed state update so the executor can forward it to state hooks.
 pub(crate) fn apply_tsuki_hard_fork<DB>(db: &mut DB) -> Result<EvmState, DB::Error>
 where
     DB: Database + DatabaseCommit,
@@ -79,7 +80,7 @@ mod tests {
             states::{StorageSlot, bundle_state::BundleRetention},
         },
         primitives::{U256, bytes},
-        state::{AccountInfo, Bytecode},
+        state::{AccountInfo, Bytecode, EvmStorageSlot},
     };
     use revm_scroll::ScrollSpecId;
 
@@ -112,6 +113,19 @@ mod tests {
         calldata.into()
     }
 
+    fn assert_tsuki_state_update(state: &EvmState) {
+        let token = state.get(&NATIVE_DOGE_TOKEN_ADDRESS).unwrap();
+        assert!(token.is_touched());
+        assert_eq!(
+            token.storage.get(&U256::ZERO),
+            Some(&EvmStorageSlot::new_changed(
+                U256::ZERO,
+                TSUKI_NATIVE_DOGE_TOKEN_TOTAL_SUPPLY,
+                0
+            ))
+        );
+    }
+
     #[test]
     fn test_apply_tsuki_fork_inserts_native_doge_token() -> eyre::Result<()> {
         let db = EmptyDB::new();
@@ -120,7 +134,8 @@ mod tests {
             .with_bundle_update()
             .build();
 
-        apply_tsuki_hard_fork(&mut state)?;
+        let committed_state = apply_tsuki_hard_fork(&mut state)?;
+        assert_tsuki_state_update(&committed_state);
 
         state.merge_transitions(BundleRetention::Reverts);
         let bundle = state.take_bundle();
@@ -170,7 +185,8 @@ mod tests {
                 ..Default::default()
             },
         );
-        apply_tsuki_hard_fork(&mut state)?;
+        let committed_state = apply_tsuki_hard_fork(&mut state)?;
+        assert_tsuki_state_update(&committed_state);
 
         let evm_env = EvmEnv::new(
             CfgEnv::new_with_spec(ScrollSpecId::TSUKI),
@@ -220,7 +236,8 @@ mod tests {
                 ..Default::default()
             },
         );
-        apply_tsuki_hard_fork(&mut state)?;
+        let committed_state = apply_tsuki_hard_fork(&mut state)?;
+        assert_tsuki_state_update(&committed_state);
 
         let evm_env = EvmEnv::new(
             CfgEnv::new_with_spec(ScrollSpecId::TSUKI),
@@ -266,7 +283,8 @@ mod tests {
             .with_bundle_update()
             .build();
 
-        apply_tsuki_hard_fork(&mut state)?;
+        let committed_state = apply_tsuki_hard_fork(&mut state)?;
+        assert!(committed_state.is_empty());
 
         state.merge_transitions(BundleRetention::Reverts);
         let bundle = state.take_bundle();
@@ -293,7 +311,8 @@ mod tests {
             .with_bundle_update()
             .build();
 
-        apply_tsuki_hard_fork(&mut state)?;
+        let committed_state = apply_tsuki_hard_fork(&mut state)?;
+        assert!(committed_state.is_empty());
 
         state.merge_transitions(BundleRetention::Reverts);
         let bundle = state.take_bundle();

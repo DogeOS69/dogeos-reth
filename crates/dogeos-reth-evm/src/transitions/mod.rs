@@ -18,6 +18,8 @@ use revm::{
 ///
 /// Reading every original slot before committing is important for witness generation and for
 /// preserving the revert information accumulated by [`revm::database::State`].
+///
+/// Returns the committed state update so the executor can forward it to state hooks.
 fn commit_account_update<DB>(
     db: &mut DB,
     address: Address,

@@ -20,7 +20,7 @@ use revm::{
 /// An ephemeral helper type for executing system calls.
 pub(crate) struct ScrollSystemCaller<Spec> {
     spec: Spec,
-    /// Optional hook notified after each committed state transition.
+    /// Optional hook invoked with each state change the executor commits.
     hook: Option<Box<dyn OnStateHook>>,
 }
 
@@ -28,6 +28,7 @@ impl<Spec: fmt::Debug> fmt::Debug for ScrollSystemCaller<Spec> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ScrollSystemCaller")
             .field("spec", &self.spec)
+            .field("hook_installed", &self.hook.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -38,24 +39,32 @@ impl<Spec> ScrollSystemCaller<Spec> {
         Self { spec, hook: None }
     }
 
-    /// Replaces the hook that receives committed state transitions.
+    /// Replaces the hook that receives state changes the executor commits.
+    ///
+    /// Dropping the previous hook sends `FinishedStateUpdates` to reth's state-root task. Callers
+    /// must therefore clear it before awaiting `state_root()`.
     pub(crate) fn set_state_hook(&mut self, hook: Option<Box<dyn OnStateHook>>) {
         self.hook = hook;
     }
 
-    /// Notifies the installed hook about a committed state transition.
+    /// Notifies the installed hook about a state change the executor commits.
     pub(crate) fn on_state(&mut self, source: StateChangeSource, state: &EvmState) {
-        if !state.is_empty()
-            && let Some(hook) = &mut self.hook
-        {
+        if let Some(hook) = &mut self.hook {
             hook.on_state(source, state);
         }
     }
 
     /// Notifies the hook about a rollup-native pre-block transition.
     pub(crate) fn on_pre_block_state(&mut self, state: &EvmState) {
+        // Empty state is the sentinel returned by skipped or already-applied transitions.
+        if state.is_empty() {
+            return;
+        }
+
         // Alloy has no custom rollup transition variant. Root consumers use the state payload;
-        // the source is only a phase label, so use the existing pre-block category.
+        // the source is only a phase label, so use the existing pre-block category. A transition
+        // block may emit this source multiple times with non-EIP-2935 accounts such as the oracle
+        // or NativeDogeToken, so consumers must not filter or attribute updates by this source.
         self.on_state(
             StateChangeSource::PreBlock(StateChangePreBlockSource::BlockHashesContract),
             state,
@@ -120,20 +129,17 @@ mod tests {
     use crate::{ScrollDefaultPrecompilesFactory, ScrollEvmFactory};
     use alloy_eips::eip2935::HISTORY_STORAGE_CODE;
     use alloy_evm::{EvmEnv, EvmFactory};
-    use alloy_primitives::{U256, keccak256};
+    use alloy_primitives::{Address, U256, keccak256};
     use dogeos_hardforks::{DogeosChainHardforks, DogeosHardfork, ForkCondition};
     use revm::{
         Database,
         bytecode::Bytecode,
         context::{BlockEnv, CfgEnv},
         database::{EmptyDB, State},
-        state::AccountInfo,
+        state::{Account, AccountInfo},
     };
     use revm_scroll::ScrollSpecId;
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    };
+    use std::sync::{Arc, Mutex};
 
     fn state_with_history_contract() -> State<EmptyDB> {
         let mut state = State::builder()
@@ -172,6 +178,9 @@ mod tests {
                 block_env(1, 99),
             ),
         );
+        caller.set_state_hook(Some(Box::new(|_, _: &EvmState| {
+            panic!("blockhash hook fired before Feynman")
+        })));
 
         caller
             .apply_blockhashes_contract_call(B256::repeat_byte(0x11), &mut evm)
@@ -192,18 +201,12 @@ mod tests {
             ForkCondition::Timestamp(0),
         )]));
         let parent_hash = B256::repeat_byte(0x22);
-        let hook_called = Arc::new(AtomicBool::new(false));
-        let hook_flag = Arc::clone(&hook_called);
+        let updates = Arc::new(Mutex::new(Vec::new()));
+        let hook_updates = Arc::clone(&updates);
         caller.set_state_hook(Some(Box::new(move |source, state: &EvmState| {
-            if matches!(
-                source,
-                StateChangeSource::PreBlock(StateChangePreBlockSource::BlockHashesContract)
-            ) && state
-                .get(&HISTORY_STORAGE_ADDRESS)
-                .is_some_and(|account| account.storage.contains_key(&U256::ZERO))
-            {
-                hook_flag.store(true, Ordering::Relaxed);
-            }
+            let mut keys = state.keys().copied().collect::<Vec<_>>();
+            keys.sort_unstable();
+            hook_updates.lock().unwrap().push((source, keys));
         })));
         let mut evm = ScrollEvmFactory::<ScrollDefaultPrecompilesFactory>::default().create_evm(
             state_with_history_contract(),
@@ -225,7 +228,13 @@ mod tests {
             ),
             parent_hash
         );
-        assert!(hook_called.load(Ordering::Relaxed));
+        let updates = updates.lock().unwrap();
+        assert_eq!(updates.len(), 1);
+        assert!(matches!(
+            updates[0].0,
+            StateChangeSource::PreBlock(StateChangePreBlockSource::BlockHashesContract)
+        ));
+        assert_eq!(updates[0].1, [HISTORY_STORAGE_ADDRESS]);
     }
 
     #[test]
@@ -238,6 +247,9 @@ mod tests {
                 block_env(0, 1),
             ),
         );
+        caller.set_state_hook(Some(Box::new(|_, _: &EvmState| {
+            panic!("blockhash hook fired at genesis")
+        })));
 
         caller
             .apply_blockhashes_contract_call(B256::repeat_byte(0x33), &mut evm)
@@ -249,5 +261,33 @@ mod tests {
                 .unwrap(),
             U256::ZERO
         );
+    }
+
+    #[test]
+    fn pre_block_state_skips_empty_transitions() {
+        let mut caller = ScrollSystemCaller::new(DogeosChainHardforks::mainnet());
+        let updates = Arc::new(Mutex::new(Vec::new()));
+        let hook_updates = Arc::clone(&updates);
+        caller.set_state_hook(Some(Box::new(move |source, state: &EvmState| {
+            hook_updates
+                .lock()
+                .unwrap()
+                .push((source, state.keys().copied().collect::<Vec<_>>()));
+        })));
+
+        caller.on_pre_block_state(&EvmState::default());
+
+        let address = Address::repeat_byte(0x44);
+        let mut account = Account::from(AccountInfo::default());
+        account.mark_touch();
+        caller.on_pre_block_state(&[(address, account)].into_iter().collect());
+
+        let updates = updates.lock().unwrap();
+        assert_eq!(updates.len(), 1);
+        assert!(matches!(
+            updates[0].0,
+            StateChangeSource::PreBlock(StateChangePreBlockSource::BlockHashesContract)
+        ));
+        assert_eq!(updates[0].1, [address]);
     }
 }

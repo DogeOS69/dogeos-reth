@@ -32,7 +32,7 @@ const GALILEO_V2_L1_GAS_PRICE_ORACLE_STORAGE: [(U256, U256); 1] =
 ///    - Updates the L1 oracle contract bytecode.
 ///    - Sets the `isGalileo` slot to 1 (true).
 ///
-/// Applies the transition and returns its committed update for state-root hooks.
+/// Returns the committed state update so the executor can forward it to state hooks.
 pub(crate) fn apply_galileo_v2_hard_fork<DB>(db: &mut DB) -> Result<EvmState, DB::Error>
 where
     DB: Database + DatabaseCommit,
@@ -80,7 +80,7 @@ mod tests {
             states::{StorageSlot, bundle_state::BundleRetention, plain_account::PlainStorage},
         },
         primitives::{U256, keccak256},
-        state::{AccountInfo, Bytecode},
+        state::{AccountInfo, Bytecode, EvmStorageSlot},
     };
     use std::str::FromStr;
 
@@ -127,7 +127,15 @@ mod tests {
         );
 
         // apply GalileoV2 fork
-        apply_galileo_v2_hard_fork(&mut state)?;
+        let committed_state = apply_galileo_v2_hard_fork(&mut state)?;
+        let committed_oracle = committed_state.get(&L1_GAS_PRICE_ORACLE_ADDRESS).unwrap();
+        assert!(committed_oracle.is_touched());
+        for (slot, present_value) in GALILEO_V2_L1_GAS_PRICE_ORACLE_STORAGE {
+            assert_eq!(
+                committed_oracle.storage.get(&slot),
+                Some(&EvmStorageSlot::new_changed(U256::ZERO, present_value, 0))
+            );
+        }
 
         // merge transitions
         state.merge_transitions(BundleRetention::Reverts);
@@ -233,7 +241,8 @@ mod tests {
         state.load_cache_account(L1_GAS_PRICE_ORACLE_ADDRESS)?;
 
         // apply GalileoV2 fork
-        apply_galileo_v2_hard_fork(&mut state)?;
+        let committed_state = apply_galileo_v2_hard_fork(&mut state)?;
+        assert!(committed_state.is_empty());
 
         // merge transitions
         state.merge_transitions(BundleRetention::Reverts);
