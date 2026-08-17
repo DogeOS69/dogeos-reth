@@ -1,3 +1,4 @@
+use crate::protocol_storage::{ProtocolStorageError, define_protocol_storage_slots};
 use alloy_consensus::BlockHeader;
 use alloy_eips::calc_next_block_base_fee;
 use alloy_primitives::U256;
@@ -11,15 +12,51 @@ use dogeos_hardforks::DogeosHardforks;
 use reth_chainspec::EthChainSpec;
 use revm::Database;
 
-/// Stable namespace for the next-block controlled base-fee storage slot.
-pub const NEXT_CONTROLLED_BASE_FEE_SLOT_NAMESPACE: &str =
-    "dogeos.storage.dynamic_base_fee.next_controlled_fee";
+define_protocol_storage_slots! {
+    /// Protocol-owned SystemConfig slots used by the Tsuki base-fee controller.
+    pub mod dynamic_base_fee_slots {
+        /// Controlled base-fee component to use in the next block.
+        ///
+        /// Zero means uninitialized; the controller then uses [`INITIAL_CONTROLLED_FEE`].
+        pub const NEXT_CONTROLLED_FEE: u64 {
+            namespace: "dogeos.storage.dynamic_base_fee.next_controlled_fee",
+            slot: b256!("74ae897ed5751dd32419f1eee8d4ec13d296adf0d77978ea55df0dd18345c8e3"),
+            default: ZeroIsValue,
+        }
+        /// Runtime minimum for the controlled component.
+        pub const FLOOR: u64 {
+            namespace: "dogeos.storage.dynamic_base_fee.floor",
+            slot: b256!("eed251e51f4817ab65995267f3e37a3746fff8a6a19d33fe361f1d8ead402881"),
+            default: ZeroMeansDefault(super::BASE_FEE_FLOOR),
+        }
+        /// Controlled component used when the next-fee slot has not been initialized.
+        pub const INITIAL_CONTROLLED_FEE: u64 {
+            namespace: "dogeos.storage.dynamic_base_fee.initial_controlled_fee",
+            slot: b256!("d31e852ef679d22e5c189bd0df546bb2a2505ab0c0b1e86eaec6b30d945fe7a4"),
+            default: ZeroMeansDefault(super::INITIAL_CONTROLLED_BASE_FEE),
+        }
+        /// Runtime maximum for the controlled component and final header base fee.
+        pub const MAXIMUM: u64 {
+            namespace: "dogeos.storage.dynamic_base_fee.maximum",
+            slot: b256!("aff0674342f28138b41ae357d08382d17f47f8b28fc9d766808e750a6118abb2"),
+            default: ZeroMeansDefault(super::MAX_L2_BASE_FEE),
+        }
+        /// Long-run controller gas target.
+        pub const GAS_TARGET: u64 {
+            namespace: "dogeos.storage.dynamic_base_fee.gas_target",
+            slot: b256!("a7c3d77fa3161deb87f2ccaa84ea1a58c150834dbadc810f9e5d90a6edf1b6b5"),
+            default: ZeroMeansDefault(super::DYNAMIC_BASE_FEE_GAS_TARGET),
+        }
+        /// Denominator limiting the controller's per-block rate of change.
+        pub const MAX_CHANGE_DENOMINATOR: u64 {
+            namespace: "dogeos.storage.dynamic_base_fee.max_change_denominator",
+            slot: b256!("b194ffa17ad5a2b564c8cfef3b3c81bffdf2d555c7d656487014a1692c5e77b4"),
+            default: ZeroMeansDefault(super::DYNAMIC_BASE_FEE_MAX_CHANGE_DENOMINATOR),
+        }
+    }
+}
 
-/// Keccak-256-derived system-config slot containing the next block's controlled base fee.
-pub const NEXT_CONTROLLED_BASE_FEE_SLOT: U256 = U256::from_be_bytes([
-    0x74, 0xae, 0x89, 0x7e, 0xd5, 0x75, 0x1d, 0xd3, 0x24, 0x19, 0xf1, 0xee, 0xe8, 0xd4, 0xec, 0x13,
-    0xd2, 0x96, 0xad, 0xf0, 0xd7, 0x79, 0x78, 0xea, 0x55, 0xdf, 0x0d, 0xd1, 0x83, 0x45, 0xc8, 0xe3,
-]);
+use dynamic_base_fee_slots as slots;
 
 /// L2 base-fee overhead slot in the system config contract.
 const L2_BASE_FEE_OVERHEAD_SLOT: U256 = U256::from_limbs([101, 0, 0, 0]);
@@ -40,11 +77,69 @@ pub const fn predict_next_payload_timestamp(parent_timestamp: u64) -> u64 {
     parent_timestamp.saturating_add(1)
 }
 
+/// State-backed parameters for the Tsuki utilization controller.
+///
+/// A zero value in the corresponding SystemConfig slot selects the field's default. The hard
+/// [`MAX_L2_BASE_FEE`] bound remains protocol-enforced while the runtime maximum can be lowered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DynamicBaseFeeParams {
+    pub floor: u64,
+    pub initial_controlled_fee: u64,
+    pub maximum: u64,
+    pub gas_target: u64,
+    pub max_change_denominator: u64,
+}
+
+impl DynamicBaseFeeParams {
+    pub const DEFAULT: Self = Self {
+        floor: slots::FLOOR.default_value(),
+        initial_controlled_fee: slots::INITIAL_CONTROLLED_FEE.default_value(),
+        maximum: slots::MAXIMUM.default_value(),
+        gas_target: slots::GAS_TARGET.default_value(),
+        max_change_denominator: slots::MAX_CHANGE_DENOMINATOR.default_value(),
+    };
+
+    fn validate(self) -> Result<Self, DynamicBaseFeeError> {
+        if self.floor == 0
+            || self.floor > self.initial_controlled_fee
+            || self.initial_controlled_fee > self.maximum
+            || self.maximum > MAX_L2_BASE_FEE
+            || self.gas_target == 0
+            || self.max_change_denominator == 0
+        {
+            return Err(DynamicBaseFeeError::InvalidParameters(self));
+        }
+        Ok(self)
+    }
+
+    /// Rebase a previously valid controller value into a newly configured range.
+    pub fn rebase_controlled_fee(self, controlled_fee: u64) -> u64 {
+        controlled_fee.clamp(self.floor, self.maximum)
+    }
+}
+
+impl Default for DynamicBaseFeeParams {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
 /// Protocol-level failures in the Tsuki utilization controller.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DynamicBaseFeeError {
-    /// The persisted controlled component is outside its consensus range.
-    ControlledFeeOutOfRange(U256),
+    /// A configured parameter cannot be represented by the controller.
+    ParameterOutOfRange {
+        parameter: &'static str,
+        value: U256,
+    },
+    /// The configured parameters violate controller invariants.
+    InvalidParameters(DynamicBaseFeeParams),
+    /// The persisted controlled component is outside its configured range.
+    ControlledFeeOutOfRange {
+        value: U256,
+        floor: u64,
+        maximum: u64,
+    },
     /// A checked arithmetic operation failed.
     ArithmeticOverflow,
 }
@@ -52,9 +147,28 @@ pub enum DynamicBaseFeeError {
 impl fmt::Display for DynamicBaseFeeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ControlledFeeOutOfRange(value) => write!(
+            Self::ParameterOutOfRange { parameter, value } => {
+                write!(
+                    f,
+                    "dynamic base-fee parameter {parameter} does not fit in u64: {value}"
+                )
+            }
+            Self::InvalidParameters(params) => write!(
                 f,
-                "controlled base fee {value} is outside protocol range {BASE_FEE_FLOOR}..={MAX_L2_BASE_FEE}"
+                "invalid dynamic base-fee parameters: floor={}, initial={}, maximum={}, gas_target={}, denominator={} (hard maximum={MAX_L2_BASE_FEE})",
+                params.floor,
+                params.initial_controlled_fee,
+                params.maximum,
+                params.gas_target,
+                params.max_change_denominator
+            ),
+            Self::ControlledFeeOutOfRange {
+                value,
+                floor,
+                maximum,
+            } => write!(
+                f,
+                "controlled base fee {value} is outside configured range {floor}..={maximum}"
             ),
             Self::ArithmeticOverflow => f.write_str("dynamic base-fee arithmetic overflow"),
         }
@@ -101,6 +215,20 @@ impl<E> From<DynamicBaseFeeError> for BaseFeeError<E> {
     }
 }
 
+impl<E> From<ProtocolStorageError<E>> for BaseFeeError<E> {
+    fn from(value: ProtocolStorageError<E>) -> Self {
+        match value {
+            ProtocolStorageError::Database(error) => Self::Database(error),
+            ProtocolStorageError::ValueOutOfRange { namespace, value } => {
+                Self::Protocol(DynamicBaseFeeError::ParameterOutOfRange {
+                    parameter: namespace,
+                    value,
+                })
+            }
+        }
+    }
+}
+
 /// State components used to validate or assemble a Tsuki base fee.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DynamicBaseFeeState {
@@ -108,6 +236,8 @@ pub struct DynamicBaseFeeState {
     pub controlled_fee: u64,
     /// L1-congestion adjustment read from system-config state.
     pub overhead: U256,
+    /// Controller parameters read from the same parent state.
+    pub params: DynamicBaseFeeParams,
 }
 
 impl DynamicBaseFeeState {
@@ -115,7 +245,7 @@ impl DynamicBaseFeeState {
     pub fn header_base_fee(self) -> u64 {
         U256::from(self.controlled_fee)
             .saturating_add(self.overhead)
-            .min(U256::from(MAX_L2_BASE_FEE))
+            .min(U256::from(self.params.maximum))
             .to::<u64>()
     }
 }
@@ -124,20 +254,24 @@ impl DynamicBaseFeeState {
 pub fn calculate_next_controlled_base_fee(
     controlled_fee: u64,
     gas_used: u64,
+    params: DynamicBaseFeeParams,
 ) -> Result<u64, DynamicBaseFeeError> {
-    if !(BASE_FEE_FLOOR..=MAX_L2_BASE_FEE).contains(&controlled_fee) {
-        return Err(DynamicBaseFeeError::ControlledFeeOutOfRange(U256::from(
-            controlled_fee,
-        )));
+    let params = params.validate()?;
+    if !(params.floor..=params.maximum).contains(&controlled_fee) {
+        return Err(DynamicBaseFeeError::ControlledFeeOutOfRange {
+            value: U256::from(controlled_fee),
+            floor: params.floor,
+            maximum: params.maximum,
+        });
     }
 
     let controlled_fee = u128::from(controlled_fee);
-    let target = u128::from(DYNAMIC_BASE_FEE_GAS_TARGET);
-    let denominator = u128::from(DYNAMIC_BASE_FEE_MAX_CHANGE_DENOMINATOR);
-    let raw = match gas_used.cmp(&DYNAMIC_BASE_FEE_GAS_TARGET) {
+    let target = u128::from(params.gas_target);
+    let denominator = u128::from(params.max_change_denominator);
+    let raw = match gas_used.cmp(&params.gas_target) {
         core::cmp::Ordering::Equal => controlled_fee,
         core::cmp::Ordering::Greater => {
-            let gas_delta = u128::from(gas_used - DYNAMIC_BASE_FEE_GAS_TARGET);
+            let gas_delta = u128::from(gas_used - params.gas_target);
             let fee_delta = controlled_fee
                 .checked_mul(gas_delta)
                 .ok_or(DynamicBaseFeeError::ArithmeticOverflow)?
@@ -148,7 +282,7 @@ pub fn calculate_next_controlled_base_fee(
                 .ok_or(DynamicBaseFeeError::ArithmeticOverflow)?
         }
         core::cmp::Ordering::Less => {
-            let gas_delta = u128::from(DYNAMIC_BASE_FEE_GAS_TARGET - gas_used);
+            let gas_delta = u128::from(params.gas_target - gas_used);
             let fee_delta = controlled_fee
                 .checked_mul(gas_delta)
                 .ok_or(DynamicBaseFeeError::ArithmeticOverflow)?
@@ -160,7 +294,7 @@ pub fn calculate_next_controlled_base_fee(
         }
     };
 
-    let clamped = raw.clamp(u128::from(BASE_FEE_FLOOR), u128::from(MAX_L2_BASE_FEE));
+    let clamped = raw.clamp(u128::from(params.floor), u128::from(params.maximum));
     u64::try_from(clamped).map_err(|_| DynamicBaseFeeError::ArithmeticOverflow)
 }
 
@@ -178,6 +312,27 @@ impl<ChainSpec> ScrollBaseFeeProvider<ChainSpec>
 where
     ChainSpec: DogeosHardforks + ChainConfig<Config = ScrollChainConfig>,
 {
+    /// Reads and validates the Tsuki controller parameters from SystemConfig state.
+    pub fn dynamic_base_fee_params<DB>(
+        &self,
+        db: &mut DB,
+    ) -> Result<DynamicBaseFeeParams, BaseFeeError<DB::Error>>
+    where
+        DB: Database,
+    {
+        let system_config = self.0.chain_config().l1_config.l2_system_config_address;
+        let params = DynamicBaseFeeParams {
+            floor: slots::FLOOR.read_parameter(db, system_config)?,
+            initial_controlled_fee: slots::INITIAL_CONTROLLED_FEE
+                .read_parameter(db, system_config)?,
+            maximum: slots::MAXIMUM.read_parameter(db, system_config)?,
+            gas_target: slots::GAS_TARGET.read_parameter(db, system_config)?,
+            max_change_denominator: slots::MAX_CHANGE_DENOMINATOR
+                .read_parameter(db, system_config)?,
+        };
+        params.validate().map_err(Into::into)
+    }
+
     /// Reads the components used by a Tsuki-active block from parent state.
     pub fn dynamic_base_fee_state<DB>(
         &self,
@@ -187,6 +342,7 @@ where
         DB: Database,
     {
         let system_config = self.0.chain_config().l1_config.l2_system_config_address;
+        let params = self.dynamic_base_fee_params(db)?;
         let configured_overhead = db
             .storage(system_config, L2_BASE_FEE_OVERHEAD_SLOT)
             .map_err(BaseFeeError::Database)?;
@@ -197,14 +353,19 @@ where
         };
 
         let stored_controlled = db
-            .storage(system_config, NEXT_CONTROLLED_BASE_FEE_SLOT)
+            .storage(system_config, slots::NEXT_CONTROLLED_FEE.value())
             .map_err(BaseFeeError::Database)?;
         let controlled_fee = if stored_controlled == U256::ZERO {
-            INITIAL_CONTROLLED_BASE_FEE
-        } else if stored_controlled < U256::from(BASE_FEE_FLOOR)
-            || stored_controlled > U256::from(MAX_L2_BASE_FEE)
+            params.initial_controlled_fee
+        } else if stored_controlled < U256::from(params.floor)
+            || stored_controlled > U256::from(params.maximum)
         {
-            return Err(DynamicBaseFeeError::ControlledFeeOutOfRange(stored_controlled).into());
+            return Err(DynamicBaseFeeError::ControlledFeeOutOfRange {
+                value: stored_controlled,
+                floor: params.floor,
+                maximum: params.maximum,
+            }
+            .into());
         } else {
             stored_controlled.to::<u64>()
         };
@@ -212,6 +373,7 @@ where
         Ok(DynamicBaseFeeState {
             controlled_fee,
             overhead,
+            params,
         })
     }
 
@@ -262,7 +424,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::derive_protocol_storage_slot;
+    use crate::ProtocolStorageDefault::{ZeroIsValue, ZeroMeansDefault};
     use dogeos_chainspec::{DOGEOS_CHIKYU, DOGEOS_MAINNET};
     use revm::database::{EmptyDB, State, states::plain_account::PlainStorage};
 
@@ -284,11 +446,20 @@ mod tests {
     }
 
     #[test]
-    fn controlled_slot_is_derived_from_stable_namespace() {
-        assert_eq!(
-            derive_protocol_storage_slot(NEXT_CONTROLLED_BASE_FEE_SLOT_NAMESPACE),
-            NEXT_CONTROLLED_BASE_FEE_SLOT
-        );
+    fn controller_slots_declare_their_zero_value_policies() {
+        assert_eq!(slots::NEXT_CONTROLLED_FEE.default_policy(), ZeroIsValue);
+        for (slot, default) in [
+            (slots::FLOOR, BASE_FEE_FLOOR),
+            (slots::INITIAL_CONTROLLED_FEE, INITIAL_CONTROLLED_BASE_FEE),
+            (slots::MAXIMUM, MAX_L2_BASE_FEE),
+            (slots::GAS_TARGET, DYNAMIC_BASE_FEE_GAS_TARGET),
+            (
+                slots::MAX_CHANGE_DENOMINATOR,
+                DYNAMIC_BASE_FEE_MAX_CHANGE_DENOMINATOR,
+            ),
+        ] {
+            assert_eq!(slot.default_policy(), ZeroMeansDefault(default));
+        }
     }
 
     #[test]
@@ -324,7 +495,10 @@ mod tests {
             Default::default(),
             PlainStorage::from_iter([
                 (L2_BASE_FEE_OVERHEAD_SLOT, U256::from(100_000_000)),
-                (NEXT_CONTROLLED_BASE_FEE_SLOT, U256::from(MAX_L2_BASE_FEE)),
+                (
+                    slots::NEXT_CONTROLLED_FEE.value(),
+                    U256::from(MAX_L2_BASE_FEE),
+                ),
             ]),
         );
         let provider = ScrollBaseFeeProvider::new(DOGEOS_MAINNET.clone());
@@ -337,6 +511,108 @@ mod tests {
     }
 
     #[test]
+    fn tsuki_reads_state_backed_controller_parameters() -> eyre::Result<()> {
+        let mut state = empty_state();
+        let address = DOGEOS_MAINNET.config.l1_config.l2_system_config_address;
+        let expected = DynamicBaseFeeParams {
+            floor: 20_000_000_000,
+            initial_controlled_fee: 300_000_000_000,
+            maximum: 600_000_000_000,
+            gas_target: 5_000_000,
+            max_change_denominator: 4,
+        };
+        state.insert_account_with_storage(
+            address,
+            Default::default(),
+            PlainStorage::from_iter([
+                (slots::FLOOR.value(), U256::from(expected.floor)),
+                (
+                    slots::INITIAL_CONTROLLED_FEE.value(),
+                    U256::from(expected.initial_controlled_fee),
+                ),
+                (slots::MAXIMUM.value(), U256::from(expected.maximum)),
+                (slots::GAS_TARGET.value(), U256::from(expected.gas_target)),
+                (
+                    slots::MAX_CHANGE_DENOMINATOR.value(),
+                    U256::from(expected.max_change_denominator),
+                ),
+            ]),
+        );
+        let provider = ScrollBaseFeeProvider::new(DOGEOS_MAINNET.clone());
+
+        assert_eq!(provider.dynamic_base_fee_params(&mut state)?, expected);
+        assert_eq!(
+            provider.next_block_base_fee(&mut state, &parent(1, 0), 2)?,
+            expected.initial_controlled_fee + DEFAULT_BASE_FEE_OVERHEAD.to::<u64>()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn tsuki_caps_header_at_state_backed_maximum() -> eyre::Result<()> {
+        let mut state = empty_state();
+        let address = DOGEOS_MAINNET.config.l1_config.l2_system_config_address;
+        state.insert_account_with_storage(
+            address,
+            Default::default(),
+            PlainStorage::from_iter([
+                (L2_BASE_FEE_OVERHEAD_SLOT, U256::from(20_000_000_000u64)),
+                (
+                    slots::NEXT_CONTROLLED_FEE.value(),
+                    U256::from(590_000_000_000u64),
+                ),
+                (slots::MAXIMUM.value(), U256::from(600_000_000_000u64)),
+            ]),
+        );
+        let provider = ScrollBaseFeeProvider::new(DOGEOS_MAINNET.clone());
+
+        assert_eq!(
+            provider.next_block_base_fee(&mut state, &parent(1, 0), 2)?,
+            600_000_000_000
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn tsuki_rejects_invalid_controller_parameters() {
+        let mut state = empty_state();
+        let address = DOGEOS_MAINNET.config.l1_config.l2_system_config_address;
+        state.insert_account_with_storage(
+            address,
+            Default::default(),
+            PlainStorage::from_iter([(
+                slots::FLOOR.value(),
+                U256::from(INITIAL_CONTROLLED_BASE_FEE + 1),
+            )]),
+        );
+        let provider = ScrollBaseFeeProvider::new(DOGEOS_MAINNET.clone());
+
+        assert!(matches!(
+            provider.dynamic_base_fee_params(&mut state),
+            Err(BaseFeeError::Protocol(
+                DynamicBaseFeeError::InvalidParameters(_)
+            ))
+        ));
+
+        let mut state = empty_state();
+        let oversized = U256::from(u64::MAX) + U256::ONE;
+        state.insert_account_with_storage(
+            address,
+            Default::default(),
+            PlainStorage::from_iter([(slots::MAXIMUM.value(), oversized)]),
+        );
+        assert!(matches!(
+            provider.dynamic_base_fee_params(&mut state),
+            Err(BaseFeeError::Protocol(
+                DynamicBaseFeeError::ParameterOutOfRange {
+                    parameter: "dogeos.storage.dynamic_base_fee.maximum",
+                    value,
+                }
+            )) if value == oversized
+        ));
+    }
+
+    #[test]
     fn tsuki_rejects_an_out_of_range_controlled_fee() {
         let mut state = empty_state();
         let address = DOGEOS_MAINNET.config.l1_config.l2_system_config_address;
@@ -344,14 +620,14 @@ mod tests {
         state.insert_account_with_storage(
             address,
             Default::default(),
-            PlainStorage::from_iter([(NEXT_CONTROLLED_BASE_FEE_SLOT, invalid)]),
+            PlainStorage::from_iter([(slots::NEXT_CONTROLLED_FEE.value(), invalid)]),
         );
         let provider = ScrollBaseFeeProvider::new(DOGEOS_MAINNET.clone());
 
         assert!(matches!(
             provider.next_block_base_fee(&mut state, &parent(1, 0), 2),
             Err(BaseFeeError::Protocol(
-                DynamicBaseFeeError::ControlledFeeOutOfRange(value)
+                DynamicBaseFeeError::ControlledFeeOutOfRange { value, .. }
             )) if value == invalid
         ));
 
@@ -360,45 +636,71 @@ mod tests {
             address,
             Default::default(),
             PlainStorage::from_iter([(
-                NEXT_CONTROLLED_BASE_FEE_SLOT,
+                slots::NEXT_CONTROLLED_FEE.value(),
                 U256::from(BASE_FEE_FLOOR - 1),
             )]),
         );
         assert!(matches!(
             provider.next_block_base_fee(&mut state, &parent(1, 0), 2),
             Err(BaseFeeError::Protocol(
-                DynamicBaseFeeError::ControlledFeeOutOfRange(_)
+                DynamicBaseFeeError::ControlledFeeOutOfRange { .. }
             ))
         ));
     }
 
     #[test]
     fn controller_handles_target_directions_and_clamps() {
+        let params = DynamicBaseFeeParams::default();
         assert_eq!(
-            calculate_next_controlled_base_fee(500_000_000_000, 10_000_000).unwrap(),
+            calculate_next_controlled_base_fee(500_000_000_000, 10_000_000, params).unwrap(),
             500_000_000_000
         );
         assert_eq!(
-            calculate_next_controlled_base_fee(500_000_000_000, 20_000_000).unwrap(),
+            calculate_next_controlled_base_fee(500_000_000_000, 20_000_000, params).unwrap(),
             562_500_000_000
         );
         assert_eq!(
-            calculate_next_controlled_base_fee(500_000_000_000, 0).unwrap(),
+            calculate_next_controlled_base_fee(500_000_000_000, 0, params).unwrap(),
             437_500_000_000
         );
         assert_eq!(
-            calculate_next_controlled_base_fee(BASE_FEE_FLOOR, 0).unwrap(),
+            calculate_next_controlled_base_fee(BASE_FEE_FLOOR, 0, params).unwrap(),
             BASE_FEE_FLOOR
         );
         assert_eq!(
-            calculate_next_controlled_base_fee(MAX_L2_BASE_FEE, u64::MAX).unwrap(),
+            calculate_next_controlled_base_fee(MAX_L2_BASE_FEE, u64::MAX, params).unwrap(),
             MAX_L2_BASE_FEE
         );
-        assert!(calculate_next_controlled_base_fee(BASE_FEE_FLOOR - 1, 0).is_err());
+        assert!(calculate_next_controlled_base_fee(BASE_FEE_FLOOR - 1, 0, params).is_err());
         assert_eq!(
-            calculate_next_controlled_base_fee(BASE_FEE_FLOOR, DYNAMIC_BASE_FEE_GAS_TARGET + 1)
-                .unwrap(),
+            calculate_next_controlled_base_fee(
+                BASE_FEE_FLOOR,
+                DYNAMIC_BASE_FEE_GAS_TARGET + 1,
+                params,
+            )
+            .unwrap(),
             BASE_FEE_FLOOR + 125
         );
+    }
+
+    #[test]
+    fn controller_formula_uses_state_backed_target_and_denominator() {
+        let params = DynamicBaseFeeParams {
+            floor: 100,
+            initial_controlled_fee: 400,
+            maximum: 1_000,
+            gas_target: 5_000_000,
+            max_change_denominator: 4,
+        };
+
+        assert_eq!(
+            calculate_next_controlled_base_fee(400, 10_000_000, params).unwrap(),
+            500
+        );
+        assert_eq!(
+            calculate_next_controlled_base_fee(400, 0, params).unwrap(),
+            300
+        );
+        assert_eq!(params.rebase_controlled_fee(2_000), 1_000);
     }
 }

@@ -16,15 +16,17 @@ mod base_fee;
 pub mod gas_price_oracle;
 pub use base_fee::{
     BASE_FEE_FLOOR, BaseFeeError, DEFAULT_BASE_FEE_OVERHEAD, DYNAMIC_BASE_FEE_GAS_TARGET,
-    DYNAMIC_BASE_FEE_MAX_CHANGE_DENOMINATOR, DynamicBaseFeeError, DynamicBaseFeeState,
-    INITIAL_CONTROLLED_BASE_FEE, L1_BASE_FEE_PRECISION, LEGACY_MAX_L2_BASE_FEE, MAX_L2_BASE_FEE,
-    NEXT_CONTROLLED_BASE_FEE_SLOT, NEXT_CONTROLLED_BASE_FEE_SLOT_NAMESPACE, ScrollBaseFeeProvider,
-    calculate_next_controlled_base_fee, predict_next_payload_timestamp,
+    DYNAMIC_BASE_FEE_MAX_CHANGE_DENOMINATOR, DynamicBaseFeeError, DynamicBaseFeeParams,
+    DynamicBaseFeeState, INITIAL_CONTROLLED_BASE_FEE, L1_BASE_FEE_PRECISION,
+    LEGACY_MAX_L2_BASE_FEE, MAX_L2_BASE_FEE, ScrollBaseFeeProvider,
+    calculate_next_controlled_base_fee, dynamic_base_fee_slots, predict_next_payload_timestamp,
 };
 mod l1;
 pub use l1::RethL1BlockInfo;
 mod protocol_storage;
-pub use protocol_storage::derive_protocol_storage_slot;
+pub use protocol_storage::{
+    ProtocolStorageDefault, ProtocolStorageError, ProtocolStorageSlot, derive_protocol_storage_slot,
+};
 mod spec;
 pub use spec::spec_id_at_timestamp_and_number;
 mod system_caller;

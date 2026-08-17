@@ -1,6 +1,6 @@
 //! State transition for the Tsuki utilization-controlled base fee.
 
-use crate::NEXT_CONTROLLED_BASE_FEE_SLOT;
+use crate::dynamic_base_fee_slots::NEXT_CONTROLLED_FEE;
 use alloy_primitives::{Address, U256};
 use revm::{Database, DatabaseCommit, state::EvmState};
 
@@ -40,10 +40,7 @@ where
         system_config,
         old_info,
         new_info,
-        [(
-            NEXT_CONTROLLED_BASE_FEE_SLOT,
-            U256::from(next_controlled_fee),
-        )],
+        [(NEXT_CONTROLLED_FEE.value(), U256::from(next_controlled_fee))],
     )
 }
 
@@ -73,7 +70,7 @@ mod tests {
 
         assert_eq!(state.basic(address)?.unwrap().nonce, 1);
         assert_eq!(
-            state.storage(address, NEXT_CONTROLLED_BASE_FEE_SLOT)?,
+            state.storage(address, NEXT_CONTROLLED_FEE.value())?,
             U256::from(500_000_000_000u64)
         );
         Ok(())
@@ -105,7 +102,7 @@ mod tests {
 
         assert_eq!(state.basic(address)?.unwrap(), info);
         assert_eq!(
-            state.storage(address, NEXT_CONTROLLED_BASE_FEE_SLOT)?,
+            state.storage(address, NEXT_CONTROLLED_FEE.value())?,
             U256::from(600_000_000_000u64)
         );
         assert_eq!(state.storage(address, unrelated_slot)?, U256::from(88));
@@ -127,7 +124,7 @@ mod tests {
 
         assert_eq!(account.info.as_ref().unwrap().nonce, 1);
         assert_eq!(
-            account.storage.get(&NEXT_CONTROLLED_BASE_FEE_SLOT),
+            account.storage.get(&NEXT_CONTROLLED_FEE.value()),
             Some(&StorageSlot {
                 present_value: U256::from(700_000_000_000u64),
                 ..Default::default()

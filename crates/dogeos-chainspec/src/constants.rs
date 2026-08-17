@@ -14,14 +14,14 @@ pub const DOGEOS_BASE_FEE_PARAMS_FEYNMAN: BaseFeeParams = BaseFeeParams::new(8, 
 /// Pre-Tsuki protocol-enforced maximum L2 base fee.
 pub const LEGACY_MAX_L2_BASE_FEE: u64 = 10_000_000_000;
 
-/// Minimum Tsuki utilization-controlled base-fee component.
+/// Default minimum Tsuki utilization-controlled base-fee component.
 ///
-/// This is a provisional economic parameter that must be reviewed before production activation.
+/// A SystemConfig override may raise or lower this within the hard protocol maximum.
 pub const BASE_FEE_FLOOR: u64 = 10_000_000_000;
 
-/// Utilization-controlled base-fee component used by the first Tsuki block.
+/// Default utilization-controlled base-fee component used by the first Tsuki block.
 ///
-/// This is a provisional economic parameter that must be reviewed before production activation.
+/// A SystemConfig override may select a different activation seed.
 pub const INITIAL_CONTROLLED_BASE_FEE: u64 = 500_000_000_000;
 
 /// Desired controlled-fee ceiling used to derive [`MAX_L2_BASE_FEE`].
@@ -32,13 +32,15 @@ pub const DESIRED_CONTROLLED_FEE_CEILING: u64 = 999_900_000_000;
 /// This is a calibration input, not a separately enforced runtime limit.
 pub const BASE_FEE_OVERHEAD_BUDGET: u64 = 100_000_000;
 
-/// Tsuki protocol-enforced maximum for both the controlled component and final L2 base fee.
+/// Tsuki hard safety maximum for both the controlled component and final L2 base fee.
+///
+/// SystemConfig may select a lower runtime maximum without a protocol upgrade.
 pub const MAX_L2_BASE_FEE: u64 = DESIRED_CONTROLLED_FEE_CEILING + BASE_FEE_OVERHEAD_BUDGET;
 
-/// Fixed long-run gas target for the Tsuki utilization controller.
+/// Default long-run gas target for the Tsuki utilization controller.
 pub const DYNAMIC_BASE_FEE_GAS_TARGET: u64 = 10_000_000;
 
-/// Maximum-change denominator for the Tsuki utilization controller.
+/// Default maximum-change denominator for the Tsuki utilization controller.
 pub const DYNAMIC_BASE_FEE_MAX_CHANGE_DENOMINATOR: u64 = 8;
 
 const _: () = {

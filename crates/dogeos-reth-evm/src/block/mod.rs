@@ -329,8 +329,19 @@ where
         mut self,
     ) -> Result<(Self::Evm, BlockExecutionResult<R::Receipt>), BlockExecutionError> {
         if let Some(controlled_fee) = self.current_controlled_base_fee {
+            // Re-read parameters after transaction execution so a SystemConfig update in this
+            // block takes effect in the next block. Rebase before applying the formula so a valid
+            // floor/ceiling update cannot strand the controller outside its new range.
+            let params = ScrollBaseFeeProvider::new(self.spec.clone())
+                .dynamic_base_fee_params(self.evm.db_mut())
+                .map_err(|error| {
+                    BlockExecutionError::msg(format!(
+                        "failed to read next dynamic base-fee parameters: {error}"
+                    ))
+                })?;
+            let controlled_fee = params.rebase_controlled_fee(controlled_fee);
             let next_controlled_fee =
-                calculate_next_controlled_base_fee(controlled_fee, self.gas_used).map_err(
+                calculate_next_controlled_base_fee(controlled_fee, self.gas_used, params).map_err(
                     |error| {
                         BlockExecutionError::msg(format!(
                             "failed to calculate next controlled base fee: {error}"
@@ -496,8 +507,8 @@ where
 mod tests {
     use super::*;
     use crate::{
-        DEFAULT_BASE_FEE_OVERHEAD, INITIAL_CONTROLLED_BASE_FEE, NEXT_CONTROLLED_BASE_FEE_SLOT,
-        ScrollRethReceiptBuilder,
+        DEFAULT_BASE_FEE_OVERHEAD, INITIAL_CONTROLLED_BASE_FEE, ScrollRethReceiptBuilder,
+        dynamic_base_fee_slots as slots,
     };
     use alloy_evm::{EvmEnv, EvmFactory};
     use dogeos_chainspec::{DOGEOS_CHIKYU, DOGEOS_MAINNET, DogeosChainSpec};
@@ -601,7 +612,7 @@ mod tests {
         executor.set_state_hook(Some(Box::new(move |_, state: &revm::state::EvmState| {
             if state
                 .get(&system_config)
-                .and_then(|account| account.storage.get(&NEXT_CONTROLLED_BASE_FEE_SLOT))
+                .and_then(|account| account.storage.get(&slots::NEXT_CONTROLLED_FEE.value()))
                 .is_some_and(|slot| slot.present_value == U256::from(437_500_000_000u64))
             {
                 hook_flag.store(true, Ordering::Relaxed);
@@ -614,7 +625,7 @@ mod tests {
         assert_eq!(result.gas_used, 0);
         assert_eq!(
             evm.db_mut()
-                .storage(system_config, NEXT_CONTROLLED_BASE_FEE_SLOT)?,
+                .storage(system_config, slots::NEXT_CONTROLLED_FEE.value())?,
             U256::from(437_500_000_000u64)
         );
         assert_eq!(evm.db_mut().basic(system_config)?.unwrap().nonce, 1);
@@ -652,7 +663,7 @@ mod tests {
             PlainStorage::from_iter([
                 (U256::from(101), U256::from(100_000_000)),
                 (
-                    NEXT_CONTROLLED_BASE_FEE_SLOT,
+                    slots::NEXT_CONTROLLED_FEE.value(),
                     U256::from(600_000_000_000u64),
                 ),
             ]),
@@ -671,8 +682,55 @@ mod tests {
 
         assert_eq!(
             evm.db_mut()
-                .storage(system_config, NEXT_CONTROLLED_BASE_FEE_SLOT)?,
+                .storage(system_config, slots::NEXT_CONTROLLED_FEE.value())?,
             U256::from(525_000_000_000u64)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn parameter_update_rebases_controller_for_the_next_block() -> eyre::Result<()> {
+        let system_config = DOGEOS_MAINNET.config.l1_config.l2_system_config_address;
+        let mut state = State::builder()
+            .with_database(EmptyDB::default())
+            .with_bundle_update()
+            .build();
+        state.insert_account_with_storage(
+            system_config,
+            AccountInfo {
+                nonce: 1,
+                ..Default::default()
+            },
+            PlainStorage::from_iter([(
+                slots::NEXT_CONTROLLED_FEE.value(),
+                U256::from(800_000_000_000u64),
+            )]),
+        );
+        let expected = 800_000_000_000 + DEFAULT_BASE_FEE_OVERHEAD.to::<u64>();
+        let mut executor =
+            executor_with_state(state, DOGEOS_MAINNET.clone(), ScrollSpecId::TSUKI, expected);
+
+        executor.apply_pre_execution_changes()?;
+        executor.evm.db_mut().insert_account_with_storage(
+            system_config,
+            AccountInfo {
+                nonce: 1,
+                ..Default::default()
+            },
+            PlainStorage::from_iter([
+                (
+                    slots::INITIAL_CONTROLLED_FEE.value(),
+                    U256::from(200_000_000_000u64),
+                ),
+                (slots::MAXIMUM.value(), U256::from(300_000_000_000u64)),
+            ]),
+        );
+
+        let (mut evm, _) = executor.finish()?;
+        assert_eq!(
+            evm.db_mut()
+                .storage(system_config, slots::NEXT_CONTROLLED_FEE.value())?,
+            U256::from(262_500_000_000u64)
         );
         Ok(())
     }
@@ -687,7 +745,7 @@ mod tests {
         let system_config = DOGEOS_CHIKYU.config.l1_config.l2_system_config_address;
         assert_eq!(
             evm.db_mut()
-                .storage(system_config, NEXT_CONTROLLED_BASE_FEE_SLOT)?,
+                .storage(system_config, slots::NEXT_CONTROLLED_FEE.value())?,
             U256::ZERO
         );
         Ok(())
