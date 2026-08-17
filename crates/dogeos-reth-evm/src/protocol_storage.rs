@@ -23,6 +23,13 @@ pub enum ProtocolStorageError<E> {
         namespace: &'static str,
         value: U256,
     },
+    /// The typed value falls outside the slot's absolute inclusive bounds.
+    ValueOutsideBounds {
+        namespace: &'static str,
+        value: U256,
+        min: U256,
+        max: U256,
+    },
 }
 
 impl<E: fmt::Display> fmt::Display for ProtocolStorageError<E> {
@@ -35,6 +42,15 @@ impl<E: fmt::Display> fmt::Display for ProtocolStorageError<E> {
                     "protocol storage value {value} for {namespace:?} does not fit its type"
                 )
             }
+            Self::ValueOutsideBounds {
+                namespace,
+                value,
+                min,
+                max,
+            } => write!(
+                f,
+                "protocol storage value {value} for {namespace:?} is outside {min}..={max}"
+            ),
         }
     }
 }
@@ -47,7 +63,7 @@ where
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Database(error) => Some(error),
-            Self::ValueOutOfRange { .. } => None,
+            Self::ValueOutOfRange { .. } | Self::ValueOutsideBounds { .. } => None,
         }
     }
 }
@@ -62,12 +78,14 @@ pub struct ProtocolStorageSlot<T> {
     namespace: &'static str,
     value: U256,
     default: ProtocolStorageDefault<T>,
+    min: T,
+    max: T,
 }
 
 /// Declares a cohesive group of Keccak-256-derived protocol storage slots.
 ///
-/// Each declaration binds the namespace and its precomputed hash in one place. The generated unit
-/// test checks every hash, so adding a slot cannot silently omit the derivation check.
+/// Each declaration binds the namespace, precomputed hash, zero policy, and absolute bounds in one
+/// place. The generated unit test checks the derivation, bound ordering, and effective default.
 macro_rules! define_protocol_storage_slots {
     (
         $(#[$module_meta:meta])*
@@ -77,7 +95,9 @@ macro_rules! define_protocol_storage_slots {
                 $slot_visibility:vis const $slot:ident: $value_type:ty {
                     namespace: $namespace:literal,
                     slot: $hash:expr,
-                    default: $default_policy:expr $(,)?
+                    default: $default_policy:expr,
+                    min: $min:expr,
+                    max: $max:expr $(,)?
                 }
             )+
         }
@@ -93,7 +113,7 @@ macro_rules! define_protocol_storage_slots {
             $(
                 $(#[$slot_meta])*
                 $slot_visibility const $slot: ProtocolStorageSlot<$value_type> =
-                    ProtocolStorageSlot::new($namespace, $hash, $default_policy);
+                    ProtocolStorageSlot::new($namespace, $hash, $default_policy, $min, $max);
             )+
 
             #[cfg(test)]
@@ -101,13 +121,23 @@ macro_rules! define_protocol_storage_slots {
                 use super::*;
 
                 #[test]
-                fn slots_match_their_namespaces() {
+                fn slots_match_namespaces_and_have_valid_bounds() {
                     $(
                         assert!(
                             $slot.has_valid_derivation(),
                             "{} does not match keccak256({:?})",
                             stringify!($slot),
                             $slot.namespace(),
+                        );
+                        assert!(
+                            $slot.has_valid_bounds(),
+                            "{} has invalid absolute bounds",
+                            stringify!($slot),
+                        );
+                        assert!(
+                            $slot.contains($slot.default_value()),
+                            "{} has a default outside its absolute bounds",
+                            stringify!($slot),
                         );
                     )+
                 }
@@ -119,16 +149,20 @@ macro_rules! define_protocol_storage_slots {
 pub(crate) use define_protocol_storage_slots;
 
 impl<T> ProtocolStorageSlot<T> {
-    /// Creates a slot from its stable namespace, precomputed hash, and zero-value policy.
+    /// Creates a slot with a stable namespace, precomputed hash, zero policy, and absolute bounds.
     pub const fn new(
         namespace: &'static str,
         hash: B256,
         default: ProtocolStorageDefault<T>,
+        min: T,
+        max: T,
     ) -> Self {
         Self {
             namespace,
             value: U256::from_be_bytes(hash.0),
             default,
+            min,
+            max,
         }
     }
 
@@ -153,6 +187,28 @@ impl<T: Copy> ProtocolStorageSlot<T> {
     pub const fn default_policy(&self) -> ProtocolStorageDefault<T> {
         self.default
     }
+
+    /// Returns the slot's absolute inclusive minimum.
+    pub const fn min(&self) -> T {
+        self.min
+    }
+
+    /// Returns the slot's absolute inclusive maximum.
+    pub const fn max(&self) -> T {
+        self.max
+    }
+}
+
+impl<T: Copy + Ord> ProtocolStorageSlot<T> {
+    /// Returns whether the slot's absolute inclusive bounds are well ordered.
+    pub fn has_valid_bounds(&self) -> bool {
+        self.min <= self.max
+    }
+
+    /// Returns whether a value satisfies the slot's absolute inclusive bounds.
+    pub fn contains(&self, value: T) -> bool {
+        (self.min..=self.max).contains(&value)
+    }
 }
 
 impl ProtocolStorageSlot<u64> {
@@ -176,16 +232,25 @@ impl ProtocolStorageSlot<u64> {
         let value = db
             .storage(address, self.value)
             .map_err(ProtocolStorageError::Database)?;
-        if value == U256::ZERO {
-            return Ok(self.default_value());
-        }
-        if value > U256::from(u64::MAX) {
+        let value = if value == U256::ZERO {
+            self.default_value()
+        } else if value > U256::from(u64::MAX) {
             return Err(ProtocolStorageError::ValueOutOfRange {
                 namespace: self.namespace,
                 value,
             });
+        } else {
+            value.to::<u64>()
+        };
+        if !self.contains(value) {
+            return Err(ProtocolStorageError::ValueOutsideBounds {
+                namespace: self.namespace,
+                value: U256::from(value),
+                min: U256::from(self.min),
+                max: U256::from(self.max),
+            });
         }
-        Ok(value.to::<u64>())
+        Ok(value)
     }
 }
 

@@ -16,7 +16,7 @@ pub const LEGACY_MAX_L2_BASE_FEE: u64 = 10_000_000_000;
 
 /// Default minimum Tsuki utilization-controlled base-fee component.
 ///
-/// A SystemConfig override may raise or lower this within the hard protocol maximum.
+/// A SystemConfig override may raise this within the hard protocol maximum.
 pub const BASE_FEE_FLOOR: u64 = 10_000_000_000;
 
 /// Default utilization-controlled base-fee component used by the first Tsuki block.

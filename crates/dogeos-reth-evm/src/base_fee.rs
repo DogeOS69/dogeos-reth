@@ -23,36 +23,49 @@ define_protocol_storage_slots! {
             namespace: "dogeos.storage.dynamic_base_fee.next_controlled_fee",
             slot: b256!("74ae897ed5751dd32419f1eee8d4ec13d296adf0d77978ea55df0dd18345c8e3"),
             default: ZeroIsValue,
+            min: 0,
+            max: super::MAX_L2_BASE_FEE,
         }
         /// Runtime minimum for the controlled component.
         pub const FLOOR: u64 {
             namespace: "dogeos.storage.dynamic_base_fee.floor",
             slot: b256!("eed251e51f4817ab65995267f3e37a3746fff8a6a19d33fe361f1d8ead402881"),
             default: ZeroMeansDefault(super::BASE_FEE_FLOOR),
+            min: super::BASE_FEE_FLOOR,
+            max: super::MAX_L2_BASE_FEE,
         }
         /// Controlled component used when the next-fee slot has not been initialized.
         pub const INITIAL_CONTROLLED_FEE: u64 {
             namespace: "dogeos.storage.dynamic_base_fee.initial_controlled_fee",
             slot: b256!("d31e852ef679d22e5c189bd0df546bb2a2505ab0c0b1e86eaec6b30d945fe7a4"),
             default: ZeroMeansDefault(super::INITIAL_CONTROLLED_BASE_FEE),
+            min: super::BASE_FEE_FLOOR,
+            max: super::MAX_L2_BASE_FEE,
         }
         /// Runtime maximum for the controlled component and final header base fee.
         pub const MAXIMUM: u64 {
             namespace: "dogeos.storage.dynamic_base_fee.maximum",
             slot: b256!("aff0674342f28138b41ae357d08382d17f47f8b28fc9d766808e750a6118abb2"),
             default: ZeroMeansDefault(super::DEFAULT_MAX_L2_BASE_FEE),
+            min: super::BASE_FEE_FLOOR,
+            max: super::MAX_L2_BASE_FEE,
         }
         /// Long-run controller gas target.
         pub const GAS_TARGET: u64 {
             namespace: "dogeos.storage.dynamic_base_fee.gas_target",
             slot: b256!("a7c3d77fa3161deb87f2ccaa84ea1a58c150834dbadc810f9e5d90a6edf1b6b5"),
             default: ZeroMeansDefault(super::DYNAMIC_BASE_FEE_GAS_TARGET),
+            min: 1,
+            max: 20_000_000,
         }
         /// Denominator limiting the controller's per-block rate of change.
         pub const MAX_CHANGE_DENOMINATOR: u64 {
             namespace: "dogeos.storage.dynamic_base_fee.max_change_denominator",
             slot: b256!("b194ffa17ad5a2b564c8cfef3b3c81bffdf2d555c7d656487014a1692c5e77b4"),
             default: ZeroMeansDefault(super::DYNAMIC_BASE_FEE_MAX_CHANGE_DENOMINATOR),
+            min: 1,
+            // Provisional liveness bound; requires further controller research.
+            max: 1_024,
         }
     }
 }
@@ -101,12 +114,13 @@ impl DynamicBaseFeeParams {
     };
 
     fn validate(self) -> Result<Self, DynamicBaseFeeError> {
-        if self.floor == 0
+        if !slots::FLOOR.contains(self.floor)
+            || !slots::INITIAL_CONTROLLED_FEE.contains(self.initial_controlled_fee)
+            || !slots::MAXIMUM.contains(self.maximum)
+            || !slots::GAS_TARGET.contains(self.gas_target)
+            || !slots::MAX_CHANGE_DENOMINATOR.contains(self.max_change_denominator)
             || self.floor > self.initial_controlled_fee
             || self.initial_controlled_fee > self.maximum
-            || self.maximum > MAX_L2_BASE_FEE
-            || self.gas_target == 0
-            || self.max_change_denominator == 0
         {
             return Err(DynamicBaseFeeError::InvalidParameters(self));
         }
@@ -133,6 +147,13 @@ pub enum DynamicBaseFeeError {
         parameter: &'static str,
         value: U256,
     },
+    /// A configured parameter falls outside its slot's absolute inclusive bounds.
+    ParameterOutsideBounds {
+        parameter: &'static str,
+        value: U256,
+        min: U256,
+        max: U256,
+    },
     /// The configured parameters violate controller invariants.
     InvalidParameters(DynamicBaseFeeParams),
     /// The persisted controlled component is outside its configured range.
@@ -154,6 +175,15 @@ impl fmt::Display for DynamicBaseFeeError {
                     "dynamic base-fee parameter {parameter} does not fit in u64: {value}"
                 )
             }
+            Self::ParameterOutsideBounds {
+                parameter,
+                value,
+                min,
+                max,
+            } => write!(
+                f,
+                "dynamic base-fee parameter {parameter}={value} is outside {min}..={max}"
+            ),
             Self::InvalidParameters(params) => write!(
                 f,
                 "invalid dynamic base-fee parameters: floor={}, initial={}, maximum={}, gas_target={}, denominator={} (hard maximum={MAX_L2_BASE_FEE})",
@@ -226,6 +256,17 @@ impl<E> From<ProtocolStorageError<E>> for BaseFeeError<E> {
                     value,
                 })
             }
+            ProtocolStorageError::ValueOutsideBounds {
+                namespace,
+                value,
+                min,
+                max,
+            } => Self::Protocol(DynamicBaseFeeError::ParameterOutsideBounds {
+                parameter: namespace,
+                value,
+                min,
+                max,
+            }),
         }
     }
 }
@@ -449,17 +490,75 @@ mod tests {
     #[test]
     fn controller_slots_declare_their_zero_value_policies() {
         assert_eq!(slots::NEXT_CONTROLLED_FEE.default_policy(), ZeroIsValue);
-        for (slot, default) in [
-            (slots::FLOOR, BASE_FEE_FLOOR),
-            (slots::INITIAL_CONTROLLED_FEE, INITIAL_CONTROLLED_BASE_FEE),
-            (slots::MAXIMUM, DEFAULT_MAX_L2_BASE_FEE),
-            (slots::GAS_TARGET, DYNAMIC_BASE_FEE_GAS_TARGET),
+        assert_eq!(slots::NEXT_CONTROLLED_FEE.min(), 0);
+        assert_eq!(slots::NEXT_CONTROLLED_FEE.max(), MAX_L2_BASE_FEE);
+        for (slot, default, min, max) in [
+            (
+                slots::FLOOR,
+                BASE_FEE_FLOOR,
+                BASE_FEE_FLOOR,
+                MAX_L2_BASE_FEE,
+            ),
+            (
+                slots::INITIAL_CONTROLLED_FEE,
+                INITIAL_CONTROLLED_BASE_FEE,
+                BASE_FEE_FLOOR,
+                MAX_L2_BASE_FEE,
+            ),
+            (
+                slots::MAXIMUM,
+                DEFAULT_MAX_L2_BASE_FEE,
+                BASE_FEE_FLOOR,
+                MAX_L2_BASE_FEE,
+            ),
+            (
+                slots::GAS_TARGET,
+                DYNAMIC_BASE_FEE_GAS_TARGET,
+                1,
+                20_000_000,
+            ),
             (
                 slots::MAX_CHANGE_DENOMINATOR,
                 DYNAMIC_BASE_FEE_MAX_CHANGE_DENOMINATOR,
+                1,
+                1_024,
             ),
         ] {
             assert_eq!(slot.default_policy(), ZeroMeansDefault(default));
+            assert_eq!(slot.min(), min);
+            assert_eq!(slot.max(), max);
+        }
+    }
+
+    #[test]
+    fn parameter_slots_reject_values_outside_their_absolute_bounds() {
+        let address = DOGEOS_MAINNET.config.l1_config.l2_system_config_address;
+        for (slot, invalid) in [
+            (slots::FLOOR, BASE_FEE_FLOOR - 1),
+            (slots::INITIAL_CONTROLLED_FEE, BASE_FEE_FLOOR - 1),
+            (slots::MAXIMUM, MAX_L2_BASE_FEE + 1),
+            (slots::GAS_TARGET, 20_000_001),
+            (slots::MAX_CHANGE_DENOMINATOR, 1_025),
+        ] {
+            let mut state = empty_state();
+            state.insert_account_with_storage(
+                address,
+                Default::default(),
+                PlainStorage::from_iter([(slot.value(), U256::from(invalid))]),
+            );
+
+            assert!(matches!(
+                slot.read_parameter(&mut state, address),
+                Err(ProtocolStorageError::ValueOutsideBounds {
+                    namespace,
+                    value,
+                    min,
+                    max,
+                }) if namespace == slot.namespace()
+                    && value == U256::from(invalid)
+                    && min == U256::from(slot.min())
+                    && max == U256::from(slot.max())
+            ));
         }
     }
 
@@ -687,22 +786,46 @@ mod tests {
     #[test]
     fn controller_formula_uses_state_backed_target_and_denominator() {
         let params = DynamicBaseFeeParams {
-            floor: 100,
-            initial_controlled_fee: 400,
-            maximum: 1_000,
+            floor: 10_000_000_000,
+            initial_controlled_fee: 40_000_000_000,
+            maximum: 100_000_000_000,
             gas_target: 5_000_000,
             max_change_denominator: 4,
         };
 
         assert_eq!(
-            calculate_next_controlled_base_fee(400, 10_000_000, params).unwrap(),
-            500
+            calculate_next_controlled_base_fee(40_000_000_000, 10_000_000, params).unwrap(),
+            50_000_000_000
         );
         assert_eq!(
-            calculate_next_controlled_base_fee(400, 0, params).unwrap(),
-            300
+            calculate_next_controlled_base_fee(40_000_000_000, 0, params).unwrap(),
+            30_000_000_000
         );
-        assert_eq!(params.rebase_controlled_fee(2_000), 1_000);
+        assert_eq!(
+            params.rebase_controlled_fee(200_000_000_000),
+            100_000_000_000
+        );
+    }
+
+    #[test]
+    fn controller_rejects_direct_parameters_outside_slot_bounds() {
+        let params = DynamicBaseFeeParams {
+            floor: BASE_FEE_FLOOR - 1,
+            ..Default::default()
+        };
+        assert!(calculate_next_controlled_base_fee(BASE_FEE_FLOOR, 0, params).is_err());
+
+        let params = DynamicBaseFeeParams {
+            gas_target: slots::GAS_TARGET.max() + 1,
+            ..Default::default()
+        };
+        assert!(calculate_next_controlled_base_fee(BASE_FEE_FLOOR, 0, params).is_err());
+
+        let params = DynamicBaseFeeParams {
+            max_change_denominator: slots::MAX_CHANGE_DENOMINATOR.max() + 1,
+            ..Default::default()
+        };
+        assert!(calculate_next_controlled_base_fee(BASE_FEE_FLOOR, 0, params).is_err());
     }
 
     #[test]
