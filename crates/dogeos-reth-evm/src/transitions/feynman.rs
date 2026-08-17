@@ -4,7 +4,7 @@ use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
     primitives::{Bytes, U256, bytes},
-    state::AccountInfo,
+    state::{AccountInfo, EvmState},
 };
 
 // Import L1GasPriceOracle address and slots.
@@ -33,7 +33,9 @@ const FEYNMAN_L1_GAS_PRICE_ORACLE_STORAGE: [(U256, U256); 3] = [
 ///    - Updates the L1 oracle contract bytecode to reflect the DA cost reduction.
 ///    - Sets the initial compression penalty threshold and penalty factor values.
 ///    - Sets the `isFeynman` slot to 1 (true).
-pub fn apply_feynman_hard_fork<DB>(db: &mut DB) -> Result<(), DB::Error>
+///
+/// Applies the transition and returns its committed update for state-root hooks.
+pub(crate) fn apply_feynman_hard_fork<DB>(db: &mut DB) -> Result<EvmState, DB::Error>
 where
     DB: Database + DatabaseCommit,
 {
@@ -43,7 +45,7 @@ where
     // other reliable way to apply the change only at the transition block, since
     // `ScrollBlockExecutor` does not have access to the parent timestamp.
     if db.storage(L1_GAS_PRICE_ORACLE_ADDRESS, GPO_IS_FEYNMAN_SLOT)? == IS_FEYNMAN {
-        return Ok(());
+        return Ok(EvmState::default());
     }
 
     // compute the code hash

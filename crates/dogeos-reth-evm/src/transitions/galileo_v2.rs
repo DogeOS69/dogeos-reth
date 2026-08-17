@@ -4,7 +4,7 @@ use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
     primitives::{Bytes, U256, bytes},
-    state::AccountInfo,
+    state::{AccountInfo, EvmState},
 };
 
 // Import L1GasPriceOracle address and slots.
@@ -31,7 +31,9 @@ const GALILEO_V2_L1_GAS_PRICE_ORACLE_STORAGE: [(U256, U256); 1] =
 /// Applies the Scroll `GalileoV2` hard fork to the state:
 ///    - Updates the L1 oracle contract bytecode.
 ///    - Sets the `isGalileo` slot to 1 (true).
-pub fn apply_galileo_v2_hard_fork<DB>(db: &mut DB) -> Result<(), DB::Error>
+///
+/// Applies the transition and returns its committed update for state-root hooks.
+pub(crate) fn apply_galileo_v2_hard_fork<DB>(db: &mut DB) -> Result<EvmState, DB::Error>
 where
     DB: Database + DatabaseCommit,
 {
@@ -41,7 +43,7 @@ where
     // other reliable way to apply the change only at the transition block, since
     // `ScrollBlockExecutor` does not have access to the parent timestamp.
     if db.storage(L1_GAS_PRICE_ORACLE_ADDRESS, GPO_IS_GALILEO_SLOT)? == IS_GALILEO {
-        return Ok(());
+        return Ok(EvmState::default());
     }
 
     // compute the code hash

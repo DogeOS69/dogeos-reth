@@ -15,7 +15,8 @@ use alloy_evm::{
     Database, Evm, EvmFactory, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockExecutorFactory,
-        BlockExecutorFor, BlockValidationError, ExecutableTx, OnStateHook, StateDB, TxResult,
+        BlockExecutorFor, BlockValidationError, ExecutableTx, OnStateHook, StateChangeSource,
+        StateDB, TxResult,
     },
 };
 use alloy_primitives::{B256, U256};
@@ -171,11 +172,10 @@ where
             .dogeos_fork_activation(DogeosHardfork::Feynman)
             .active_at_timestamp(self.evm.block().timestamp().to())
         {
-            if let Err(err) = apply_feynman_hard_fork(self.evm.db_mut()) {
-                return Err(BlockExecutionError::msg(format!(
-                    "error occurred at Feynman fork: {err:?}"
-                )));
-            };
+            let state = apply_feynman_hard_fork(self.evm.db_mut()).map_err(|err| {
+                BlockExecutionError::msg(format!("error occurred at Feynman fork: {err:?}"))
+            })?;
+            self.system_caller.on_pre_block_state(&state);
         }
 
         // apply gas oracle predeploy upgrade at GalileoV2 transition block.
@@ -185,11 +185,10 @@ where
             .dogeos_fork_activation(DogeosHardfork::GalileoV2)
             .active_at_timestamp(self.evm.block().timestamp().to())
         {
-            if let Err(err) = apply_galileo_v2_hard_fork(self.evm.db_mut()) {
-                return Err(BlockExecutionError::msg(format!(
-                    "error occurred at GalileoV2 fork: {err:?}"
-                )));
-            };
+            let state = apply_galileo_v2_hard_fork(self.evm.db_mut()).map_err(|err| {
+                BlockExecutionError::msg(format!("error occurred at GalileoV2 fork: {err:?}"))
+            })?;
+            self.system_caller.on_pre_block_state(&state);
         }
 
         // inject NativeDogeToken predeploy at Tsuki transition block.
@@ -199,11 +198,10 @@ where
             .dogeos_fork_activation(DogeosHardfork::Tsuki)
             .active_at_timestamp(self.evm.block().timestamp().to())
         {
-            if let Err(err) = apply_tsuki_hard_fork(self.evm.db_mut()) {
-                return Err(BlockExecutionError::msg(format!(
-                    "error occurred at Tsuki fork: {err:?}"
-                )));
-            };
+            let state = apply_tsuki_hard_fork(self.evm.db_mut()).map_err(|err| {
+                BlockExecutionError::msg(format!("error occurred at Tsuki fork: {err:?}"))
+            })?;
+            self.system_caller.on_pre_block_state(&state);
         }
 
         // apply eip-2935.
@@ -282,6 +280,9 @@ where
             tx_type,
         } = output;
 
+        self.system_caller
+            .on_state(StateChangeSource::Transaction(self.receipts.len()), &state);
+
         let gas_used = result.gas_used();
         self.gas_used += gas_used;
 
@@ -310,7 +311,9 @@ where
         ))
     }
 
-    fn set_state_hook(&mut self, _hook: Option<Box<dyn OnStateHook>>) {}
+    fn set_state_hook(&mut self, hook: Option<Box<dyn OnStateHook>>) {
+        self.system_caller.set_state_hook(hook);
+    }
 
     fn evm_mut(&mut self) -> &mut Self::Evm {
         &mut self.evm

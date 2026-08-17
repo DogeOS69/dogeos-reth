@@ -10,7 +10,7 @@ use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
     primitives::{Bytes, U256},
-    state::AccountInfo,
+    state::{AccountInfo, EvmState},
 };
 use revm_scroll::precompile::transfer::NATIVE_DOGE_TOKEN_ADDRESS;
 
@@ -34,13 +34,14 @@ const TSUKI_NATIVE_DOGE_TOKEN_STORAGE: [(U256, U256); 1] =
 /// its only allowed caller, and this migration only creates the account if it is still empty. This
 /// makes the transition compatible with mainnet genesis predeploys: if genesis already contains
 /// code at the same address, the migration is a no-op and does not overwrite it.
-pub fn apply_tsuki_hard_fork<DB>(db: &mut DB) -> Result<(), DB::Error>
+/// Applies the transition and returns its committed update for state-root hooks.
+pub(crate) fn apply_tsuki_hard_fork<DB>(db: &mut DB) -> Result<EvmState, DB::Error>
 where
     DB: Database + DatabaseCommit,
 {
     let old_info = db.basic(NATIVE_DOGE_TOKEN_ADDRESS)?.unwrap_or_default();
     if old_info.nonce != 0 || !old_info.is_empty_code_hash() {
-        return Ok(());
+        return Ok(EvmState::default());
     }
 
     let bytecode = Bytecode::new_raw(TSUKI_NATIVE_DOGE_TOKEN_BYTECODE);

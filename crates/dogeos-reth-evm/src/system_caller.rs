@@ -1,27 +1,65 @@
-use alloc::string::ToString;
+use alloc::{boxed::Box, string::ToString};
+use core::fmt;
 
 use alloy_eips::eip2935::HISTORY_STORAGE_ADDRESS;
 use alloy_evm::{
     Evm,
-    block::{BlockExecutionError, BlockValidationError},
+    block::{
+        BlockExecutionError, BlockValidationError, OnStateHook, StateChangePreBlockSource,
+        StateChangeSource,
+    },
 };
 use alloy_primitives::B256;
 use dogeos_hardforks::DogeosHardforks;
 use revm::{
     DatabaseCommit,
     context::{Block, result::ResultAndState},
+    state::EvmState,
 };
 
 /// An ephemeral helper type for executing system calls.
-#[derive(Debug)]
 pub(crate) struct ScrollSystemCaller<Spec> {
     spec: Spec,
+    /// Optional hook notified after each committed state transition.
+    hook: Option<Box<dyn OnStateHook>>,
+}
+
+impl<Spec: fmt::Debug> fmt::Debug for ScrollSystemCaller<Spec> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ScrollSystemCaller")
+            .field("spec", &self.spec)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<Spec> ScrollSystemCaller<Spec> {
     /// Creates a system caller for a chain's hardfork schedule.
     pub(crate) const fn new(spec: Spec) -> Self {
-        Self { spec }
+        Self { spec, hook: None }
+    }
+
+    /// Replaces the hook that receives committed state transitions.
+    pub(crate) fn set_state_hook(&mut self, hook: Option<Box<dyn OnStateHook>>) {
+        self.hook = hook;
+    }
+
+    /// Notifies the installed hook about a committed state transition.
+    pub(crate) fn on_state(&mut self, source: StateChangeSource, state: &EvmState) {
+        if !state.is_empty()
+            && let Some(hook) = &mut self.hook
+        {
+            hook.on_state(source, state);
+        }
+    }
+
+    /// Notifies the hook about a rollup-native pre-block transition.
+    pub(crate) fn on_pre_block_state(&mut self, state: &EvmState) {
+        // Alloy has no custom rollup transition variant. Root consumers use the state payload;
+        // the source is only a phase label, so use the existing pre-block category.
+        self.on_state(
+            StateChangeSource::PreBlock(StateChangePreBlockSource::BlockHashesContract),
+            state,
+        );
     }
 }
 
@@ -31,13 +69,17 @@ where
 {
     /// Applies the pre-block call to the EIP-2935 blockhashes contract.
     pub(crate) fn apply_blockhashes_contract_call(
-        &self,
+        &mut self,
         parent_block_hash: B256,
         evm: &mut impl Evm<DB: DatabaseCommit>,
     ) -> Result<(), BlockExecutionError> {
         if let Some(result) =
             transact_blockhashes_contract_call(&self.spec, parent_block_hash, evm)?
         {
+            self.on_state(
+                StateChangeSource::PreBlock(StateChangePreBlockSource::BlockHashesContract),
+                &result.state,
+            );
             evm.db_mut().commit(result.state);
         }
         Ok(())
@@ -88,6 +130,10 @@ mod tests {
         state::AccountInfo,
     };
     use revm_scroll::ScrollSpecId;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
 
     fn state_with_history_contract() -> State<EmptyDB> {
         let mut state = State::builder()
@@ -115,7 +161,7 @@ mod tests {
 
     #[test]
     fn skips_blockhash_call_before_feynman() {
-        let caller = ScrollSystemCaller::new(DogeosChainHardforks::new([(
+        let mut caller = ScrollSystemCaller::new(DogeosChainHardforks::new([(
             DogeosHardfork::Feynman,
             ForkCondition::Timestamp(100),
         )]));
@@ -141,11 +187,24 @@ mod tests {
 
     #[test]
     fn stores_parent_hash_after_feynman() {
-        let caller = ScrollSystemCaller::new(DogeosChainHardforks::new([(
+        let mut caller = ScrollSystemCaller::new(DogeosChainHardforks::new([(
             DogeosHardfork::Feynman,
             ForkCondition::Timestamp(0),
         )]));
         let parent_hash = B256::repeat_byte(0x22);
+        let hook_called = Arc::new(AtomicBool::new(false));
+        let hook_flag = Arc::clone(&hook_called);
+        caller.set_state_hook(Some(Box::new(move |source, state: &EvmState| {
+            if matches!(
+                source,
+                StateChangeSource::PreBlock(StateChangePreBlockSource::BlockHashesContract)
+            ) && state
+                .get(&HISTORY_STORAGE_ADDRESS)
+                .is_some_and(|account| account.storage.contains_key(&U256::ZERO))
+            {
+                hook_flag.store(true, Ordering::Relaxed);
+            }
+        })));
         let mut evm = ScrollEvmFactory::<ScrollDefaultPrecompilesFactory>::default().create_evm(
             state_with_history_contract(),
             EvmEnv::new(
@@ -166,11 +225,12 @@ mod tests {
             ),
             parent_hash
         );
+        assert!(hook_called.load(Ordering::Relaxed));
     }
 
     #[test]
     fn skips_blockhash_call_at_genesis() {
-        let caller = ScrollSystemCaller::new(DogeosChainHardforks::mainnet());
+        let mut caller = ScrollSystemCaller::new(DogeosChainHardforks::mainnet());
         let mut evm = ScrollEvmFactory::<ScrollDefaultPrecompilesFactory>::default().create_evm(
             state_with_history_contract(),
             EvmEnv::new(
