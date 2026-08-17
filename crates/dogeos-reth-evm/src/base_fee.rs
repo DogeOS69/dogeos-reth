@@ -4,8 +4,9 @@ use alloy_eips::calc_next_block_base_fee;
 use alloy_primitives::U256;
 use core::fmt;
 pub use dogeos_chainspec::{
-    BASE_FEE_FLOOR, DYNAMIC_BASE_FEE_GAS_TARGET, DYNAMIC_BASE_FEE_MAX_CHANGE_DENOMINATOR,
-    INITIAL_CONTROLLED_BASE_FEE, LEGACY_MAX_L2_BASE_FEE, MAX_L2_BASE_FEE,
+    BASE_FEE_FLOOR, DEFAULT_MAX_L2_BASE_FEE, DYNAMIC_BASE_FEE_GAS_TARGET,
+    DYNAMIC_BASE_FEE_MAX_CHANGE_DENOMINATOR, INITIAL_CONTROLLED_BASE_FEE, LEGACY_MAX_L2_BASE_FEE,
+    MAX_L2_BASE_FEE,
 };
 use dogeos_chainspec::{ChainConfig, ScrollChainConfig};
 use dogeos_hardforks::DogeosHardforks;
@@ -39,7 +40,7 @@ define_protocol_storage_slots! {
         pub const MAXIMUM: u64 {
             namespace: "dogeos.storage.dynamic_base_fee.maximum",
             slot: b256!("aff0674342f28138b41ae357d08382d17f47f8b28fc9d766808e750a6118abb2"),
-            default: ZeroMeansDefault(super::MAX_L2_BASE_FEE),
+            default: ZeroMeansDefault(super::DEFAULT_MAX_L2_BASE_FEE),
         }
         /// Long-run controller gas target.
         pub const GAS_TARGET: u64 {
@@ -451,7 +452,7 @@ mod tests {
         for (slot, default) in [
             (slots::FLOOR, BASE_FEE_FLOOR),
             (slots::INITIAL_CONTROLLED_FEE, INITIAL_CONTROLLED_BASE_FEE),
-            (slots::MAXIMUM, MAX_L2_BASE_FEE),
+            (slots::MAXIMUM, DEFAULT_MAX_L2_BASE_FEE),
             (slots::GAS_TARGET, DYNAMIC_BASE_FEE_GAS_TARGET),
             (
                 slots::MAX_CHANGE_DENOMINATOR,
@@ -497,7 +498,7 @@ mod tests {
                 (L2_BASE_FEE_OVERHEAD_SLOT, U256::from(100_000_000)),
                 (
                     slots::NEXT_CONTROLLED_FEE.value(),
-                    U256::from(MAX_L2_BASE_FEE),
+                    U256::from(DEFAULT_MAX_L2_BASE_FEE),
                 ),
             ]),
         );
@@ -505,7 +506,7 @@ mod tests {
 
         assert_eq!(
             provider.next_block_base_fee(&mut state, &parent(1, 0), 2)?,
-            MAX_L2_BASE_FEE
+            DEFAULT_MAX_L2_BASE_FEE
         );
         Ok(())
     }
@@ -668,8 +669,8 @@ mod tests {
             BASE_FEE_FLOOR
         );
         assert_eq!(
-            calculate_next_controlled_base_fee(MAX_L2_BASE_FEE, u64::MAX, params).unwrap(),
-            MAX_L2_BASE_FEE
+            calculate_next_controlled_base_fee(DEFAULT_MAX_L2_BASE_FEE, u64::MAX, params).unwrap(),
+            DEFAULT_MAX_L2_BASE_FEE
         );
         assert!(calculate_next_controlled_base_fee(BASE_FEE_FLOOR - 1, 0, params).is_err());
         assert_eq!(
@@ -702,5 +703,35 @@ mod tests {
             300
         );
         assert_eq!(params.rebase_controlled_fee(2_000), 1_000);
+    }
+
+    #[test]
+    fn hard_maximum_is_safe_across_controller_and_header_arithmetic() {
+        let params = DynamicBaseFeeParams {
+            floor: BASE_FEE_FLOOR,
+            initial_controlled_fee: INITIAL_CONTROLLED_BASE_FEE,
+            maximum: MAX_L2_BASE_FEE,
+            gas_target: 1,
+            max_change_denominator: 1,
+        };
+
+        assert_eq!(
+            calculate_next_controlled_base_fee(MAX_L2_BASE_FEE, u64::MAX, params).unwrap(),
+            MAX_L2_BASE_FEE
+        );
+        assert!(
+            u128::from(MAX_L2_BASE_FEE)
+                .checked_mul(u128::from(u64::MAX))
+                .is_some()
+        );
+        assert_eq!(
+            DynamicBaseFeeState {
+                controlled_fee: MAX_L2_BASE_FEE,
+                overhead: U256::MAX,
+                params,
+            }
+            .header_base_fee(),
+            MAX_L2_BASE_FEE
+        );
     }
 }

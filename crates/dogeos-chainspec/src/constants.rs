@@ -24,18 +24,25 @@ pub const BASE_FEE_FLOOR: u64 = 10_000_000_000;
 /// A SystemConfig override may select a different activation seed.
 pub const INITIAL_CONTROLLED_BASE_FEE: u64 = 500_000_000_000;
 
-/// Desired controlled-fee ceiling used to derive [`MAX_L2_BASE_FEE`].
+/// Desired controlled-fee ceiling used to derive [`DEFAULT_MAX_L2_BASE_FEE`].
 pub const DESIRED_CONTROLLED_FEE_CEILING: u64 = 999_900_000_000;
 
-/// Provisional L1-congestion overhead allowance used to derive [`MAX_L2_BASE_FEE`].
+/// Provisional L1-congestion overhead allowance used to derive [`DEFAULT_MAX_L2_BASE_FEE`].
 ///
 /// This is a calibration input, not a separately enforced runtime limit.
 pub const BASE_FEE_OVERHEAD_BUDGET: u64 = 100_000_000;
 
+/// Default SystemConfig maximum for the controlled component and final L2 base fee.
+///
+/// This remains at the provisional 1,000 Gwei operating limit. SystemConfig may select another
+/// value up to [`MAX_L2_BASE_FEE`] without a protocol upgrade.
+pub const DEFAULT_MAX_L2_BASE_FEE: u64 = DESIRED_CONTROLLED_FEE_CEILING + BASE_FEE_OVERHEAD_BUDGET;
+
 /// Tsuki hard safety maximum for both the controlled component and final L2 base fee.
 ///
-/// SystemConfig may select a lower runtime maximum without a protocol upgrade.
-pub const MAX_L2_BASE_FEE: u64 = DESIRED_CONTROLLED_FEE_CEILING + BASE_FEE_OVERHEAD_BUDGET;
+/// The provisional 10,000,000 Gwei bound is calibrated against a simple transfer during severe
+/// Ethereum L1 congestion and requires further economic research before Tsuki activation.
+pub const MAX_L2_BASE_FEE: u64 = 10_000_000_000_000_000;
 
 /// Default long-run gas target for the Tsuki utilization controller.
 pub const DYNAMIC_BASE_FEE_GAS_TARGET: u64 = 10_000_000;
@@ -44,9 +51,10 @@ pub const DYNAMIC_BASE_FEE_GAS_TARGET: u64 = 10_000_000;
 pub const DYNAMIC_BASE_FEE_MAX_CHANGE_DENOMINATOR: u64 = 8;
 
 const _: () = {
-    assert!(MAX_L2_BASE_FEE == DESIRED_CONTROLLED_FEE_CEILING + BASE_FEE_OVERHEAD_BUDGET);
+    assert!(DEFAULT_MAX_L2_BASE_FEE == DESIRED_CONTROLLED_FEE_CEILING + BASE_FEE_OVERHEAD_BUDGET);
     assert!(BASE_FEE_FLOOR <= INITIAL_CONTROLLED_BASE_FEE);
-    assert!(INITIAL_CONTROLLED_BASE_FEE <= MAX_L2_BASE_FEE);
+    assert!(INITIAL_CONTROLLED_BASE_FEE <= DEFAULT_MAX_L2_BASE_FEE);
+    assert!(DEFAULT_MAX_L2_BASE_FEE <= MAX_L2_BASE_FEE);
     assert!(DYNAMIC_BASE_FEE_GAS_TARGET != 0);
     assert!(DYNAMIC_BASE_FEE_MAX_CHANGE_DENOMINATOR != 0);
 };

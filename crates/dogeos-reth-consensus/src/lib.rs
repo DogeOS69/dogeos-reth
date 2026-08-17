@@ -446,7 +446,7 @@ mod tests {
         header.base_fee_per_gas = Some(MAX_L2_BASE_FEE + 1);
         assert!(matches!(
             consensus.validate_header(&SealedHeader::seal_slow(header)),
-            Err(ConsensusError::Other(message)) if message.contains("1000000000000")
+            Err(ConsensusError::Other(message)) if message.contains("10000000000000000")
         ));
     }
 }
