@@ -1,5 +1,4 @@
 use alloc::{boxed::Box, string::ToString};
-use core::fmt;
 
 use alloy_eips::eip2935::HISTORY_STORAGE_ADDRESS;
 use alloy_evm::{
@@ -18,19 +17,12 @@ use revm::{
 };
 
 /// An ephemeral helper type for executing system calls.
+#[derive(derive_more::Debug)]
 pub(crate) struct ScrollSystemCaller<Spec> {
     spec: Spec,
     /// Optional hook invoked with each state change the executor commits.
+    #[debug("installed={}", hook.is_some())]
     hook: Option<Box<dyn OnStateHook>>,
-}
-
-impl<Spec: fmt::Debug> fmt::Debug for ScrollSystemCaller<Spec> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ScrollSystemCaller")
-            .field("spec", &self.spec)
-            .field("hook_installed", &self.hook.is_some())
-            .finish_non_exhaustive()
-    }
 }
 
 impl<Spec> ScrollSystemCaller<Spec> {
