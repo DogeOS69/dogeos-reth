@@ -10,6 +10,8 @@ publish = false
 [dependencies]
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
+dogeos-chainspec.workspace = true
+dogeos-hardforks.workspace = true
 dogeos-protocol-types = { workspace = true, features = ["std"] }
 dogeos-reth-primitives = { workspace = true, features = ["std", "reth-codec"] }
 reth-consensus.workspace = true
@@ -20,4 +22,4 @@ thiserror.workspace = true
 
 [features]
 default = ["std"]
-std = []
+std = ["dogeos-chainspec/std", "dogeos-hardforks/std"]

@@ -11,6 +11,44 @@ pub const MAX_TX_PAYLOAD_BYTES_PER_BLOCK: usize = 120 * 1024;
 /// Feynman EIP-1559 parameters.
 pub const DOGEOS_BASE_FEE_PARAMS_FEYNMAN: BaseFeeParams = BaseFeeParams::new(8, 2);
 
+/// Pre-Tsuki protocol-enforced maximum L2 base fee.
+pub const LEGACY_MAX_L2_BASE_FEE: u64 = 10_000_000_000;
+
+/// Minimum Tsuki utilization-controlled base-fee component.
+///
+/// This is a provisional economic parameter that must be reviewed before production activation.
+pub const BASE_FEE_FLOOR: u64 = 10_000_000_000;
+
+/// Utilization-controlled base-fee component used by the first Tsuki block.
+///
+/// This is a provisional economic parameter that must be reviewed before production activation.
+pub const INITIAL_CONTROLLED_BASE_FEE: u64 = 500_000_000_000;
+
+/// Desired controlled-fee ceiling used to derive [`MAX_L2_BASE_FEE`].
+pub const DESIRED_CONTROLLED_FEE_CEILING: u64 = 999_900_000_000;
+
+/// Provisional L1-congestion overhead allowance used to derive [`MAX_L2_BASE_FEE`].
+///
+/// This is a calibration input, not a separately enforced runtime limit.
+pub const BASE_FEE_OVERHEAD_BUDGET: u64 = 100_000_000;
+
+/// Tsuki protocol-enforced maximum for both the controlled component and final L2 base fee.
+pub const MAX_L2_BASE_FEE: u64 = DESIRED_CONTROLLED_FEE_CEILING + BASE_FEE_OVERHEAD_BUDGET;
+
+/// Fixed long-run gas target for the Tsuki utilization controller.
+pub const DYNAMIC_BASE_FEE_GAS_TARGET: u64 = 10_000_000;
+
+/// Maximum-change denominator for the Tsuki utilization controller.
+pub const DYNAMIC_BASE_FEE_MAX_CHANGE_DENOMINATOR: u64 = 8;
+
+const _: () = {
+    assert!(MAX_L2_BASE_FEE == DESIRED_CONTROLLED_FEE_CEILING + BASE_FEE_OVERHEAD_BUDGET);
+    assert!(BASE_FEE_FLOOR <= INITIAL_CONTROLLED_BASE_FEE);
+    assert!(INITIAL_CONTROLLED_BASE_FEE <= MAX_L2_BASE_FEE);
+    assert!(DYNAMIC_BASE_FEE_GAS_TARGET != 0);
+    assert!(DYNAMIC_BASE_FEE_MAX_CHANGE_DENOMINATOR != 0);
+};
+
 /// DogeOS development-network L1 configuration.
 pub const DOGEOS_DEV_L1_CONFIG: L1Config = L1Config {
     l1_chain_id: alloy_chains::NamedChain::Goerli as u64,

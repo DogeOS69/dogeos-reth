@@ -1,9 +1,11 @@
 //! Idempotent Feynman+ protocol state transitions.
 
+mod dynamic_base_fee;
 mod feynman;
 mod galileo_v2;
 mod tsuki;
 
+pub use dynamic_base_fee::store_next_controlled_base_fee;
 pub(crate) use feynman::apply_feynman_hard_fork;
 pub(crate) use galileo_v2::apply_galileo_v2_hard_fork;
 pub(crate) use tsuki::apply_tsuki_hard_fork;

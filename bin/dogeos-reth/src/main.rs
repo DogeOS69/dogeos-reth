@@ -11,8 +11,8 @@ fn main() {
         .run_with_components::<DogeosNodeTypes>(
             |chain_spec| {
                 (
-                    ScrollEvmConfig::dogeos(chain_spec),
-                    Arc::new(DogeosConsensus),
+                    ScrollEvmConfig::dogeos(chain_spec.clone()),
+                    Arc::new(DogeosConsensus::new(chain_spec)),
                 )
             },
             async move |builder, args| {

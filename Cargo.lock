@@ -2803,6 +2803,8 @@ version = "0.1.0"
 dependencies = [
  "alloy-consensus",
  "alloy-primitives",
+ "dogeos-chainspec",
+ "dogeos-hardforks",
  "dogeos-protocol-types",
  "dogeos-reth-primitives",
  "reth-consensus",
