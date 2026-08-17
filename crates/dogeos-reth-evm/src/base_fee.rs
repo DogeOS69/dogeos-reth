@@ -3,15 +3,48 @@ use alloy_consensus::BlockHeader;
 use alloy_eips::calc_next_block_base_fee;
 use alloy_primitives::U256;
 use core::fmt;
-pub use dogeos_chainspec::{
-    BASE_FEE_FLOOR, DEFAULT_MAX_L2_BASE_FEE, DYNAMIC_BASE_FEE_GAS_TARGET,
-    DYNAMIC_BASE_FEE_MAX_CHANGE_DENOMINATOR, INITIAL_CONTROLLED_BASE_FEE, LEGACY_MAX_L2_BASE_FEE,
-    MAX_L2_BASE_FEE,
-};
 use dogeos_chainspec::{ChainConfig, ScrollChainConfig};
+pub use dogeos_chainspec::{LEGACY_MAX_L2_BASE_FEE, MAX_L2_BASE_FEE};
 use dogeos_hardforks::DogeosHardforks;
 use reth_chainspec::EthChainSpec;
 use revm::Database;
+
+/// Default minimum Tsuki utilization-controlled base-fee component.
+///
+/// A SystemConfig override may raise this within the hard protocol maximum.
+pub const BASE_FEE_FLOOR: u64 = 10_000_000_000;
+
+/// Default utilization-controlled base-fee component used by the first Tsuki block.
+///
+/// A SystemConfig override may select a different activation seed.
+pub const INITIAL_CONTROLLED_BASE_FEE: u64 = 500_000_000_000;
+
+/// Desired controlled-fee ceiling used to derive [`DEFAULT_MAX_L2_BASE_FEE`].
+const DESIRED_CONTROLLED_FEE_CEILING: u64 = 999_900_000_000;
+
+/// Provisional L1-congestion overhead allowance used to derive [`DEFAULT_MAX_L2_BASE_FEE`].
+///
+/// This is a calibration input, not a separately enforced runtime limit.
+const BASE_FEE_OVERHEAD_BUDGET: u64 = 100_000_000;
+
+/// Default SystemConfig maximum for the controlled component and final L2 base fee.
+///
+/// This remains at the provisional 1,000 Gwei operating limit. SystemConfig may select another
+/// value up to [`MAX_L2_BASE_FEE`] without a protocol upgrade.
+pub const DEFAULT_MAX_L2_BASE_FEE: u64 = DESIRED_CONTROLLED_FEE_CEILING + BASE_FEE_OVERHEAD_BUDGET;
+
+/// Default long-run gas target for the Tsuki utilization controller.
+pub const DYNAMIC_BASE_FEE_GAS_TARGET: u64 = 10_000_000;
+
+/// Default maximum-change denominator for the Tsuki utilization controller.
+pub const DYNAMIC_BASE_FEE_MAX_CHANGE_DENOMINATOR: u64 = 8;
+
+const _: () = {
+    assert!(DEFAULT_MAX_L2_BASE_FEE == DESIRED_CONTROLLED_FEE_CEILING + BASE_FEE_OVERHEAD_BUDGET);
+    assert!(BASE_FEE_FLOOR <= INITIAL_CONTROLLED_BASE_FEE);
+    assert!(INITIAL_CONTROLLED_BASE_FEE <= DEFAULT_MAX_L2_BASE_FEE);
+    assert!(DEFAULT_MAX_L2_BASE_FEE <= MAX_L2_BASE_FEE);
+};
 
 define_protocol_storage_slots! {
     /// Protocol-owned SystemConfig slots used by the Tsuki base-fee controller.
