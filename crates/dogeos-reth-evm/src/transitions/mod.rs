@@ -4,27 +4,29 @@ mod feynman;
 mod galileo_v2;
 mod tsuki;
 
-pub use feynman::apply_feynman_hard_fork;
-pub use galileo_v2::apply_galileo_v2_hard_fork;
-pub use tsuki::apply_tsuki_hard_fork;
+pub(crate) use feynman::apply_feynman_hard_fork;
+pub(crate) use galileo_v2::apply_galileo_v2_hard_fork;
+pub(crate) use tsuki::apply_tsuki_hard_fork;
 
 use revm::{
     Database, DatabaseCommit,
     primitives::{Address, U256},
-    state::{Account, AccountInfo, EvmStorageSlot},
+    state::{Account, AccountInfo, EvmState, EvmStorageSlot},
 };
 
 /// Commits a protocol-owned account update through REVM's public database boundary.
 ///
 /// Reading every original slot before committing is important for witness generation and for
 /// preserving the revert information accumulated by [`revm::database::State`].
+///
+/// Returns the committed state update so the executor can forward it to state hooks.
 fn commit_account_update<DB>(
     db: &mut DB,
     address: Address,
     original_info: AccountInfo,
     new_info: AccountInfo,
     storage: impl IntoIterator<Item = (U256, U256)>,
-) -> Result<(), DB::Error>
+) -> Result<EvmState, DB::Error>
 where
     DB: Database + DatabaseCommit,
 {
@@ -40,6 +42,7 @@ where
         );
     }
 
-    db.commit([(address, account)].into_iter().collect());
-    Ok(())
+    let state = [(address, account)].into_iter().collect::<EvmState>();
+    db.commit(state.clone());
+    Ok(state)
 }

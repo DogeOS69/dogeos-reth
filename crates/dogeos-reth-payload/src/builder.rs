@@ -343,6 +343,8 @@ where
         trie_updates,
         block,
     } = if let Some(mut handle) = trie_handle.take() {
+        // Drop the state hook, which sends FinishedStateUpdates and signals the sparse-trie task
+        // to finalize.
         builder.executor_mut().set_state_hook(None);
         match handle.state_root() {
             Ok(outcome) => builder.finish(

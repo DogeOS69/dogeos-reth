@@ -15,7 +15,8 @@ use alloy_evm::{
     Database, Evm, EvmFactory, FromRecoveredTx, FromTxWithEncoded, RecoveredTx,
     block::{
         BlockExecutionError, BlockExecutionResult, BlockExecutor, BlockExecutorFactory,
-        BlockExecutorFor, BlockValidationError, ExecutableTx, OnStateHook, StateDB, TxResult,
+        BlockExecutorFor, BlockValidationError, ExecutableTx, OnStateHook, StateChangeSource,
+        StateDB, TxResult,
     },
 };
 use alloy_primitives::{B256, U256};
@@ -171,11 +172,10 @@ where
             .dogeos_fork_activation(DogeosHardfork::Feynman)
             .active_at_timestamp(self.evm.block().timestamp().to())
         {
-            if let Err(err) = apply_feynman_hard_fork(self.evm.db_mut()) {
-                return Err(BlockExecutionError::msg(format!(
-                    "error occurred at Feynman fork: {err:?}"
-                )));
-            };
+            let state = apply_feynman_hard_fork(self.evm.db_mut()).map_err(|err| {
+                BlockExecutionError::msg(format!("error occurred at Feynman fork: {err:?}"))
+            })?;
+            self.system_caller.on_pre_block_state(&state);
         }
 
         // apply gas oracle predeploy upgrade at GalileoV2 transition block.
@@ -185,11 +185,10 @@ where
             .dogeos_fork_activation(DogeosHardfork::GalileoV2)
             .active_at_timestamp(self.evm.block().timestamp().to())
         {
-            if let Err(err) = apply_galileo_v2_hard_fork(self.evm.db_mut()) {
-                return Err(BlockExecutionError::msg(format!(
-                    "error occurred at GalileoV2 fork: {err:?}"
-                )));
-            };
+            let state = apply_galileo_v2_hard_fork(self.evm.db_mut()).map_err(|err| {
+                BlockExecutionError::msg(format!("error occurred at GalileoV2 fork: {err:?}"))
+            })?;
+            self.system_caller.on_pre_block_state(&state);
         }
 
         // inject NativeDogeToken predeploy at Tsuki transition block.
@@ -199,11 +198,10 @@ where
             .dogeos_fork_activation(DogeosHardfork::Tsuki)
             .active_at_timestamp(self.evm.block().timestamp().to())
         {
-            if let Err(err) = apply_tsuki_hard_fork(self.evm.db_mut()) {
-                return Err(BlockExecutionError::msg(format!(
-                    "error occurred at Tsuki fork: {err:?}"
-                )));
-            };
+            let state = apply_tsuki_hard_fork(self.evm.db_mut()).map_err(|err| {
+                BlockExecutionError::msg(format!("error occurred at Tsuki fork: {err:?}"))
+            })?;
+            self.system_caller.on_pre_block_state(&state);
         }
 
         // apply eip-2935.
@@ -282,6 +280,9 @@ where
             tx_type,
         } = output;
 
+        self.system_caller
+            .on_state(StateChangeSource::Transaction(self.receipts.len()), &state);
+
         let gas_used = result.gas_used();
         self.gas_used += gas_used;
 
@@ -310,7 +311,9 @@ where
         ))
     }
 
-    fn set_state_hook(&mut self, _hook: Option<Box<dyn OnStateHook>>) {}
+    fn set_state_hook(&mut self, hook: Option<Box<dyn OnStateHook>>) {
+        self.system_caller.set_state_hook(hook);
+    }
 
     fn evm_mut(&mut self) -> &mut Self::Evm {
         &mut self.evm
@@ -435,5 +438,173 @@ where
         I: Inspector<<Self::EvmFactory as EvmFactory>::Context<DB>> + 'a,
     {
         ScrollBlockExecutor::new(evm, ctx, self.spec.clone(), &self.receipt_builder)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        ScrollRethReceiptBuilder, ScrollTransactionIntoTxEnv,
+        gas_price_oracle::L1_GAS_PRICE_ORACLE_ADDRESS,
+    };
+    use alloy_evm::{EvmEnv, block::StateChangePreBlockSource};
+    use alloy_primitives::{Address, Bytes};
+    use dogeos_chainspec::DOGEOS_MAINNET;
+    use revm::{
+        context::{
+            BlockEnv, CfgEnv, TxEnv,
+            result::{ExecutionResult, HaltReason, ResultAndState, ResultGas},
+        },
+        database::{EmptyDB, State},
+        state::{Account, AccountInfo, EvmState},
+    };
+    use revm_scroll::{ScrollSpecId, precompile::transfer::NATIVE_DOGE_TOKEN_ADDRESS};
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    type RecordedUpdates = Arc<Mutex<Vec<(StateChangeSource, Vec<Address>)>>>;
+
+    fn recording_hook() -> (RecordedUpdates, Box<dyn OnStateHook>) {
+        let updates = Arc::new(Mutex::new(Vec::new()));
+        let hook_updates = Arc::clone(&updates);
+        let hook = Box::new(move |source, state: &EvmState| {
+            let mut keys = state.keys().copied().collect::<Vec<_>>();
+            keys.sort_unstable();
+            hook_updates.lock().unwrap().push((source, keys));
+        });
+        (updates, hook)
+    }
+
+    fn empty_state_evm()
+    -> impl EvmExt<DB = State<EmptyDB>, Tx = ScrollTransactionIntoTxEnv<TxEnv>, HaltReason = HaltReason>
+    {
+        let state = State::builder()
+            .with_database(EmptyDB::default())
+            .with_bundle_update()
+            .build();
+        ScrollEvmFactory::<ScrollDefaultPrecompilesFactory>::default().create_evm(
+            state,
+            EvmEnv::new(
+                CfgEnv::new_with_spec(ScrollSpecId::TSUKI),
+                BlockEnv::default(),
+            ),
+        )
+    }
+
+    fn transaction_result(address: Address) -> ScrollTxResult<HaltReason> {
+        let mut account = Account::from(AccountInfo {
+            balance: U256::ONE,
+            ..Default::default()
+        });
+        account.mark_touch();
+
+        ScrollTxResult {
+            result: ResultAndState {
+                result: ExecutionResult::Revert {
+                    gas: ResultGas::default(),
+                    logs: Vec::new(),
+                    output: Bytes::new(),
+                },
+                state: [(address, account)].into_iter().collect(),
+            },
+            l1_fee: U256::ZERO,
+            tx_type: 0,
+        }
+    }
+
+    #[test]
+    fn executor_forwards_transaction_state_hooks_with_receipt_indices() {
+        let mut executor = ScrollBlockExecutor::new(
+            empty_state_evm(),
+            ScrollBlockExecutionCtx::default(),
+            DOGEOS_MAINNET.clone(),
+            ScrollRethReceiptBuilder,
+        );
+        let (updates, hook) = recording_hook();
+        let first = Address::repeat_byte(0x11);
+        let second = Address::repeat_byte(0x22);
+        executor
+            .evm_mut()
+            .db_mut()
+            .load_cache_account(first)
+            .unwrap();
+        executor
+            .evm_mut()
+            .db_mut()
+            .load_cache_account(second)
+            .unwrap();
+        executor.set_state_hook(Some(hook));
+
+        executor
+            .commit_transaction(transaction_result(first))
+            .unwrap();
+        executor
+            .commit_transaction(transaction_result(second))
+            .unwrap();
+
+        let updates = updates.lock().unwrap();
+        assert_eq!(updates.len(), 2);
+        assert!(matches!(updates[0].0, StateChangeSource::Transaction(0)));
+        assert_eq!(updates[0].1, [first]);
+        assert!(matches!(updates[1].0, StateChangeSource::Transaction(1)));
+        assert_eq!(updates[1].1, [second]);
+    }
+
+    #[test]
+    fn executor_forwards_pre_block_transition_state_hooks() {
+        let mut executor = ScrollBlockExecutor::new(
+            empty_state_evm(),
+            ScrollBlockExecutionCtx::default(),
+            DOGEOS_MAINNET.clone(),
+            ScrollRethReceiptBuilder,
+        );
+        let (updates, hook) = recording_hook();
+        executor.set_state_hook(Some(hook));
+
+        executor.apply_pre_execution_changes().unwrap();
+
+        let updates = updates.lock().unwrap();
+        assert!(!updates.is_empty());
+        assert!(updates.iter().all(|(source, _)| matches!(
+            source,
+            StateChangeSource::PreBlock(StateChangePreBlockSource::BlockHashesContract)
+        )));
+        let keys = updates
+            .iter()
+            .flat_map(|(_, keys)| keys.iter().copied())
+            .collect::<Vec<_>>();
+        assert!(keys.contains(&L1_GAS_PRICE_ORACLE_ADDRESS));
+        assert!(keys.contains(&NATIVE_DOGE_TOKEN_ADDRESS));
+    }
+
+    #[test]
+    fn clearing_executor_state_hook_drops_previous_hook_once() {
+        struct DropCounter(Arc<AtomicUsize>);
+
+        impl Drop for DropCounter {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+
+        let mut executor = ScrollBlockExecutor::new(
+            empty_state_evm(),
+            ScrollBlockExecutionCtx::default(),
+            DOGEOS_MAINNET.clone(),
+            ScrollRethReceiptBuilder,
+        );
+        let drops = Arc::new(AtomicUsize::new(0));
+        let guard = DropCounter(Arc::clone(&drops));
+        executor.set_state_hook(Some(Box::new(move |_, _: &EvmState| {
+            let _ = &guard;
+        })));
+        assert_eq!(drops.load(Ordering::Relaxed), 0);
+
+        executor.set_state_hook(None);
+
+        assert_eq!(drops.load(Ordering::Relaxed), 1);
     }
 }

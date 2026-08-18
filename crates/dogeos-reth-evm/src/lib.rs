@@ -22,7 +22,7 @@ pub use l1::RethL1BlockInfo;
 mod spec;
 pub use spec::spec_id_at_timestamp_and_number;
 mod system_caller;
-pub mod transitions;
+mod transitions;
 mod witness_state;
 pub use witness_state::{
     L2_MESSAGE_QUEUE_ADDRESS, LoadMessageQueueWitnessState, NEXT_MESSAGE_INDEX_SLOT,

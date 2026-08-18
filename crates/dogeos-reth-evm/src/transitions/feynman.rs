@@ -4,7 +4,7 @@ use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
     primitives::{Bytes, U256, bytes},
-    state::AccountInfo,
+    state::{AccountInfo, EvmState},
 };
 
 // Import L1GasPriceOracle address and slots.
@@ -33,7 +33,9 @@ const FEYNMAN_L1_GAS_PRICE_ORACLE_STORAGE: [(U256, U256); 3] = [
 ///    - Updates the L1 oracle contract bytecode to reflect the DA cost reduction.
 ///    - Sets the initial compression penalty threshold and penalty factor values.
 ///    - Sets the `isFeynman` slot to 1 (true).
-pub fn apply_feynman_hard_fork<DB>(db: &mut DB) -> Result<(), DB::Error>
+///
+/// Returns the committed state update so the executor can forward it to state hooks.
+pub(crate) fn apply_feynman_hard_fork<DB>(db: &mut DB) -> Result<EvmState, DB::Error>
 where
     DB: Database + DatabaseCommit,
 {
@@ -43,7 +45,7 @@ where
     // other reliable way to apply the change only at the transition block, since
     // `ScrollBlockExecutor` does not have access to the parent timestamp.
     if db.storage(L1_GAS_PRICE_ORACLE_ADDRESS, GPO_IS_FEYNMAN_SLOT)? == IS_FEYNMAN {
-        return Ok(());
+        return Ok(EvmState::default());
     }
 
     // compute the code hash
@@ -79,7 +81,7 @@ mod tests {
             states::{StorageSlot, bundle_state::BundleRetention, plain_account::PlainStorage},
         },
         primitives::{U256, keccak256},
-        state::{AccountInfo, Bytecode},
+        state::{AccountInfo, Bytecode, EvmStorageSlot},
     };
     use std::str::FromStr;
 
@@ -124,7 +126,15 @@ mod tests {
         );
 
         // apply feynman fork
-        apply_feynman_hard_fork(&mut state)?;
+        let committed_state = apply_feynman_hard_fork(&mut state)?;
+        let committed_oracle = committed_state.get(&L1_GAS_PRICE_ORACLE_ADDRESS).unwrap();
+        assert!(committed_oracle.is_touched());
+        for (slot, present_value) in FEYNMAN_L1_GAS_PRICE_ORACLE_STORAGE {
+            assert_eq!(
+                committed_oracle.storage.get(&slot),
+                Some(&EvmStorageSlot::new_changed(U256::ZERO, present_value, 0))
+            );
+        }
 
         // merge transitions
         state.merge_transitions(BundleRetention::Reverts);
@@ -226,7 +236,8 @@ mod tests {
         state.load_cache_account(L1_GAS_PRICE_ORACLE_ADDRESS)?;
 
         // apply feynman fork
-        apply_feynman_hard_fork(&mut state)?;
+        let committed_state = apply_feynman_hard_fork(&mut state)?;
+        assert!(committed_state.is_empty());
 
         // merge transitions
         state.merge_transitions(BundleRetention::Reverts);
