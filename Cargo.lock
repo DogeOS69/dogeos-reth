@@ -9325,7 +9325,7 @@ dependencies = [
 [[package]]
 name = "revm-scroll"
 version = "0.1.0"
-source = "git+https://github.com/DogeOS69/dogeos-revm.git?branch=dogeos#dcf087684f255131c96c0d20f3291eef9198e990"
+source = "git+https://github.com/DogeOS69/dogeos-revm.git?rev=dcf087684f255131c96c0d20f3291eef9198e990#dcf087684f255131c96c0d20f3291eef9198e990"
 dependencies = [
  "alloy-evm",
  "auto_impl",
