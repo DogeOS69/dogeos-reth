@@ -17,7 +17,8 @@ use reth_primitives_traits::{
     receipt::gas_spent_by_transactions,
 };
 
-pub const DOGEOS_MAXIMUM_BASE_FEE: u64 = 10_000_000_000;
+/// Hard safety maximum accepted by consensus header validation (1,000,000 Gwei).
+pub const HARD_MAX_L2_BASE_FEE: u64 = 1_000_000_000_000_000;
 pub const DOGEOS_BLOCK_DIFFICULTY: U256 = U256::from_limbs([1, 0, 0, 0]);
 
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
@@ -36,7 +37,7 @@ pub enum DogeosConsensusError {
     ExtraDataNotEmpty,
     #[error("base fee missing")]
     BaseFeeMissing,
-    #[error("base fee exceeds {DOGEOS_MAXIMUM_BASE_FEE}")]
+    #[error("base fee exceeds {HARD_MAX_L2_BASE_FEE}")]
     BaseFeeOverLimit,
     #[error("withdrawals are not supported")]
     WithdrawalsPresent,
@@ -172,7 +173,7 @@ impl HeaderValidator<alloy_consensus::Header> for DogeosConsensus {
         let Some(base_fee) = header.base_fee_per_gas() else {
             return Err(DogeosConsensusError::BaseFeeMissing.into());
         };
-        if base_fee > DOGEOS_MAXIMUM_BASE_FEE {
+        if base_fee > HARD_MAX_L2_BASE_FEE {
             return Err(DogeosConsensusError::BaseFeeOverLimit.into());
         }
         if header.withdrawals_root().is_some()
@@ -375,6 +376,24 @@ mod tests {
         assert!(matches!(
             consensus.validate_header(&SealedHeader::seal_slow(header)),
             Err(ConsensusError::Other(message)) if message.contains("extra data must be empty")
+        ));
+    }
+
+    #[test]
+    fn base_fee_hard_safety_limit_is_enforced() {
+        let consensus = DogeosConsensus;
+        let mut header = valid_header();
+        header.base_fee_per_gas = Some(HARD_MAX_L2_BASE_FEE);
+        assert!(
+            consensus
+                .validate_header(&SealedHeader::seal_slow(header.clone()))
+                .is_ok()
+        );
+
+        header.base_fee_per_gas = Some(HARD_MAX_L2_BASE_FEE + 1);
+        assert!(matches!(
+            consensus.validate_header(&SealedHeader::seal_slow(header)),
+            Err(ConsensusError::Other(message)) if message.contains("base fee exceeds")
         ));
     }
 

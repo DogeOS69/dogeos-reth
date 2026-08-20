@@ -11,7 +11,7 @@ use reth_transaction_pool::{PoolTransaction, TransactionPool};
 use std::time::Duration;
 
 /// Default gas limit inherited by the standalone DogeOS sequencer.
-pub const DOGEOS_DEFAULT_GAS_LIMIT: u64 = 20_000_000;
+pub const DOGEOS_DEFAULT_GAS_LIMIT: u64 = 30_000_000;
 /// Maximum encoded transaction bytes considered during one payload build.
 pub const DOGEOS_DEFAULT_PAYLOAD_SIZE_LIMIT: u64 = 122_880;
 /// Payload jobs stop selecting pool transactions after this duration.
@@ -86,6 +86,7 @@ mod tests {
     #[test]
     fn defaults_match_current_sequencer_policy() {
         let config = DogeosPayloadBuilderBuilder::default();
+        assert_eq!(DOGEOS_DEFAULT_GAS_LIMIT, 30_000_000);
         assert_eq!(config.payload_building_time_limit, Duration::from_secs(1));
         assert_eq!(
             config.block_da_size_limit,

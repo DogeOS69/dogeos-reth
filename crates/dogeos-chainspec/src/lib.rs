@@ -368,6 +368,16 @@ mod tests {
     }
 
     #[test]
+    fn supported_specs_use_the_dogeos_base_fee_parameters() {
+        for spec in [&*DOGEOS_MAINNET, &*DOGEOS_CHIKYU, &*DOGEOS_DEV] {
+            let params = spec.base_fee_params_at_timestamp(0);
+            assert_eq!(params.max_change_denominator, 512);
+            assert_eq!(params.elasticity_multiplier, 10);
+            assert_eq!(30_000_000 / params.elasticity_multiplier, 3_000_000);
+        }
+    }
+
+    #[test]
     fn chikyu_preserves_published_genesis_hash() {
         assert_eq!(DOGEOS_CHIKYU.genesis_hash(), DOGEOS_CHIKYU_GENESIS_HASH);
     }

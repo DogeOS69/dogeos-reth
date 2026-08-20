@@ -6,14 +6,14 @@ use dogeos_hardforks::DogeosHardforks;
 use reth_chainspec::EthChainSpec;
 use revm::Database;
 
-/// Protocol-enforced maximum L2 base fee.
-pub const MAX_L2_BASE_FEE: u64 = 10_000_000_000;
+/// Default operating maximum selected by node base-fee policy (300,000 Gwei).
+pub const DEFAULT_OPERATING_MAX_L2_BASE_FEE: u64 = 300_000_000_000_000;
 
 /// L2 base-fee overhead slot in the system config contract.
 const L2_BASE_FEE_OVERHEAD_SLOT: U256 = U256::from_limbs([101, 0, 0, 0]);
 
-/// Default overhead when the system config contract has not initialized the slot.
-pub const DEFAULT_BASE_FEE_OVERHEAD: U256 = U256::from_limbs([15_680_000, 0, 0, 0]);
+/// Default overhead (420 Gwei), and thus effective floor, when the system-config slot is zero.
+pub const DEFAULT_BASE_FEE_OVERHEAD: U256 = U256::from_limbs([420_000_000_000, 0, 0, 0]);
 
 /// Precision retained for external callers that share the inherited Scroll fee constants.
 pub const L1_BASE_FEE_PRECISION: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
@@ -65,7 +65,7 @@ where
 
         Ok(next_eip1559_base_fee
             .saturating_add(overhead)
-            .min(MAX_L2_BASE_FEE))
+            .min(DEFAULT_OPERATING_MAX_L2_BASE_FEE))
     }
 }
 
@@ -78,7 +78,7 @@ mod tests {
     fn parent(base_fee: u64, gas_used: u64) -> alloy_consensus::Header {
         alloy_consensus::Header {
             base_fee_per_gas: Some(base_fee),
-            gas_limit: 20_000_000,
+            gas_limit: 30_000_000,
             gas_used,
             timestamp: 1,
             ..Default::default()
@@ -86,7 +86,7 @@ mod tests {
     }
 
     #[test]
-    fn default_overhead_preserves_fee_at_target_gas() -> eyre::Result<()> {
+    fn default_overhead_sets_the_base_fee_floor() -> eyre::Result<()> {
         let mut state = State::builder()
             .with_database(EmptyDB::default())
             .with_bundle_update()
@@ -94,8 +94,8 @@ mod tests {
         let provider = ScrollBaseFeeProvider::new(DOGEOS_MAINNET.clone());
 
         assert_eq!(
-            provider.next_block_base_fee(&mut state, &parent(1_000_000_000, 10_000_000), 2)?,
-            1_000_000_000
+            provider.next_block_base_fee(&mut state, &parent(1_000_000_000, 3_000_000), 2)?,
+            DEFAULT_BASE_FEE_OVERHEAD.saturating_to::<u64>()
         );
         Ok(())
     }
@@ -114,7 +114,7 @@ mod tests {
         let provider = ScrollBaseFeeProvider::new(DOGEOS_MAINNET.clone());
 
         assert_eq!(
-            provider.next_block_base_fee(&mut state, &parent(1_000_000_000, 10_000_000), 2)?,
+            provider.next_block_base_fee(&mut state, &parent(1_000_000_000, 3_000_000), 2)?,
             1_000_000_000
         );
         Ok(())
@@ -129,8 +129,31 @@ mod tests {
         let provider = ScrollBaseFeeProvider::new(DOGEOS_MAINNET.clone());
 
         assert_eq!(
-            provider.next_block_base_fee(&mut state, &parent(MAX_L2_BASE_FEE, 20_000_000), 2,)?,
-            MAX_L2_BASE_FEE
+            provider.next_block_base_fee(
+                &mut state,
+                &parent(DEFAULT_OPERATING_MAX_L2_BASE_FEE, 30_000_000),
+                2,
+            )?,
+            DEFAULT_OPERATING_MAX_L2_BASE_FEE
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn base_fee_calculation_is_safe_at_the_hard_limit() -> eyre::Result<()> {
+        let mut state = State::builder()
+            .with_database(EmptyDB::default())
+            .with_bundle_update()
+            .build();
+        let provider = ScrollBaseFeeProvider::new(DOGEOS_MAINNET.clone());
+
+        assert_eq!(
+            provider.next_block_base_fee(
+                &mut state,
+                &parent(1_000_000_000_000_000, 30_000_000),
+                2,
+            )?,
+            DEFAULT_OPERATING_MAX_L2_BASE_FEE
         );
         Ok(())
     }

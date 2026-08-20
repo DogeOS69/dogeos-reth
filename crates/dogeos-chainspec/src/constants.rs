@@ -8,8 +8,8 @@ pub const SCROLL_FEE_VAULT_ADDRESS: Address = address!("530000000000000000000000
 /// Maximum transaction payload size produced by a DogeOS block.
 pub const MAX_TX_PAYLOAD_BYTES_PER_BLOCK: usize = 120 * 1024;
 
-/// Feynman EIP-1559 parameters.
-pub const DOGEOS_BASE_FEE_PARAMS_FEYNMAN: BaseFeeParams = BaseFeeParams::new(8, 2);
+/// Default Feynman sequencer policy: a 1/512 change denominator and 10x elasticity.
+pub const DOGEOS_BASE_FEE_PARAMS_FEYNMAN: BaseFeeParams = BaseFeeParams::new(512, 10);
 
 /// DogeOS development-network L1 configuration.
 pub const DOGEOS_DEV_L1_CONFIG: L1Config = L1Config {
