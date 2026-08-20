@@ -9,7 +9,7 @@ cargo metadata --locked --offline --format-version 1 > "$metadata_file"
 # `DogeOS69/reth` is the clean upstream-lineage patch fork. Exact source
 # allowlisting also excludes the legacy, heavily modified `DogeOS69/scroll-reth`.
 reth_source="git+https://github.com/DogeOS69/reth.git?rev=972366a0bfc11cf6a0d5dc79d5e779cd81e32232#972366a0bfc11cf6a0d5dc79d5e779cd81e32232"
-revm_scroll_source="git+https://github.com/DogeOS69/dogeos-revm.git?branch=dogeos#dcf087684f255131c96c0d20f3291eef9198e990"
+revm_scroll_source="git+https://github.com/DogeOS69/dogeos-revm.git?rev=dcf087684f255131c96c0d20f3291eef9198e990#dcf087684f255131c96c0d20f3291eef9198e990"
 da_codec_source="git+https://github.com/scroll-tech/da-codec?rev=54929786434f00efd00431517a332f1ec8ca58d4#54929786434f00efd00431517a332f1ec8ca58d4"
 
 single_package() {
