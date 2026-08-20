@@ -1,5 +1,7 @@
+use dogeos_reth_consensus::HARD_MAX_L2_BASE_FEE;
 use dogeos_reth_engine::DogeosEngineTypes;
 use dogeos_reth_evm::ScrollNextBlockEnvAttributes;
+use dogeos_reth_evm::SequencerBaseFeePolicy;
 use dogeos_reth_payload::{ScrollBuilderConfig, ScrollPayloadBuilder};
 use dogeos_reth_primitives::{DogeosPrimitives, ScrollTransactionSigned};
 use reth_evm::ConfigureEvm;
@@ -15,11 +17,12 @@ pub const DOGEOS_DEFAULT_GAS_LIMIT: u64 = 30_000_000;
 /// Maximum encoded transaction bytes considered during one payload build.
 pub const DOGEOS_DEFAULT_PAYLOAD_SIZE_LIMIT: u64 = 122_880;
 /// Payload jobs stop selecting pool transactions after this duration.
-pub const DOGEOS_DEFAULT_PAYLOAD_BUILDING_DURATION: Duration = Duration::from_secs(1);
+pub const DOGEOS_DEFAULT_PAYLOAD_BUILDING_DURATION: Duration = Duration::from_millis(800);
 
 /// Adapts the DogeOS payload policy to Reth 2's basic payload service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DogeosPayloadBuilderBuilder {
+    pub base_fee_policy: SequencerBaseFeePolicy,
     pub payload_building_time_limit: Duration,
     pub block_da_size_limit: Option<u64>,
 }
@@ -27,6 +30,7 @@ pub struct DogeosPayloadBuilderBuilder {
 impl Default for DogeosPayloadBuilderBuilder {
     fn default() -> Self {
         Self {
+            base_fee_policy: crate::args::default_sequencer_base_fee_policy(),
             payload_building_time_limit: DOGEOS_DEFAULT_PAYLOAD_BUILDING_DURATION,
             block_da_size_limit: Some(DOGEOS_DEFAULT_PAYLOAD_SIZE_LIMIT),
         }
@@ -65,6 +69,15 @@ where
             );
             DOGEOS_DEFAULT_GAS_LIMIT
         });
+        tracing::info!(
+            target: "reth::cli",
+            desired_gas_limit = gas_limit,
+            max_change_denominator = self.base_fee_policy.base_fee_params().max_change_denominator,
+            elasticity_multiplier = self.base_fee_policy.base_fee_params().elasticity_multiplier,
+            operating_max_base_fee = self.base_fee_policy.operating_max_base_fee(),
+            hard_max_base_fee = HARD_MAX_L2_BASE_FEE,
+            "configured DogeOS sequencer base-fee policy"
+        );
 
         Ok(ScrollPayloadBuilder::new(
             ctx.provider().clone(),
@@ -72,6 +85,7 @@ where
             evm_config,
             ScrollBuilderConfig::new(
                 Some(gas_limit),
+                self.base_fee_policy,
                 self.payload_building_time_limit,
                 self.block_da_size_limit,
             ),
@@ -87,7 +101,19 @@ mod tests {
     fn defaults_match_current_sequencer_policy() {
         let config = DogeosPayloadBuilderBuilder::default();
         assert_eq!(DOGEOS_DEFAULT_GAS_LIMIT, 30_000_000);
-        assert_eq!(config.payload_building_time_limit, Duration::from_secs(1));
+        assert_eq!(
+            config.payload_building_time_limit,
+            Duration::from_millis(800)
+        );
+        assert_eq!(
+            DOGEOS_DEFAULT_GAS_LIMIT
+                / config
+                    .base_fee_policy
+                    .base_fee_params()
+                    .elasticity_multiplier as u64,
+            3_000_000
+        );
+        assert!(config.base_fee_policy.operating_max_base_fee() <= HARD_MAX_L2_BASE_FEE);
         assert_eq!(
             config.block_da_size_limit,
             Some(DOGEOS_DEFAULT_PAYLOAD_SIZE_LIMIT)

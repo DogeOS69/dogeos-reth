@@ -15,8 +15,10 @@ extern crate alloc;
 mod base_fee;
 pub mod gas_price_oracle;
 pub use base_fee::{
-    DEFAULT_BASE_FEE_OVERHEAD, DEFAULT_OPERATING_MAX_L2_BASE_FEE, L1_BASE_FEE_PRECISION,
-    ScrollBaseFeeProvider,
+    DEFAULT_BASE_FEE_ELASTICITY_MULTIPLIER, DEFAULT_BASE_FEE_FLOOR,
+    DEFAULT_BASE_FEE_MAX_CHANGE_DENOMINATOR, DEFAULT_OPERATING_MAX_L2_BASE_FEE,
+    L1_BASE_FEE_PRECISION, MAX_BASE_FEE_ELASTICITY_MULTIPLIER, MAX_BASE_FEE_MAX_CHANGE_DENOMINATOR,
+    ScrollBaseFeeProvider, SequencerBaseFeePolicy, SequencerBaseFeePolicyError,
 };
 mod l1;
 pub use l1::RethL1BlockInfo;

@@ -398,6 +398,25 @@ mod tests {
     }
 
     #[test]
+    fn validator_does_not_recompute_producer_base_fee_policy() {
+        let consensus = DogeosConsensus;
+        let parent = SealedHeader::seal_slow(valid_header());
+        let mut child = valid_header();
+        child.parent_hash = parent.hash();
+        child.number = parent.number() + 1;
+        child.timestamp = parent.timestamp() + 1;
+        child.base_fee_per_gas = Some(987_654_321_000);
+        let child = SealedHeader::seal_slow(child);
+
+        assert!(consensus.validate_header(&child).is_ok());
+        assert!(
+            consensus
+                .validate_header_against_parent(&child, &parent)
+                .is_ok()
+        );
+    }
+
+    #[test]
     fn future_header_timestamp_is_rejected() {
         let mut header = valid_header();
         header.timestamp = u64::MAX;

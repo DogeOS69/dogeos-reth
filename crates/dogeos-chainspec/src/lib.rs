@@ -278,7 +278,7 @@ pub(crate) fn build_spec(
             base_fee_params: BaseFeeParamsKind::Variable(
                 alloc::vec![(
                     DogeosHardfork::Feynman.boxed(),
-                    DOGEOS_BASE_FEE_PARAMS_FEYNMAN,
+                    DOGEOS_BASE_FEE_PARAMS_COMPAT,
                 )]
                 .into(),
             ),
@@ -368,12 +368,11 @@ mod tests {
     }
 
     #[test]
-    fn supported_specs_use_the_dogeos_base_fee_parameters() {
+    fn inherited_reth_interfaces_use_compatibility_base_fee_parameters() {
         for spec in [&*DOGEOS_MAINNET, &*DOGEOS_CHIKYU, &*DOGEOS_DEV] {
             let params = spec.base_fee_params_at_timestamp(0);
             assert_eq!(params.max_change_denominator, 512);
             assert_eq!(params.elasticity_multiplier, 10);
-            assert_eq!(30_000_000 / params.elasticity_multiplier, 3_000_000);
         }
     }
 
