@@ -1,5 +1,5 @@
 use alloy_consensus::BlockHeader;
-use alloy_eips::eip1559::BaseFeeParams;
+use alloy_eips::{calc_next_block_base_fee, eip1559::BaseFeeParams};
 use alloy_primitives::{Address, U256};
 use dogeos_chainspec::{ChainConfig, ScrollChainConfig};
 use revm::Database;
@@ -113,35 +113,6 @@ impl SequencerBaseFeePolicy {
     }
 }
 
-/// EIP-1559 integer movement with explicit saturation before producer clamps.
-fn calculate_next_base_fee(
-    gas_used: u64,
-    gas_limit: u64,
-    base_fee: u64,
-    params: BaseFeeParams,
-) -> u64 {
-    // Consensus-valid headers have at least 5,000 gas, but keep this helper total for tests and
-    // callers holding an unvalidated header as well.
-    let gas_target = (gas_limit / params.elasticity_multiplier as u64).max(1);
-
-    match gas_used.cmp(&gas_target) {
-        core::cmp::Ordering::Equal => base_fee,
-        core::cmp::Ordering::Greater => {
-            let increase = (u128::from(base_fee) * u128::from(gas_used - gas_target)
-                / (u128::from(gas_target) * params.max_change_denominator))
-                .max(1);
-            u128::from(base_fee)
-                .saturating_add(increase)
-                .min(u128::from(u64::MAX)) as u64
-        }
-        core::cmp::Ordering::Less => {
-            let decrease = u128::from(base_fee) * u128::from(gas_target - gas_used)
-                / (u128::from(gas_target) * params.max_change_denominator);
-            base_fee.saturating_sub(decrease.min(u128::from(u64::MAX)) as u64)
-        }
-    }
-}
-
 /// State-aware next-payload base-fee calculator.
 #[derive(Clone, Debug)]
 pub struct ScrollBaseFeeProvider<ChainSpec> {
@@ -181,7 +152,7 @@ where
         let parent_base_fee = parent
             .base_fee_per_gas()
             .expect("Feynman+ parent headers carry a base fee");
-        let candidate = calculate_next_base_fee(
+        let candidate = calc_next_block_base_fee(
             parent.gas_used(),
             parent.gas_limit(),
             parent_base_fee,
@@ -411,18 +382,5 @@ mod tests {
             DEFAULT_OPERATING_MAX_L2_BASE_FEE
         );
         Ok(())
-    }
-
-    #[test]
-    fn raw_calculation_saturates_instead_of_overflowing() {
-        let params = BaseFeeParams::new(1, MAX_BASE_FEE_ELASTICITY_MULTIPLIER);
-        assert_eq!(
-            calculate_next_base_fee(5_000, 5_000, HARD_MAX, params),
-            5_000_000_000_000_000_000
-        );
-        assert_eq!(
-            calculate_next_base_fee(5_000, 5_000, u64::MAX, params),
-            u64::MAX
-        );
     }
 }
