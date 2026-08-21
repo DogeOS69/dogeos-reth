@@ -1,12 +1,12 @@
-use alloy_consensus::{BlockHeader, Transaction, TxReceipt};
+use alloy_consensus::{BlockHeader, Sealable, Transaction, TxReceipt};
 use alloy_eips::{BlockNumberOrTag, eip2718::Encodable2718};
 use alloy_primitives::{U64, U256};
 use alloy_rpc_types_eth::FeeHistory;
 use dogeos_chainspec::DogeosChainSpec;
-use dogeos_reth_evm::ScrollBaseFeeProvider;
+use dogeos_reth_evm::{ScrollBaseFeeProvider, SequencerBaseFeePolicy};
 use jsonrpsee::{RpcModule, types::ErrorObjectOwned};
 use reth_chainspec::ChainSpecProvider;
-use reth_primitives_traits::BlockBody;
+use reth_primitives_traits::{BlockBody, SealedHeader};
 use reth_revm::database::StateProviderDatabase;
 use reth_rpc_eth_api::{RpcNodeCore, RpcNodeCoreExt, helpers::EthFees};
 use reth_rpc_eth_types::EthApiError;
@@ -14,6 +14,18 @@ use reth_storage_api::{BlockReaderIdExt, StateProviderFactory};
 
 /// Default minimum tip returned while the latest block still has capacity.
 pub const DEFAULT_MIN_SUGGESTED_PRIORITY_FEE: u64 = 100;
+
+fn canonical_successor_base_fee<H>(
+    parent: &SealedHeader<H>,
+    successor: Option<&SealedHeader<H>>,
+) -> Option<u64>
+where
+    H: BlockHeader + Sealable,
+{
+    successor
+        .filter(|successor| successor.header().parent_hash() == parent.hash())
+        .and_then(|successor| successor.header().base_fee_per_gas())
+}
 
 fn is_at_capacity(
     gas_used: u64,
@@ -52,6 +64,7 @@ pub struct DogeosPriorityFeeApi<Eth: RpcNodeCore> {
     max_price: Option<U256>,
     min_suggested_priority_fee: U256,
     payload_size_limit: u64,
+    base_fee_policy: SequencerBaseFeePolicy,
 }
 
 impl<Eth: RpcNodeCore> DogeosPriorityFeeApi<Eth> {
@@ -60,12 +73,14 @@ impl<Eth: RpcNodeCore> DogeosPriorityFeeApi<Eth> {
         max_price: Option<U256>,
         min_suggested_priority_fee: u64,
         payload_size_limit: u64,
+        base_fee_policy: SequencerBaseFeePolicy,
     ) -> Self {
         Self {
             eth,
             max_price,
             min_suggested_priority_fee: U256::from(min_suggested_priority_fee),
             payload_size_limit,
+            base_fee_policy,
         }
     }
 
@@ -208,15 +223,26 @@ where
             .ok_or_else(|| {
                 ErrorObjectOwned::from(EthApiError::HeaderNotFound(newest_block.into()))
             })?;
-        let next_base_fee = {
+        let successor = self
+            .eth
+            .provider()
+            .sealed_header_by_number_or_tag(BlockNumberOrTag::Number(
+                last_header.number().saturating_add(1),
+            ))
+            .map_err(|error| ErrorObjectOwned::from(EthApiError::from(error)))?;
+        let next_base_fee = if let Some(base_fee) =
+            canonical_successor_base_fee(&last_header, successor.as_ref())
+        {
+            base_fee
+        } else {
             let state = self
                 .eth
                 .provider()
                 .state_by_block_id(last_header.hash().into())
                 .map_err(|error| ErrorObjectOwned::from(EthApiError::from(error)))?;
             let mut state = StateProviderDatabase::new(state.as_ref());
-            ScrollBaseFeeProvider::new(self.eth.provider().chain_spec())
-                .next_block_base_fee(&mut state, last_header.header(), last_header.timestamp())
+            ScrollBaseFeeProvider::new(self.eth.provider().chain_spec(), self.base_fee_policy)
+                .next_block_base_fee(&mut state, last_header.header())
                 .map_err(|error| ErrorObjectOwned::from(EthApiError::Internal(error.into())))?
         };
         if let Some(next) = history.base_fee_per_gas.last_mut() {
@@ -240,6 +266,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_consensus::Header;
+    use alloy_primitives::B256;
 
     #[test]
     fn payload_bytes_can_mark_a_block_at_capacity() {
@@ -260,6 +288,32 @@ mod tests {
         assert_eq!(
             capacity_tip(vec![1_000], U256::from(100), Some(U256::from(500))),
             U256::from(500)
+        );
+    }
+
+    #[test]
+    fn fee_history_prefers_the_actual_canonical_successor() {
+        let parent = SealedHeader::new(
+            Header {
+                number: 10,
+                base_fee_per_gas: Some(7),
+                ..Default::default()
+            },
+            B256::repeat_byte(1),
+        );
+        let successor = SealedHeader::new(
+            Header {
+                parent_hash: parent.hash(),
+                number: 11,
+                base_fee_per_gas: Some(500_000_000_000),
+                ..Default::default()
+            },
+            B256::repeat_byte(2),
+        );
+
+        assert_eq!(
+            canonical_successor_base_fee(&parent, Some(&successor)),
+            Some(500_000_000_000)
         );
     }
 }

@@ -187,17 +187,14 @@ where
         .build();
 
     let chain_spec = client.chain_spec();
-    let base_fee = ScrollBaseFeeProvider::new(chain_spec.clone())
-        .next_block_base_fee(
-            &mut db,
-            parent_header.header(),
-            attributes.payload_attributes.timestamp,
-        )
+    let base_fee = ScrollBaseFeeProvider::new(chain_spec.clone(), builder_config.base_fee_policy)
+        .next_block_base_fee(&mut db, parent_header.header())
         .map_err(PayloadBuilderError::other)?;
-    let gas_limit = attributes
+    let desired_gas_limit = attributes
         .gas_limit
         .or(builder_config.gas_limit)
         .unwrap_or(parent_header.gas_limit);
+    let gas_limit = crate::next_block_gas_limit(parent_header.gas_limit, desired_gas_limit);
     let mut builder = evm_config
         .builder_for_next_block(
             &mut db,

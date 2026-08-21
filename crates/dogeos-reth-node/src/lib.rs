@@ -9,9 +9,9 @@ use dogeos_reth_primitives::DogeosPrimitives;
 use reth_node_types::NodeTypes;
 
 mod args;
-pub use args::DogeosRollupArgs;
+pub use args::{DogeosRollupArgs, SequencerBaseFeeArgs};
 mod payload;
-pub use payload::DogeosPayloadBuilderBuilder;
+pub use payload::{DOGEOS_DEFAULT_GAS_LIMIT, DogeosPayloadBuilderBuilder};
 mod engine;
 pub use engine::DogeosEngineValidatorBuilder;
 mod consensus;
@@ -82,7 +82,14 @@ impl DogeosNodeTypes {
         Self {
             args,
             scroll_wire: ScrollWireRuntime::default(),
+            desired_gas_limit: DOGEOS_DEFAULT_GAS_LIMIT,
         }
+    }
+
+    /// Mirrors the payload builder's desired gas limit into pending RPC prediction.
+    pub const fn with_desired_gas_limit(mut self, desired_gas_limit: u64) -> Self {
+        self.desired_gas_limit = desired_gas_limit;
+        self
     }
 
     /// Complete Reth 2 component graph using DogeOS-owned execution and policy components.
@@ -125,6 +132,8 @@ impl DogeosNodeTypes {
             None,
             dogeos_reth_rpc::DEFAULT_MIN_SUGGESTED_PRIORITY_FEE,
             payload::DOGEOS_DEFAULT_PAYLOAD_SIZE_LIMIT,
+            args::default_sequencer_base_fee_policy(),
+            DOGEOS_DEFAULT_GAS_LIMIT,
             ScrollWireRuntime::default(),
             None,
         )
@@ -134,6 +143,8 @@ impl DogeosNodeTypes {
         sequencer_url: Option<String>,
         min_suggested_priority_fee: u64,
         payload_size_limit: u64,
+        base_fee_policy: dogeos_reth_evm::SequencerBaseFeePolicy,
+        desired_gas_limit: u64,
         scroll_wire: ScrollWireRuntime,
         scroll_wire_signer: Option<alloy_primitives::Address>,
     ) -> DogeosAddOns<DogeosNodeAdapter<Node>>
@@ -156,7 +167,12 @@ impl DogeosNodeTypes {
             >,
     {
         DogeosAddOns::new(
-            DogeosEthApiBuilder::new(scroll_wire, scroll_wire_signer),
+            DogeosEthApiBuilder::new(
+                scroll_wire,
+                scroll_wire_signer,
+                base_fee_policy,
+                desired_gas_limit,
+            ),
             DogeosEngineValidatorBuilder,
             Default::default(),
             Default::default(),
@@ -168,6 +184,7 @@ impl DogeosNodeTypes {
                 ctx.registry.eth_api().gas_oracle().config().max_price,
                 min_suggested_priority_fee,
                 payload_size_limit,
+                base_fee_policy,
             );
             ctx.modules.add_or_replace_if_module_configured(
                 RethRpcModule::Eth,
@@ -207,11 +224,18 @@ impl DogeosNodeTypes {
 }
 
 /// Node type and runtime policy configuration owned by DogeOS.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct DogeosNodeTypes {
     /// Scroll-compatible runtime settings supplied by the CLI.
     pub args: DogeosRollupArgs,
     scroll_wire: ScrollWireRuntime,
+    desired_gas_limit: u64,
+}
+
+impl Default for DogeosNodeTypes {
+    fn default() -> Self {
+        Self::new(DogeosRollupArgs::default())
+    }
 }
 
 /// Adapts Reth's Ethereum local miner attributes to the Scroll-compatible Engine API shape.
@@ -270,6 +294,10 @@ where
     type AddOns = DogeosAddOns<DogeosNodeAdapter<N>>;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {
+        let base_fee_policy = self
+            .args
+            .sequencer_base_fee_policy()
+            .expect("DogeOS CLI policy is validated before node launch");
         let network = if self.args.enable_scroll_wire {
             let (network, manager) = DogeosNetworkBuilder::new()
                 .with_scroll_wire(dogeos_scroll_wire::ScrollWireConfig::new(true));
@@ -284,6 +312,7 @@ where
             .executor(DogeosExecutorBuilder)
             .payload(BasicPayloadServiceBuilder::new(
                 DogeosPayloadBuilderBuilder {
+                    base_fee_policy,
                     block_da_size_limit: Some(self.args.payload_size_limit),
                     ..Default::default()
                 },
@@ -293,10 +322,16 @@ where
     }
 
     fn add_ons(&self) -> Self::AddOns {
+        let base_fee_policy = self
+            .args
+            .sequencer_base_fee_policy()
+            .expect("DogeOS CLI policy is validated before node launch");
         DogeosNodeTypes::add_ons_with_policy(
             self.args.sequencer.clone(),
             self.args.min_suggested_priority_fee,
             self.args.payload_size_limit,
+            base_fee_policy,
+            self.desired_gas_limit,
             self.scroll_wire.clone(),
             self.args.scroll_wire_signer,
         )

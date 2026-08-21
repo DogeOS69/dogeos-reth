@@ -28,6 +28,7 @@ reth-storage-errors = { workspace = true, optional = true }
 revm = { workspace = true, features = ["optional_no_base_fee"] }
 revm-scroll.workspace = true
 serde = { workspace = true, optional = true }
+thiserror.workspace = true
 
 [dev-dependencies]
 eyre.workspace = true
