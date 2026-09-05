@@ -6,7 +6,8 @@ use alloy_primitives::{Address, B256, Bytes, U256, address, keccak256};
 use alloy_rpc_types_eth::EIP1186AccountProofResponse;
 use alloy_serde::JsonStorageKey;
 use dogeos_reth_rpc::{
-    GetProofsRequest, MultiProofProvider, ProofTarget, build_proofs, verify_account_proof,
+    GetProofsRequest, MultiProofObserver, MultiProofProvider, ProofStage, ProofTarget,
+    build_proofs, build_proofs_observed, verify_account_proof,
 };
 use reth_chain_state::{ComputedTrieData, ExecutedBlock, NewCanonicalChain};
 use reth_chainspec::ChainSpec;
@@ -122,6 +123,33 @@ fn assert_equivalent(
 ) -> Vec<EIP1186AccountProofResponse> {
     let expected = individual_proofs(state, request, root);
     let actual = build_proofs(state, request, root).unwrap();
+    let observer = MultiProofObserver::default();
+    let observed = build_proofs_observed(state, request, root, Some(&observer)).unwrap();
+    assert_eq!(
+        observed, actual,
+        "observation must preserve every proof byte"
+    );
+    let snapshot = observer.snapshot();
+    assert_eq!(
+        snapshot[ProofStage::ProviderProofReconstruction as usize]
+            .success
+            .samples,
+        1
+    );
+    for stage in [
+        ProofStage::AccountExtraction,
+        ProofStage::AccountVerification,
+        ProofStage::AccountConversion,
+    ] {
+        assert_eq!(
+            snapshot[stage as usize].success.samples,
+            request.targets.len() as u64
+        );
+    }
+    assert!(snapshot.iter().all(|stage| stage.active == 0
+        && stage.error.samples == 0
+        && stage.abandoned.samples == 0
+        && stage.success.thread_cpu_samples == 0));
     assert_eq!(
         actual, expected,
         "shared proof must preserve every response field and node byte"
@@ -255,6 +283,97 @@ fn historical_reconstruction_matches_individual_and_independent_parent_state() {
     assert_eq!(proofs[1].balance, U256::ZERO);
     assert_eq!(proofs[2].balance, U256::from(404));
     assert!(build_proofs(&historical, &request, child_root).is_err());
+
+    // Alternating paired arms on one frozen real historical provider; this checks the
+    // attribution baseline and exact wire equivalence, not a synthetic speed claim.
+    let ordinary = MultiProofObserver::default();
+    let shared = MultiProofObserver::default();
+    let ordinary_arm = || {
+        request
+            .targets
+            .iter()
+            .map(|target| {
+                let proof = ordinary
+                    .measure(ProofStage::OrdinaryProofReconstruction, || {
+                        historical.proof(Default::default(), target.address, &target.storage_keys)
+                    })
+                    .unwrap();
+                ordinary
+                    .measure(ProofStage::AccountVerification, || {
+                        verify_account_proof(&proof, parent_root)
+                    })
+                    .unwrap();
+                ordinary
+                    .measure(ProofStage::AccountConversion, || {
+                        Ok::<_, ()>(
+                            proof.into_eip1186_response(
+                                target
+                                    .storage_keys
+                                    .iter()
+                                    .copied()
+                                    .map(JsonStorageKey::from)
+                                    .collect(),
+                            ),
+                        )
+                    })
+                    .unwrap()
+            })
+            .collect::<Vec<_>>()
+    };
+    for reverse in [false, true] {
+        let (left, right) = if reverse {
+            let shared =
+                build_proofs_observed(&historical, &request, parent_root, Some(&shared)).unwrap();
+            (ordinary_arm(), shared)
+        } else {
+            let ordinary = ordinary_arm();
+            (
+                ordinary,
+                build_proofs_observed(&historical, &request, parent_root, Some(&shared)).unwrap(),
+            )
+        };
+        assert_eq!(
+            serde_json::to_vec(&left).unwrap(),
+            serde_json::to_vec(&right).unwrap()
+        );
+    }
+    assert_eq!(
+        ordinary.snapshot()[ProofStage::OrdinaryProofReconstruction as usize]
+            .success
+            .samples,
+        8
+    );
+    assert_eq!(
+        shared.snapshot()[ProofStage::ProviderProofReconstruction as usize]
+            .success
+            .samples,
+        2
+    );
+    let failed = MultiProofObserver::default();
+    assert_eq!(
+        build_proofs_observed(&historical, &request, child_root, Some(&failed)).unwrap_err(),
+        build_proofs(&historical, &request, child_root).unwrap_err(),
+    );
+    let snapshot = failed.snapshot();
+    assert_eq!(
+        snapshot[ProofStage::ProviderProofReconstruction as usize]
+            .success
+            .samples,
+        1
+    );
+    assert_eq!(
+        snapshot[ProofStage::AccountVerification as usize]
+            .error
+            .samples,
+        1
+    );
+    assert_eq!(
+        snapshot[ProofStage::AccountConversion as usize]
+            .success
+            .samples,
+        0
+    );
+    assert!(snapshot.iter().all(|stage| stage.active == 0));
 }
 
 #[test]

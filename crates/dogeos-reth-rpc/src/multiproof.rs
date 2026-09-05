@@ -1,5 +1,7 @@
 //! Bounded, opt-in parent-state proofs. This is not a guest proof format.
 
+use crate::multiproof_observer::{MultiProofObserver, Observation, ProofStage, measure};
+
 use alloy_consensus::{BlockHeader, Sealable};
 use alloy_eips::BlockHashOrNumber;
 use alloy_primitives::{Address, B256, Bytes, keccak256};
@@ -233,6 +235,17 @@ pub fn build_proofs(
     request: &GetProofsRequest,
     root: B256,
 ) -> Result<Vec<EIP1186AccountProofResponse>, ErrorObjectOwned> {
+    build_proofs_observed(state, request, root, None)
+}
+
+/// The same proof path with optional attribution, also used by paired provider fixtures.
+#[doc(hidden)]
+pub fn build_proofs_observed(
+    state: &dyn StateProvider,
+    request: &GetProofsRequest,
+    root: B256,
+    observer: Option<&MultiProofObserver>,
+) -> Result<Vec<EIP1186AccountProofResponse>, ErrorObjectOwned> {
     request.validate()?;
     let mut targets = MultiProofTargets::default();
     for target in &request.targets {
@@ -241,45 +254,53 @@ pub fn build_proofs(
             .or_default()
             .extend(target.storage_keys.iter().map(keccak256));
     }
-    let multiproof = state
-        .multiproof(Default::default(), targets)
-        .map_err(provider_error)?;
+    let multiproof = measure(observer, ProofStage::ProviderProofReconstruction, || {
+        state
+            .multiproof(Default::default(), targets)
+            .map_err(provider_error)
+    })?;
     request
         .targets
         .iter()
         .map(|target| {
-            // Do not silently use account_proof's EMPTY_ROOT fallback, including zero-key queries.
-            if !multiproof.storages.contains_key(&keccak256(target.address)) {
-                return Err(failure(
-                    "proof_invariant",
-                    "Missing target storage multiproof",
-                ));
-            }
-            let proof = multiproof
-                .account_proof(target.address, &target.storage_keys)
-                .map_err(|_| failure("proof_invariant", "Could not extract account proof"))?;
-            verify_account_proof(&proof, root)?;
-            let response = proof.into_eip1186_response(
-                target
-                    .storage_keys
-                    .iter()
-                    .copied()
-                    .map(Into::into)
-                    .collect(),
-            );
-            if response.storage_proof.len() != target.storage_keys.len()
-                || response
-                    .storage_proof
-                    .iter()
-                    .zip(&target.storage_keys)
-                    .any(|(proof, key)| proof.key.as_b256() != *key)
-            {
-                return Err(failure(
-                    "proof_invariant",
-                    "Incomplete or unordered storage proof",
-                ));
-            }
-            Ok(response)
+            let proof = measure(observer, ProofStage::AccountExtraction, || {
+                // Do not silently use account_proof's EMPTY_ROOT fallback, including zero-key queries.
+                if !multiproof.storages.contains_key(&keccak256(target.address)) {
+                    return Err(failure(
+                        "proof_invariant",
+                        "Missing target storage multiproof",
+                    ));
+                }
+                multiproof
+                    .account_proof(target.address, &target.storage_keys)
+                    .map_err(|_| failure("proof_invariant", "Could not extract account proof"))
+            })?;
+            measure(observer, ProofStage::AccountVerification, || {
+                verify_account_proof(&proof, root)
+            })?;
+            measure(observer, ProofStage::AccountConversion, || {
+                let response = proof.into_eip1186_response(
+                    target
+                        .storage_keys
+                        .iter()
+                        .copied()
+                        .map(Into::into)
+                        .collect(),
+                );
+                if response.storage_proof.len() != target.storage_keys.len()
+                    || response
+                        .storage_proof
+                        .iter()
+                        .zip(&target.storage_keys)
+                        .any(|(proof, key)| proof.key.as_b256() != *key)
+                {
+                    return Err(failure(
+                        "proof_invariant",
+                        "Incomplete or unordered storage proof",
+                    ));
+                }
+                Ok(response)
+            })
         })
         .collect()
 }
@@ -437,6 +458,7 @@ pub struct DogeosMultiProofApi<Eth> {
     eth: Eth,
     limits: MultiProofLimits,
     admission: Arc<Semaphore>,
+    observer: Option<Arc<MultiProofObserver>>,
 }
 
 impl<Eth> DogeosMultiProofApi<Eth> {
@@ -446,7 +468,14 @@ impl<Eth> DogeosMultiProofApi<Eth> {
             eth,
             admission: Arc::new(Semaphore::new(limits.max_jobs)),
             limits,
+            observer: None,
         }
+    }
+
+    /// Explicit fixture opt-in; normal constructors do not collect observations.
+    pub fn with_observer(mut self, observer: Arc<MultiProofObserver>) -> Self {
+        self.observer = Some(observer);
+        self
     }
 }
 
@@ -458,11 +487,13 @@ where
 {
     pub fn into_rpc(self) -> Result<RpcModule<Self>, jsonrpsee::core::RegisterMethodError> {
         let mut module = RpcModule::new(self);
-        module.register_async_method("dogeos_getProofs", |params, api, _| async move {
-            let request = parse_request(&params, &api.limits)?;
-            tokio::time::timeout(api.limits.deadline, api.get_proofs(request))
-                .await
-                .map_err(|_| resource("deadline"))?
+        module.register_async_method("dogeos_getProofs", |params, api, _| {
+            observe_request(api.observer.clone(), async move {
+                let request = parse_request(&params, &api.limits)?;
+                tokio::time::timeout(api.limits.deadline, api.get_proofs(request))
+                    .await
+                    .map_err(|_| resource("deadline"))?
+            })
         })?;
         Ok(module)
     }
@@ -472,22 +503,26 @@ where
         request: GetProofsRequest,
     ) -> Result<Box<RawValue>, ErrorObjectOwned> {
         let limit = self.limits.max_response_bytes;
-        admit_and_spawn(
+        admit_and_spawn_observed(
             self.admission.clone(),
             self.eth.acquire_owned_tracing(),
             self.limits.shared_permit_wait,
+            self.observer.as_deref(),
             |permits| async move {
+                let job = ObservedJob::new(permits, self.observer.clone());
                 self.eth
                     .spawn_blocking_io_fut(move |eth| async move {
-                        // The owned guards live in the detached worker, not the cancelled caller.
-                        let _permits = permits;
-                        let result = (|| {
-                            let (root, state) = eth
-                                .provider()
-                                .proof_snapshot(request.block_hash, eth.max_proof_window())?;
-                            let proofs = build_proofs(state.as_ref(), &request, root)?;
-                            serialize_response(&proofs, limit)
-                        })();
+                        let result = job.run(|observer| {
+                            let (root, state) = measure(observer, ProofStage::Snapshot, || {
+                                eth.provider()
+                                    .proof_snapshot(request.block_hash, eth.max_proof_window())
+                            })?;
+                            let proofs =
+                                build_proofs_observed(state.as_ref(), &request, root, observer)?;
+                            measure(observer, ProofStage::Serialization, || {
+                                serialize_response(&proofs, limit)
+                            })
+                        });
                         Ok(result)
                     })
                     .await
@@ -498,11 +533,69 @@ where
     }
 }
 
+/// Construct synchronously at registration, before the returned future is first polled.
+fn observe_request<T, E>(
+    observer: Option<Arc<MultiProofObserver>>,
+    future: impl Future<Output = Result<T, E>>,
+) -> impl Future<Output = Result<T, E>> {
+    let mut observation = observer
+        .as_ref()
+        .map(|o| o.start(ProofStage::Request, false));
+    async move {
+        let result = future.await;
+        if let Some(observation) = &mut observation {
+            observation.finish(result.is_ok());
+        }
+        result
+    }
+}
+
 struct JobPermits {
     _endpoint: OwnedSemaphorePermit,
     _shared: OwnedSemaphorePermit,
 }
 
+/// Captured by the real dispatch closure, including when it is queued or discarded.
+struct ObservedJob {
+    permits: JobPermits,
+    observer: Option<Arc<MultiProofObserver>>,
+    dispatch: Option<Observation>,
+}
+
+impl ObservedJob {
+    fn new(permits: JobPermits, observer: Option<Arc<MultiProofObserver>>) -> Self {
+        let dispatch = observer
+            .as_ref()
+            .map(|o| o.start(ProofStage::WorkerDispatchWait, false));
+        Self {
+            permits,
+            observer,
+            dispatch,
+        }
+    }
+
+    fn run<T, E>(
+        self,
+        operation: impl FnOnce(Option<&MultiProofObserver>) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let Self {
+            permits,
+            observer,
+            mut dispatch,
+        } = self;
+        // These guards outlive the complete synchronous worker and its observations.
+        let _permits = permits;
+        measure(observer.as_deref(), ProofStage::WorkerService, || {
+            // Start service before ending dispatch, leaving no unobserved handoff.
+            if let Some(dispatch) = &mut dispatch {
+                dispatch.finish(true);
+            }
+            operation(observer.as_deref())
+        })
+    }
+}
+
+#[cfg(test)]
 async fn admit_and_spawn<R, F, Fut>(
     admission: Arc<Semaphore>,
     shared: impl Future<Output = Result<OwnedSemaphorePermit, AcquireError>>,
@@ -513,13 +606,32 @@ where
     F: FnOnce(JobPermits) -> Fut,
     Fut: Future<Output = Result<R, ErrorObjectOwned>>,
 {
+    admit_and_spawn_observed(admission, shared, wait, None, spawn).await
+}
+
+async fn admit_and_spawn_observed<R, F, Fut>(
+    admission: Arc<Semaphore>,
+    shared: impl Future<Output = Result<OwnedSemaphorePermit, AcquireError>>,
+    wait: Duration,
+    observer: Option<&MultiProofObserver>,
+    spawn: F,
+) -> Result<R, ErrorObjectOwned>
+where
+    F: FnOnce(JobPermits) -> Fut,
+    Fut: Future<Output = Result<R, ErrorObjectOwned>>,
+{
     let endpoint = admission
         .try_acquire_owned()
         .map_err(|_| resource("busy"))?;
+    let mut observation = observer.map(|o| o.start(ProofStage::SharedAdmissionWait, false));
     let shared = tokio::time::timeout(wait, shared)
         .await
-        .map_err(|_| resource("busy"))?
-        .map_err(|_| resource("busy"))?;
+        .map_err(|_| resource("busy"))
+        .and_then(|result| result.map_err(|_| resource("busy")));
+    if let Some(observation) = &mut observation {
+        observation.finish(shared.is_ok());
+    }
+    let shared = shared?;
     spawn(JobPermits {
         _endpoint: endpoint,
         _shared: shared,
@@ -655,6 +767,29 @@ mod tests {
         assert_eq!(serialize_response(&[], 2).unwrap().get(), "[]");
     }
 
+    #[tokio::test]
+    async fn constructed_unpolled_request_is_observed_until_drop() {
+        let observer = Arc::new(MultiProofObserver::default());
+        let handler = observe_request(Some(observer.clone()), async {
+            panic!("unpolled handler ran");
+            #[allow(unreachable_code)]
+            Ok::<_, ()>(())
+        });
+        assert_eq!(observer.snapshot()[ProofStage::Request as usize].active, 1);
+        let idle_observer = observer.clone();
+        let idle = tokio::spawn(async move { idle_observer.await_idle().await });
+        tokio::task::yield_now().await;
+        assert!(!idle.is_finished());
+        drop(handler);
+        idle.await.unwrap();
+        assert_eq!(
+            observer.snapshot()[ProofStage::Request as usize]
+                .abandoned
+                .samples,
+            1
+        );
+    }
+
     #[tokio::test(start_paused = true)]
     async fn shared_wait_is_bounded_and_never_schedules_on_failure() {
         let admission = Arc::new(Semaphore::new(2));
@@ -679,9 +814,11 @@ mod tests {
     async fn cancelled_caller_keeps_detached_worker_admitted() {
         let admission = Arc::new(Semaphore::new(1));
         let shared = Arc::new(Semaphore::new(1));
+        let observer = Arc::new(MultiProofObserver::default());
         let (started_tx, started_rx) = oneshot::channel();
         let (finish_tx, finish_rx) = oneshot::channel();
         let (exited_tx, exited_rx) = oneshot::channel();
+        let worker_observer = observer.clone();
         let caller = tokio::spawn(admit_and_spawn(
             admission.clone(),
             shared.clone().acquire_owned(),
@@ -689,11 +826,14 @@ mod tests {
             |permits| async move {
                 // Match SpawnBlocking's detached worker + result channel boundary.
                 let (tx, rx) = oneshot::channel();
-                tokio::spawn(async move {
-                    let _permits = permits;
-                    started_tx.send(()).unwrap();
-                    finish_rx.await.unwrap();
-                    drop(_permits);
+                let job = ObservedJob::new(permits, Some(worker_observer));
+                tokio::task::spawn_blocking(move || {
+                    job.run(|_| {
+                        started_tx.send(()).unwrap();
+                        finish_rx.blocking_recv().unwrap();
+                        Ok::<_, ()>(())
+                    })
+                    .unwrap();
                     let _ = tx.send(());
                     exited_tx.send(()).unwrap();
                 });
@@ -705,6 +845,10 @@ mod tests {
         assert!(caller.await.unwrap_err().is_cancelled());
         assert_eq!(admission.available_permits(), 0);
         assert_eq!(shared.available_permits(), 0);
+        let idle_observer = observer.clone();
+        let idle = tokio::spawn(async move { idle_observer.await_idle().await });
+        tokio::task::yield_now().await;
+        assert!(!idle.is_finished());
         let error = admit_and_spawn(
             admission.clone(),
             shared.clone().acquire_owned(),
@@ -716,6 +860,135 @@ mod tests {
         assert_eq!(kind(&error), "busy");
         finish_tx.send(()).unwrap();
         exited_rx.await.unwrap();
+        idle.await.unwrap();
+        assert_eq!(admission.available_permits(), 1);
+        assert_eq!(shared.available_permits(), 1);
+        let snapshot = observer.snapshot();
+        assert_eq!(
+            snapshot[ProofStage::WorkerService as usize].success.samples,
+            1
+        );
+        assert!(snapshot.iter().all(|stage| stage.active == 0));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn observed_admission_timeout_and_cancellation_do_not_schedule_workers() {
+        let observer = MultiProofObserver::with_thread_cpu_clock(|| panic!("async CPU clock"));
+        let admission = Arc::new(Semaphore::new(2));
+        let shared = Arc::new(Semaphore::new(0));
+        let result = admit_and_spawn_observed(
+            admission.clone(),
+            shared.clone().acquire_owned(),
+            Duration::from_secs(1),
+            Some(&observer),
+            |_| async {
+                panic!("no worker");
+                #[allow(unreachable_code)]
+                Ok(())
+            },
+        )
+        .await;
+        assert_eq!(kind(&result.unwrap_err()), "busy");
+        let result = tokio::time::timeout(
+            Duration::from_millis(10),
+            admit_and_spawn_observed(
+                admission.clone(),
+                shared.acquire_owned(),
+                Duration::from_secs(1),
+                Some(&observer),
+                |_| async {
+                    panic!("no worker");
+                    #[allow(unreachable_code)]
+                    Ok(())
+                },
+            ),
+        )
+        .await;
+        assert!(result.is_err());
+        observer.await_idle().await;
+        assert_eq!(admission.available_permits(), 2);
+        let snapshot = observer.snapshot();
+        let stage = &snapshot[ProofStage::SharedAdmissionWait as usize];
+        assert_eq!(stage.error.samples, 1);
+        assert_eq!(stage.abandoned.samples, 1);
+        assert_eq!(stage.error.thread_cpu_samples, 0);
+        assert_eq!(
+            snapshot[ProofStage::WorkerService as usize].success.samples,
+            0
+        );
+        assert!(snapshot.iter().all(|stage| stage.active == 0));
+    }
+
+    #[tokio::test]
+    async fn discarded_observed_dispatch_releases_guards_and_reports_abandoned() {
+        let observer = Arc::new(MultiProofObserver::default());
+        let admission = Arc::new(Semaphore::new(1));
+        let shared = Arc::new(Semaphore::new(1));
+        let job = ObservedJob::new(
+            JobPermits {
+                _endpoint: admission.clone().acquire_owned().await.unwrap(),
+                _shared: shared.clone().acquire_owned().await.unwrap(),
+            },
+            Some(observer.clone()),
+        );
+        // Same ownership as the closure passed to spawn_blocking_io_fut, discarded
+        // before the executor starts it. Running work is exercised in the test above.
+        let queued = move || job.run(|_| -> Result<(), ()> { panic!("discarded work ran") });
+        assert_eq!(admission.available_permits(), 0);
+        let idle_observer = observer.clone();
+        let idle = tokio::spawn(async move { idle_observer.await_idle().await });
+        tokio::task::yield_now().await;
+        assert!(!idle.is_finished());
+        drop(queued);
+        idle.await.unwrap();
+        assert_eq!(admission.available_permits(), 1);
+        assert_eq!(shared.available_permits(), 1);
+        let snapshot = observer.snapshot();
+        assert_eq!(
+            snapshot[ProofStage::WorkerDispatchWait as usize]
+                .abandoned
+                .samples,
+            1
+        );
+        assert_eq!(
+            snapshot[ProofStage::WorkerService as usize].success.samples,
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn observed_worker_preserves_serialized_bytes_and_limit_errors() {
+        let observer = Arc::new(MultiProofObserver::default());
+        let admission = Arc::new(Semaphore::new(1));
+        let shared = Arc::new(Semaphore::new(1));
+        let proofs = vec![EIP1186AccountProofResponse::default()];
+        for limit in [4 * 1024 * 1024, 1] {
+            let mut results = Vec::new();
+            for observed in [None, Some(observer.clone())] {
+                let job = ObservedJob::new(
+                    JobPermits {
+                        _endpoint: admission.clone().acquire_owned().await.unwrap(),
+                        _shared: shared.clone().acquire_owned().await.unwrap(),
+                    },
+                    observed,
+                );
+                results.push(
+                    job.run(|observer| {
+                        measure(observer, ProofStage::Serialization, || {
+                            serialize_response(&proofs, limit)
+                        })
+                    })
+                    .map(|raw| raw.get().to_owned()),
+                );
+            }
+            assert_eq!(results[0], results[1]);
+        }
+        observer.await_idle().await;
+        let snapshot = observer.snapshot();
+        for stage in [ProofStage::WorkerService, ProofStage::Serialization] {
+            assert_eq!(snapshot[stage as usize].success.samples, 1);
+            assert_eq!(snapshot[stage as usize].error.samples, 1);
+        }
         assert_eq!(admission.available_permits(), 1);
         assert_eq!(shared.available_permits(), 1);
     }
