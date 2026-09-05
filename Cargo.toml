@@ -10,6 +10,8 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/DogeOS69/dogeos-reth"
 
 [workspace.dependencies]
+reth-chain-state = { git = "https://github.com/DogeOS69/reth.git", rev = "972366a0bfc11cf6a0d5dc79d5e779cd81e32232", default-features = false }
+reth-ethereum-primitives = { git = "https://github.com/DogeOS69/reth.git", rev = "972366a0bfc11cf6a0d5dc79d5e779cd81e32232", default-features = false }
 # Official Reth v2.0.0 plus the reviewed RocksDB durability, inbound downloaded-header
 # transform, and EIP-3607 empty-code sender layers. This is a source dependency, not a
 # copied upstream workspace.

@@ -113,7 +113,8 @@ impl DogeosNodeTypes {
             + reth_rpc_eth_api::helpers::TraceExt
             + reth_rpc_eth_api::RpcNodeCore<Provider = Node::Provider>,
         <DogeosEthApi<DogeosNodeAdapter<Node>> as reth_rpc_eth_api::RpcNodeCore>::Provider:
-            reth_chainspec::ChainSpecProvider<ChainSpec = DogeosChainSpec>,
+            reth_chainspec::ChainSpecProvider<ChainSpec = DogeosChainSpec>
+                + dogeos_reth_rpc::MultiProofProvider,
         dogeos_reth_rpc::DogeosRpcConverter<Node::Provider>: reth_rpc_convert::RpcConvert<
                 Primitives = DogeosPrimitives,
                 Evm = dogeos_reth_evm::ScrollEvmConfig,
@@ -127,6 +128,7 @@ impl DogeosNodeTypes {
             payload::DOGEOS_DEFAULT_PAYLOAD_SIZE_LIMIT,
             ScrollWireRuntime::default(),
             None,
+            false,
         )
     }
 
@@ -136,6 +138,7 @@ impl DogeosNodeTypes {
         payload_size_limit: u64,
         scroll_wire: ScrollWireRuntime,
         scroll_wire_signer: Option<alloy_primitives::Address>,
+        experimental_multiproof: bool,
     ) -> DogeosAddOns<DogeosNodeAdapter<Node>>
     where
         Node: reth_node_builder::FullNodeTypes<Types = Self>,
@@ -147,7 +150,8 @@ impl DogeosNodeTypes {
             + reth_rpc_eth_api::helpers::TraceExt
             + reth_rpc_eth_api::RpcNodeCore<Provider = Node::Provider>,
         <DogeosEthApi<DogeosNodeAdapter<Node>> as reth_rpc_eth_api::RpcNodeCore>::Provider:
-            reth_chainspec::ChainSpecProvider<ChainSpec = DogeosChainSpec>,
+            reth_chainspec::ChainSpecProvider<ChainSpec = DogeosChainSpec>
+                + dogeos_reth_rpc::MultiProofProvider,
         dogeos_reth_rpc::DogeosRpcConverter<Node::Provider>: reth_rpc_convert::RpcConvert<
                 Primitives = DogeosPrimitives,
                 Evm = dogeos_reth_evm::ScrollEvmConfig,
@@ -163,6 +167,14 @@ impl DogeosNodeTypes {
             Default::default(),
         )
         .extend_rpc_modules(move |ctx| {
+            if experimental_multiproof {
+                let api = dogeos_reth_rpc::DogeosMultiProofApi::new(
+                    ctx.registry.eth_api().clone(),
+                    dogeos_reth_rpc::MultiProofLimits::default(),
+                );
+                ctx.modules
+                    .merge_if_module_configured(RethRpcModule::Eth, api.into_rpc()?)?;
+            }
             let priority_fee_api = dogeos_reth_rpc::DogeosPriorityFeeApi::new(
                 ctx.registry.eth_api().clone(),
                 ctx.registry.eth_api().gas_oracle().config().max_price,
@@ -258,7 +270,8 @@ where
         + reth_rpc_eth_api::helpers::TraceExt
         + reth_rpc_eth_api::RpcNodeCore<Provider = N::Provider>,
     <DogeosEthApi<DogeosNodeAdapter<N>> as reth_rpc_eth_api::RpcNodeCore>::Provider:
-        reth_chainspec::ChainSpecProvider<ChainSpec = DogeosChainSpec>,
+        reth_chainspec::ChainSpecProvider<ChainSpec = DogeosChainSpec>
+            + dogeos_reth_rpc::MultiProofProvider,
     dogeos_reth_rpc::DogeosRpcConverter<N::Provider>: reth_rpc_convert::RpcConvert<
             Primitives = DogeosPrimitives,
             Evm = dogeos_reth_evm::ScrollEvmConfig,
@@ -299,6 +312,7 @@ where
             self.args.payload_size_limit,
             self.scroll_wire.clone(),
             self.args.scroll_wire_signer,
+            self.args.experimental_multiproof,
         )
     }
 }
@@ -420,6 +434,7 @@ mod tests {
         );
         assert!(node.args.enable_scroll_wire);
         assert_eq!(node.args.scroll_wire_signer, None);
+        assert!(!node.args.experimental_multiproof);
     }
 
     #[test]
