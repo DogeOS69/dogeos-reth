@@ -12,11 +12,11 @@ mod witness;
 pub use witness::DogeosDebugWitnessApi;
 
 mod multiproof;
-#[doc(hidden)]
-pub use multiproof::build_proofs;
 pub use multiproof::{
     DogeosMultiProofApi, GetProofsRequest, MultiProofLimits, MultiProofProvider, ProofTarget,
 };
+#[doc(hidden)]
+pub use multiproof::{build_proofs, verify_account_proof};
 
 mod priority_fee;
 pub use priority_fee::{DEFAULT_MIN_SUGGESTED_PRIORITY_FEE, DogeosPriorityFeeApi};

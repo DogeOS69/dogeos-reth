@@ -2,7 +2,8 @@
 
 use alloy_consensus::{BlockHeader, Sealable};
 use alloy_eips::BlockHashOrNumber;
-use alloy_primitives::{Address, B256, keccak256};
+use alloy_primitives::{Address, B256, Bytes, keccak256};
+use alloy_rlp::Decodable;
 use alloy_rpc_types_eth::EIP1186AccountProofResponse;
 use jsonrpsee::{
     RpcModule,
@@ -18,7 +19,9 @@ use reth_storage_api::{
     BlockHashReader, BlockNumReader, DatabaseProviderFactory, HeaderProvider, StateProvider,
     StateProviderBox, TryIntoHistoricalStateProvider,
 };
-use reth_trie_common::MultiProofTargets;
+use reth_trie_common::{
+    AccountProof, EMPTY_ROOT_HASH, MultiProofTargets, Nibbles, RlpNode, TrieNode,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use std::future::Future;
@@ -255,12 +258,7 @@ pub fn build_proofs(
             let proof = multiproof
                 .account_proof(target.address, &target.storage_keys)
                 .map_err(|_| failure("proof_invariant", "Could not extract account proof"))?;
-            proof.verify(root).map_err(|_| {
-                failure(
-                    "proof_root_mismatch",
-                    "Proof does not match requested state root",
-                )
-            })?;
+            verify_account_proof(&proof, root)?;
             let response = proof.into_eip1186_response(
                 target
                     .storage_keys
@@ -284,6 +282,120 @@ pub fn build_proofs(
             Ok(response)
         })
         .collect()
+}
+
+/// Verify without changing the ordinary Reth proof representation returned to callers.
+///
+/// Reth can retain an inline child both inside its parent and as the next proof node.
+/// The native verifier already walks that child inside the parent. Remove only that
+/// exact, path-referenced repetition from a verification copy, never from wire output.
+#[doc(hidden)]
+pub fn verify_account_proof(proof: &AccountProof, root: B256) -> Result<(), ErrorObjectOwned> {
+    let mut verification = proof.clone();
+    verification.proof = verification_nodes(&proof.proof, root, keccak256(proof.address))?;
+    for storage in &mut verification.storage_proofs {
+        let key = keccak256(storage.key);
+        if storage.nibbles != Nibbles::unpack(key) {
+            return Err(failure("proof_invariant", "Storage key path mismatch"));
+        }
+        storage.proof = verification_nodes(&storage.proof, proof.storage_root, key)?;
+    }
+    verification.verify(root).map_err(|_| {
+        failure(
+            "proof_root_mismatch",
+            "Proof does not match requested state root",
+        )
+    })
+}
+
+fn verification_nodes(
+    nodes: &[Bytes],
+    root: B256,
+    key: B256,
+) -> Result<Vec<Bytes>, ErrorObjectOwned> {
+    let invalid = || {
+        failure(
+            "proof_invariant",
+            "Invalid proof node path or redundant node",
+        )
+    };
+    if nodes.is_empty() || nodes[0].as_ref() == [0x80] {
+        if root != EMPTY_ROOT_HASH || nodes.len() > 1 {
+            return Err(invalid());
+        }
+        return Ok(nodes.to_vec());
+    }
+
+    let key = Nibbles::unpack(key);
+    let mut position = 0;
+    let mut next = 0;
+    let mut reference = RlpNode::word_rlp(&root);
+    let mut result = Vec::with_capacity(nodes.len());
+    loop {
+        let encoded = if let Some(hash) = reference.as_hash() {
+            let node = nodes.get(next).ok_or_else(invalid)?;
+            if keccak256(node) != hash {
+                return Err(invalid());
+            }
+            next += 1;
+            result.push(node.clone());
+            node.clone()
+        } else {
+            if reference.len() >= 32 {
+                return Err(invalid());
+            }
+            // An omitted inline copy is valid too. No other node may be discarded:
+            // a different next node must match a later hash reference or be rejected below.
+            if nodes
+                .get(next)
+                .is_some_and(|node| node.as_ref() == reference.as_slice())
+            {
+                next += 1;
+            }
+            Bytes::copy_from_slice(&reference)
+        };
+        let mut input = encoded.as_ref();
+        let node = TrieNode::decode(&mut input).map_err(|_| invalid())?;
+        if !input.is_empty() {
+            return Err(invalid());
+        }
+        match node {
+            TrieNode::Branch(branch) => {
+                let Some(nibble) = key.get(position) else {
+                    break;
+                };
+                if !branch.state_mask.is_bit_set(nibble) {
+                    break;
+                }
+                let index = (0..nibble)
+                    .filter(|n| branch.state_mask.is_bit_set(*n))
+                    .count();
+                reference = branch.stack.get(index).ok_or_else(invalid)?.clone();
+                position += 1;
+            }
+            TrieNode::Extension(extension) => {
+                if extension.key.is_empty() {
+                    return Err(invalid());
+                }
+                if !extension
+                    .key
+                    .iter()
+                    .enumerate()
+                    .all(|(i, nibble)| key.get(position + i) == Some(nibble))
+                {
+                    break;
+                }
+                position += extension.key.len();
+                reference = extension.child;
+            }
+            TrieNode::Leaf(_) => break,
+            TrieNode::EmptyRoot => return Err(invalid()),
+        }
+    }
+    if next != nodes.len() {
+        return Err(invalid());
+    }
+    Ok(result)
 }
 
 struct LimitedWriter {
