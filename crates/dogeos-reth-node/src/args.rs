@@ -7,6 +7,9 @@ use reth_chainspec::EthChainSpec;
 /// Scroll-compatible runtime policy exposed by the standalone DogeOS node.
 #[derive(Clone, Debug, clap::Args, PartialEq, Eq)]
 pub struct DogeosRollupArgs {
+    /// Enables bounded experimental parent-state proofs on Eth-selected RPC transports.
+    #[arg(long = "rpc.experimental-multiproof", default_value_t = false)]
+    pub experimental_multiproof: bool,
     /// Endpoint for the sequencer mempool.
     #[arg(long = "scroll.sequencer")]
     pub sequencer: Option<String>,
@@ -50,11 +53,38 @@ impl DogeosRollupArgs {
 impl Default for DogeosRollupArgs {
     fn default() -> Self {
         Self {
+            experimental_multiproof: false,
             sequencer: None,
             min_suggested_priority_fee: DEFAULT_MIN_SUGGESTED_PRIORITY_FEE,
             payload_size_limit: DOGEOS_DEFAULT_PAYLOAD_SIZE_LIMIT,
             enable_scroll_wire: true,
             scroll_wire_signer: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct Cli {
+        #[command(flatten)]
+        args: DogeosRollupArgs,
+    }
+
+    #[test]
+    fn multiproof_requires_explicit_flag() {
+        assert!(
+            !Cli::try_parse_from(["node"])
+                .unwrap()
+                .args
+                .experimental_multiproof
+        );
+        let enabled = Cli::try_parse_from(["node", "--rpc.experimental-multiproof"]).unwrap();
+        assert!(enabled.args.experimental_multiproof);
+        assert_eq!(enabled.args.sequencer, None);
+        assert_eq!(enabled.args.scroll_wire_signer, None);
     }
 }
