@@ -3042,6 +3042,7 @@ dependencies = [
  "reth-transaction-pool",
  "revm-scroll",
  "thiserror 2.0.19",
+ "tokio",
  "tracing",
 ]
 
