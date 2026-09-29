@@ -141,6 +141,7 @@ mod tests {
 
     #[test]
     fn escalates_with_denominator_48_and_elasticity_10() -> eyre::Result<()> {
+        // DOGEOS_MAINNET is Tsuki-active from genesis, so the Tsuki params apply.
         // 2x target: the part above the overhead grows by 1/48.
         assert_eq!(
             next_base_fee(OVERHEAD, OVERHEAD + 1_000_000_000, 2 * GAS_TARGET)?,

@@ -276,10 +276,13 @@ pub(crate) fn build_spec(
             genesis,
             hardforks: feynman_hardforks(dogeos_forks),
             base_fee_params: BaseFeeParamsKind::Variable(
-                alloc::vec![(
-                    DogeosHardfork::Feynman.boxed(),
-                    DOGEOS_BASE_FEE_PARAMS_FEYNMAN,
-                )]
+                alloc::vec![
+                    (
+                        DogeosHardfork::Feynman.boxed(),
+                        DOGEOS_BASE_FEE_PARAMS_FEYNMAN,
+                    ),
+                    (DogeosHardfork::Tsuki.boxed(), DOGEOS_BASE_FEE_PARAMS_TSUKI),
+                ]
                 .into(),
             ),
             paris_block_and_final_difficulty: Some((0, U256::ZERO)),
@@ -368,13 +371,34 @@ mod tests {
     }
 
     #[test]
-    fn feynman_base_fee_params_are_d48_e10() {
-        let expected = BaseFeeParams::new(48, 10);
-        assert_eq!(DOGEOS_BASE_FEE_PARAMS_FEYNMAN, expected);
-        for spec in [&*DOGEOS_MAINNET, &*DOGEOS_CHIKYU, &*DOGEOS_DEV] {
-            assert_eq!(spec.base_fee_params_at_timestamp(0), expected);
-            assert_eq!(spec.base_fee_params_at_timestamp(u64::MAX), expected);
+    fn base_fee_params_switch_from_feynman_to_tsuki() {
+        let feynman = BaseFeeParams::new(8, 2);
+        let tsuki = BaseFeeParams::new(48, 10);
+        assert_eq!(DOGEOS_BASE_FEE_PARAMS_FEYNMAN, feynman);
+        assert_eq!(DOGEOS_BASE_FEE_PARAMS_TSUKI, tsuki);
+
+        // Tsuki from genesis.
+        for spec in [&*DOGEOS_MAINNET, &*DOGEOS_DEV] {
+            assert_eq!(spec.base_fee_params_at_timestamp(0), tsuki);
+            assert_eq!(spec.base_fee_params_at_timestamp(u64::MAX), tsuki);
         }
+
+        // Tsuki activated after genesis.
+        let mut genesis: Genesis =
+            serde_json::from_str(include_str!("../res/genesis/chikyu_dogeos.json")).unwrap();
+        genesis
+            .config
+            .extra_fields
+            .insert("feynmanTime".into(), 10.into());
+        genesis
+            .config
+            .extra_fields
+            .insert("tsukiTime".into(), 40.into());
+        let spec = DogeosChainSpec::from_custom_genesis(genesis);
+        assert_eq!(spec.base_fee_params_at_timestamp(10), feynman);
+        assert_eq!(spec.base_fee_params_at_timestamp(39), feynman);
+        assert_eq!(spec.base_fee_params_at_timestamp(40), tsuki);
+        assert_eq!(spec.base_fee_params_at_timestamp(u64::MAX), tsuki);
     }
 
     #[test]
