@@ -368,6 +368,16 @@ mod tests {
     }
 
     #[test]
+    fn feynman_base_fee_params_are_d48_e10() {
+        let expected = BaseFeeParams::new(48, 10);
+        assert_eq!(DOGEOS_BASE_FEE_PARAMS_FEYNMAN, expected);
+        for spec in [&*DOGEOS_MAINNET, &*DOGEOS_CHIKYU, &*DOGEOS_DEV] {
+            assert_eq!(spec.base_fee_params_at_timestamp(0), expected);
+            assert_eq!(spec.base_fee_params_at_timestamp(u64::MAX), expected);
+        }
+    }
+
+    #[test]
     fn chikyu_preserves_published_genesis_hash() {
         assert_eq!(DOGEOS_CHIKYU.genesis_hash(), DOGEOS_CHIKYU_GENESIS_HASH);
     }

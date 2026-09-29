@@ -7,7 +7,7 @@ use reth_chainspec::EthChainSpec;
 use revm::Database;
 
 /// Protocol-enforced maximum L2 base fee.
-pub const MAX_L2_BASE_FEE: u64 = 10_000_000_000;
+pub use dogeos_protocol_types::MAX_L2_BASE_FEE;
 
 /// L2 base-fee overhead slot in the system config contract.
 const L2_BASE_FEE_OVERHEAD_SLOT: U256 = U256::from_limbs([101, 0, 0, 0]);
@@ -75,14 +75,47 @@ mod tests {
     use dogeos_chainspec::DOGEOS_MAINNET;
     use revm::database::{EmptyDB, State, states::plain_account::PlainStorage};
 
+    /// Mainnet-scale block gas limit; with elasticity 10 the target is 3M gas.
+    const GAS_LIMIT: u64 = 30_000_000;
+    const GAS_TARGET: u64 = GAS_LIMIT / 10;
+    /// The 420 gwei overhead planned for activation.
+    const OVERHEAD: u64 = 420_000_000_000;
+
     fn parent(base_fee: u64, gas_used: u64) -> alloy_consensus::Header {
         alloy_consensus::Header {
             base_fee_per_gas: Some(base_fee),
-            gas_limit: 20_000_000,
+            gas_limit: GAS_LIMIT,
             gas_used,
             timestamp: 1,
             ..Default::default()
         }
+    }
+
+    fn state_with_overhead(overhead: u64) -> State<EmptyDB> {
+        let mut state = State::builder()
+            .with_database(EmptyDB::default())
+            .with_bundle_update()
+            .build();
+        state.insert_account_with_storage(
+            DOGEOS_MAINNET.config.l1_config.l2_system_config_address,
+            Default::default(),
+            PlainStorage::from_iter([(L2_BASE_FEE_OVERHEAD_SLOT, U256::from(overhead))]),
+        );
+        state
+    }
+
+    fn next_base_fee(overhead: u64, parent_base_fee: u64, gas_used: u64) -> eyre::Result<u64> {
+        let provider = ScrollBaseFeeProvider::new(DOGEOS_MAINNET.clone());
+        Ok(provider.next_block_base_fee(
+            &mut state_with_overhead(overhead),
+            &parent(parent_base_fee, gas_used),
+            2,
+        )?)
+    }
+
+    #[test]
+    fn cap_is_420_000_gwei() {
+        assert_eq!(MAX_L2_BASE_FEE, 420_000_000_000_000);
     }
 
     #[test]
@@ -94,7 +127,7 @@ mod tests {
         let provider = ScrollBaseFeeProvider::new(DOGEOS_MAINNET.clone());
 
         assert_eq!(
-            provider.next_block_base_fee(&mut state, &parent(1_000_000_000, 10_000_000), 2)?,
+            provider.next_block_base_fee(&mut state, &parent(1_000_000_000, GAS_TARGET), 2)?,
             1_000_000_000
         );
         Ok(())
@@ -102,34 +135,41 @@ mod tests {
 
     #[test]
     fn configured_overhead_is_read_from_state() -> eyre::Result<()> {
-        let mut state = State::builder()
-            .with_database(EmptyDB::default())
-            .with_bundle_update()
-            .build();
-        state.insert_account_with_storage(
-            DOGEOS_MAINNET.config.l1_config.l2_system_config_address,
-            Default::default(),
-            PlainStorage::from_iter([(L2_BASE_FEE_OVERHEAD_SLOT, U256::ONE)]),
-        );
-        let provider = ScrollBaseFeeProvider::new(DOGEOS_MAINNET.clone());
+        assert_eq!(next_base_fee(1, 1_000_000_000, GAS_TARGET)?, 1_000_000_000);
+        Ok(())
+    }
 
+    #[test]
+    fn escalates_with_denominator_48_and_elasticity_10() -> eyre::Result<()> {
+        // 2x target: the part above the overhead grows by 1/48.
         assert_eq!(
-            provider.next_block_base_fee(&mut state, &parent(1_000_000_000, 10_000_000), 2)?,
-            1_000_000_000
+            next_base_fee(OVERHEAD, OVERHEAD + 1_000_000_000, 2 * GAS_TARGET)?,
+            OVERHEAD + 1_020_833_333
         );
+        // Full block (10x target): the part above the overhead grows by 9/48.
+        assert_eq!(
+            next_base_fee(OVERHEAD, OVERHEAD + 1_000_000_000, GAS_LIMIT)?,
+            OVERHEAD + 1_187_500_000
+        );
+        // Empty block: the part above the overhead shrinks by 1/48.
+        assert_eq!(
+            next_base_fee(OVERHEAD, OVERHEAD + 1_000_000_000, 0)?,
+            OVERHEAD + 979_166_667
+        );
+        // Idle fixed point: overhead + 47 wei.
+        assert_eq!(next_base_fee(OVERHEAD, OVERHEAD + 48, 0)?, OVERHEAD + 47);
+        assert_eq!(next_base_fee(OVERHEAD, OVERHEAD + 47, 0)?, OVERHEAD + 47);
         Ok(())
     }
 
     #[test]
     fn base_fee_is_capped() -> eyre::Result<()> {
-        let mut state = State::builder()
-            .with_database(EmptyDB::default())
-            .with_bundle_update()
-            .build();
-        let provider = ScrollBaseFeeProvider::new(DOGEOS_MAINNET.clone());
-
         assert_eq!(
-            provider.next_block_base_fee(&mut state, &parent(MAX_L2_BASE_FEE, 20_000_000), 2,)?,
+            next_base_fee(OVERHEAD, MAX_L2_BASE_FEE, GAS_LIMIT)?,
+            MAX_L2_BASE_FEE
+        );
+        assert_eq!(
+            next_base_fee(OVERHEAD, MAX_L2_BASE_FEE - 1, GAS_LIMIT)?,
             MAX_L2_BASE_FEE
         );
         Ok(())
