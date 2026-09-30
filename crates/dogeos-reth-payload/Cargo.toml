@@ -35,6 +35,8 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+dogeos-reth-consensus.workspace = true
+reth-consensus.workspace = true
 dogeos-protocol-types = { workspace = true, features = ["std"] }
 serde_json.workspace = true
 
