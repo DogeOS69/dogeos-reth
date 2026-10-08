@@ -1,6 +1,7 @@
 use crate::DogeosCompatibleNodeTypes;
 use dogeos_reth_txpool::{
-    DogeosL1FeeSnapshot, DogeosPooledTransaction, DogeosTransactionPool, DogeosTransactionValidator,
+    DogeosL1FeeSnapshot, DogeosPoolMaintenance, DogeosPooledTransaction, DogeosTransactionPool,
+    DogeosTransactionValidator,
 };
 use reth_evm::ConfigureEvm;
 use reth_node_builder::{
@@ -241,7 +242,7 @@ where
             "txpool maintenance task",
             reth_transaction_pool::maintain::maintain_transaction_pool_future(
                 ctx.provider().clone(),
-                pool.clone(),
+                DogeosPoolMaintenance::new(pool.clone(), ctx.provider().clone()),
                 canonical_state_stream,
                 ctx.task_executor().clone(),
                 reth_transaction_pool::maintain::MaintainPoolConfig {
@@ -257,6 +258,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    mod base_fee;
     use super::*;
     use crate::DogeosNodeTypes;
     use alloy_consensus::{Block, Signed, TxLegacy, transaction::Recovered};
