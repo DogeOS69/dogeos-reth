@@ -8,7 +8,7 @@ use alloy_eips::{
 use alloy_primitives::{Address, B256, TxHash, map::AddressSet};
 use dogeos_chainspec::{ChainConfig, ScrollChainConfig};
 use dogeos_hardforks::DogeosHardforks;
-use dogeos_reth_evm::ScrollBaseFeeProvider;
+use dogeos_reth_evm::{MAX_L2_BASE_FEE, ScrollBaseFeeProvider};
 use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_eth_wire::HandleMempoolData;
 use reth_execution_types::ChangedAccount;
@@ -53,6 +53,7 @@ impl<P: fmt::Debug, Client> fmt::Debug for DogeosPoolMaintenance<P, Client> {
 
 impl<P, Client> DogeosPoolMaintenance<P, Client>
 where
+    P: TransactionPool,
     Client: BlockReaderIdExt + StateProviderFactory + ChainSpecProvider,
     Client::ChainSpec: EthChainSpec + DogeosHardforks + ChainConfig<Config = ScrollChainConfig>,
 {
@@ -77,13 +78,24 @@ where
     fn pending_base_fee(&self, hash: B256) -> u64 {
         self.next_base_fee(hash).unwrap_or_else(|error| {
             // A queued notification can refer to state no longer available after a reorg.
-            // Keep applying the head/account/mined-transaction update, but disable only the
-            // pool's base-fee filter until a subsequent head can be read. Payload building still
-            // enforces the real fee. Reusing the stateless prediction or a stale cached fee could
-            // suppress payable transactions; dropping the whole update would corrupt pool state.
-            tracing::warn!(target: "reth::txpool", %hash, %error,
-                "Cannot read pending base fee; temporarily allowing underpriced pool transactions");
-            0
+            // Keep applying the head/account/mined-transaction update (dropping it would corrupt
+            // pool state), but fail closed on the fee: keep the one the pool already enforces.
+            // Lowering it would promote and propagate every parked underpriced transaction. A
+            // stale fee at most delays propagation until a subsequent head can be read; payload
+            // building computes the real fee and still selects parked transactions it unlocks.
+            //
+            // Before any head has been applied the pool has no fee of its own. Use the protocol
+            // cap: no block's base fee can exceed it, so nothing underpriced is promoted, and
+            // unlike Reth's stateless prediction it never parks transactions paying the cap.
+            let previous = self.inner.block_info();
+            let kept = if previous.last_seen_block_hash.is_zero() {
+                MAX_L2_BASE_FEE
+            } else {
+                previous.pending_basefee
+            };
+            tracing::warn!(target: "reth::txpool", %hash, %error, kept_base_fee = kept,
+                "Cannot read pending base fee; keeping the pool's previous base fee");
+            kept
         })
     }
 }

@@ -4,10 +4,13 @@ use alloy_consensus::BlockHeader;
 use dogeos_reth_evm::{MAX_L2_BASE_FEE, ScrollBaseFeeProvider};
 use futures::channel::mpsc;
 use reth_chain_state::{ExecutedBlock, NewCanonicalChain};
+use reth_primitives_traits::SealedBlock;
 use reth_revm::database::StateProviderDatabase;
 use reth_storage_api::HeaderProvider;
 use reth_tasks::Runtime;
-use reth_transaction_pool::{BlockInfo, Pool, PoolTransaction, TransactionPoolExt};
+use reth_transaction_pool::{
+    BlockInfo, CanonicalStateUpdate, Pool, PoolTransaction, PoolUpdateKind, TransactionPoolExt,
+};
 use revm::{database::BundleState, state::AccountInfo};
 
 const SLOT: U256 = U256::from_limbs([101, 0, 0, 0]);
@@ -153,18 +156,19 @@ fn start(
     tokio::task::JoinHandle<()>,
 ) {
     let (tx, rx) = mpsc::unbounded();
-    let task = tokio::spawn(
-        reth_transaction_pool::maintain::maintain_transaction_pool_future(
-            provider.clone(),
-            DogeosPoolMaintenance::new(pool.clone(), provider.clone()),
-            rx,
-            Runtime::test(),
-            MaintainPoolConfig {
-                max_update_depth,
-                ..Default::default()
-            },
-        ),
-    );
+    // Spawn through the helper that `DogeosPoolBuilder::build_pool` calls, so these tests fail if
+    // the helper stops installing the DogeOS maintenance wrapper. They do not cover the builder's
+    // call site: a builder that bypassed the helper would still pass.
+    let task = tokio::spawn(dogeos_pool_maintenance_future(
+        provider.clone(),
+        pool.clone(),
+        rx,
+        Runtime::test(),
+        MaintainPoolConfig {
+            max_update_depth,
+            ..Default::default()
+        },
+    ));
     (tx, task)
 }
 
@@ -274,6 +278,7 @@ async fn commit_uses_event_state_even_when_provider_is_ahead_and_reorg_changes_o
         .unbounded_send(CanonStateNotification::Commit { new: chain(&first) })
         .unwrap();
     wait_for_head(&pool, first_hash).await;
+    assert_eq!(pool.block_info().pending_basefee, 1_112_500_000);
     assert_eq!(
         pool.block_info().pending_basefee,
         builder_fee(&provider, first_hash)
@@ -284,6 +289,7 @@ async fn commit_uses_event_state_even_when_provider_is_ahead_and_reorg_changes_o
         })
         .unwrap();
     wait_for_head(&pool, second_hash).await;
+    assert_eq!(pool.block_info().pending_basefee, 1_025_000_000);
     assert_eq!(
         pool.block_info().pending_basefee,
         builder_fee(&provider, second_hash)
@@ -311,6 +317,7 @@ async fn commit_uses_event_state_even_when_provider_is_ahead_and_reorg_changes_o
         })
         .unwrap();
     wait_for_head(&pool, sibling_hash).await;
+    assert_eq!(pool.block_info().pending_basefee, 1_075_000_000);
     assert_eq!(
         pool.block_info().pending_basefee,
         builder_fee(&provider, sibling_hash)
@@ -377,29 +384,75 @@ async fn default_and_non_default_overhead_match_builder_at_target_and_full_gas()
 }
 
 #[tokio::test]
-async fn unavailable_head_disables_only_fee_filter_then_recovers() {
+async fn unavailable_head_keeps_previous_fee_then_recovers() {
     let (provider, pool, validator) = fixture();
     let adapter = DogeosPoolMaintenance::new(pool.clone(), provider.clone());
-    let info = BlockInfo {
+    let unknown = BlockInfo {
         last_seen_block_hash: B256::repeat_byte(0xff),
         last_seen_block_number: 2,
         block_gas_limit: GAS_LIMIT,
-        pending_basefee: u64::MAX,
+        pending_basefee: 0,
         pending_blob_fee: Some(7),
     };
-    adapter.set_block_info(info);
+
+    // Before any head has been applied there is no previous fee: fail closed at the cap.
+    adapter.set_block_info(unknown);
     let actual = pool.block_info();
-    assert_eq!(actual.pending_basefee, 0);
-    assert_eq!(actual.last_seen_block_hash, info.last_seen_block_hash);
+    assert_eq!(actual.pending_basefee, MAX_L2_BASE_FEE);
+    assert_eq!(actual.last_seen_block_hash, unknown.last_seen_block_hash);
     assert_eq!(actual.pending_blob_fee, Some(7));
-    let hash = provider.chain_spec().genesis_hash();
+
+    // Readable head: 1 gwei full parent with 400M overhead, (1e9 - 4e8) * 1.125 + 4e8.
+    let head = block(
+        &provider,
+        provider.chain_spec().genesis_hash(),
+        1,
+        1_000_000_000,
+        GAS_LIMIT,
+        400_000_000,
+    );
+    let hash = head.recovered_block.hash();
+    commit(&provider, vec![head]);
     adapter.set_block_info(BlockInfo {
         last_seen_block_hash: hash,
-        ..info
+        pending_basefee: 0,
+        ..unknown
+    });
+    assert_eq!(pool.block_info().pending_basefee, 1_075_000_000);
+
+    // A priced-out transaction stays parked while the next head is unreadable.
+    let underpriced = priced_transaction(&provider, 1_000_000_000);
+    pool.add_transaction(TransactionOrigin::External, underpriced)
+        .await
+        .unwrap();
+    assert_eq!(pool.pool_size().basefee, 1);
+    adapter.on_canonical_state_change(CanonicalStateUpdate {
+        new_tip: &SealedBlock::seal_slow(Block {
+            header: alloy_consensus::Header {
+                number: 2,
+                gas_limit: GAS_LIMIT,
+                ..Default::default()
+            },
+            body: Default::default(),
+        }),
+        pending_block_base_fee: 0,
+        pending_block_blob_fee: None,
+        changed_accounts: vec![],
+        mined_transactions: vec![],
+        update_kind: PoolUpdateKind::Commit,
+    });
+    assert_eq!(pool.block_info().pending_basefee, 1_075_000_000);
+    assert_eq!(pool.pool_size().pending, 0);
+    assert_eq!(pool.pool_size().basefee, 1);
+
+    // Recovery: a readable head restores the exact fee.
+    adapter.set_block_info(BlockInfo {
+        last_seen_block_hash: provider.chain_spec().genesis_hash(),
+        ..unknown
     });
     assert_eq!(
         pool.block_info().pending_basefee,
-        builder_fee(&provider, hash)
+        builder_fee(&provider, provider.chain_spec().genesis_hash())
     );
     validator.abort();
 }
