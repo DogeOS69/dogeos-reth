@@ -30,6 +30,12 @@ impl ExecutionInfo {
         }
     }
 
+    /// Records an executed pool transaction's gas and EIP-2718 bytes.
+    pub fn record_tx(&mut self, tx: &impl Encodable2718, gas_used: u64) {
+        self.cumulative_gas_used += gas_used;
+        self.cumulative_da_bytes_used += tx.encode_2718_len() as u64;
+    }
+
     /// Returns whether adding `tx` would exceed the gas limit or EIP-2718 byte budget.
     pub fn is_tx_over_limits(
         &self,
@@ -105,6 +111,23 @@ mod tests {
 
         info.cumulative_da_bytes_used += 1;
         assert!(info.is_tx_over_limits(&tx, u64::MAX, Some(limit)));
+    }
+
+    #[test]
+    fn running_total_counts_eip2718_bytes_of_included_pool_transactions() {
+        let limit = MAX_TX_PAYLOAD_BYTES_PER_BLOCK as u64;
+        let tx = eip1559_with_encoded_len(limit as usize / 4);
+        let mut info = ExecutionInfo::new();
+        for _ in 0..3 {
+            assert!(!info.is_tx_over_limits(&tx, u64::MAX, Some(limit)));
+            info.record_tx(&tx, 21_000);
+        }
+        assert_eq!(info.cumulative_da_bytes_used, limit / 4 * 3);
+        assert_eq!(info.cumulative_gas_used, 63_000);
+        assert!(!info.is_tx_over_limits(&tx, u64::MAX, Some(limit)));
+
+        info.record_tx(&tx, 21_000);
+        assert_eq!(info.cumulative_da_bytes_used, limit);
     }
 
     #[test]

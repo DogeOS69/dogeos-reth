@@ -2,7 +2,7 @@ use crate::{
     ExecutionInfo, ScrollBuilderConfig, decode_forced_transactions, forced_transactions_da_bytes,
 };
 use alloy_consensus::Transaction;
-use alloy_eips::{Typed2718, eip2718::Encodable2718};
+use alloy_eips::Typed2718;
 use alloy_primitives::U256;
 use dogeos_chainspec::{ChainConfig, ScrollChainConfig};
 use dogeos_hardforks::DogeosHardforks;
@@ -322,8 +322,7 @@ where
                 }
                 Err(err) => return Err(PayloadBuilderError::evm(err)),
             };
-            info.cumulative_gas_used += gas_used;
-            info.cumulative_da_bytes_used += tx.inner().encode_2718_len() as u64;
+            info.record_tx(tx.inner(), gas_used);
             info.total_fees +=
                 U256::from(miner_fee.expect("valid fee after execution")) * U256::from(gas_used);
         }
