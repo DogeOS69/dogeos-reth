@@ -24,7 +24,9 @@ use reth_execution_cache::CachedStateProvider;
 use reth_execution_types::BlockExecutionOutput;
 use reth_payload_builder_primitives::PayloadBuilderError;
 use reth_payload_primitives::BuiltPayloadExecutedBlock;
-use reth_primitives_traits::{SignedTransaction, transaction::TxHashRef};
+use reth_primitives_traits::{
+    SignedTransaction, constants::GAS_LIMIT_BOUND_DIVISOR, transaction::TxHashRef,
+};
 use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_storage_api::StateProviderFactory;
 use reth_transaction_pool::{
@@ -137,6 +139,22 @@ where
     }
 }
 
+/// Selects the next block's gas limit.
+///
+/// An explicit attributes gas limit is used verbatim. Otherwise the block steps from the parent
+/// toward the configured target by at most `parent / GAS_LIMIT_BOUND_DIVISOR`, the largest change
+/// DogeOS consensus accepts.
+fn next_block_gas_limit(attributes: Option<u64>, target: Option<u64>, parent: u64) -> u64 {
+    if let Some(gas_limit) = attributes {
+        return gas_limit;
+    }
+    let Some(target) = target else {
+        return parent;
+    };
+    let step = parent / GAS_LIMIT_BOUND_DIVISOR;
+    target.clamp(parent.saturating_sub(step), parent.saturating_add(step))
+}
+
 fn build_payload<EvmConfig, Client, Pool, F>(
     evm_config: EvmConfig,
     client: Client,
@@ -193,10 +211,11 @@ where
             attributes.payload_attributes.timestamp,
         )
         .map_err(PayloadBuilderError::other)?;
-    let gas_limit = attributes
-        .gas_limit
-        .or(builder_config.gas_limit)
-        .unwrap_or(parent_header.gas_limit);
+    let gas_limit = next_block_gas_limit(
+        attributes.gas_limit,
+        builder_config.gas_limit,
+        parent_header.gas_limit,
+    );
     let mut builder = evm_config
         .builder_for_next_block(
             &mut db,
@@ -385,5 +404,96 @@ where
             payload,
             cached_reads,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dogeos_reth_consensus::DogeosConsensus;
+    use reth_consensus::HeaderValidator;
+    use reth_primitives_traits::SealedHeader;
+
+    fn header(parent_hash: alloy_primitives::B256, number: u64, gas_limit: u64) -> SealedHeader {
+        SealedHeader::seal_slow(alloy_consensus::Header {
+            parent_hash,
+            number,
+            gas_limit,
+            ..Default::default()
+        })
+    }
+
+    /// Ramps from `start` to `target` and asserts that DogeOS consensus accepts every block.
+    fn ramp(start: u64, target: u64) -> Vec<u64> {
+        let mut parent = header(Default::default(), 0, start);
+        let mut limits = vec![start];
+        while parent.gas_limit != target {
+            let gas_limit = next_block_gas_limit(None, Some(target), parent.gas_limit);
+            assert_eq!(
+                gas_limit.abs_diff(parent.gas_limit),
+                (parent.gas_limit / GAS_LIMIT_BOUND_DIVISOR).min(parent.gas_limit.abs_diff(target)),
+            );
+            let child = header(parent.hash(), parent.number + 1, gas_limit);
+            DogeosConsensus
+                .validate_header_against_parent(&child, &parent)
+                .expect("each ramp step is within the consensus bound");
+            limits.push(gas_limit);
+            parent = child;
+        }
+        limits
+    }
+
+    #[test]
+    fn ramps_up_by_the_maximum_consensus_step() {
+        let limits = ramp(10_000_000, 30_000_000);
+        assert_eq!(limits[1], 10_000_000 + 10_000_000 / GAS_LIMIT_BOUND_DIVISOR);
+        assert!(limits.windows(2).all(|w| w[1] > w[0]));
+        assert_eq!(limits.len() - 1, 1_126);
+
+        // One more than the ramp step is over the consensus bound.
+        let parent = header(Default::default(), 0, 10_000_000);
+        let over = header(
+            parent.hash(),
+            1,
+            10_000_000 + 10_000_000 / GAS_LIMIT_BOUND_DIVISOR + 1,
+        );
+        assert!(
+            DogeosConsensus
+                .validate_header_against_parent(&over, &parent)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn ramps_down_by_the_maximum_consensus_step() {
+        let limits = ramp(30_000_000, 10_000_000);
+        assert_eq!(limits[1], 30_000_000 - 30_000_000 / GAS_LIMIT_BOUND_DIVISOR);
+        assert!(limits.windows(2).all(|w| w[1] < w[0]));
+        assert_eq!(limits.len() - 1, 1_125);
+    }
+
+    #[test]
+    fn stops_at_the_target() {
+        assert_eq!(
+            next_block_gas_limit(None, Some(30_000_000), 30_000_000),
+            30_000_000
+        );
+        assert_eq!(
+            next_block_gas_limit(None, Some(30_000_000), 29_999_000),
+            30_000_000
+        );
+        assert_eq!(
+            next_block_gas_limit(None, Some(10_000_000), 10_001_000),
+            10_000_000
+        );
+    }
+
+    #[test]
+    fn keeps_explicit_attributes_and_defaults_to_parent() {
+        assert_eq!(
+            next_block_gas_limit(Some(30_000_000), Some(20_000_000), 10_000_000),
+            30_000_000
+        );
+        assert_eq!(next_block_gas_limit(None, None, 10_000_000), 10_000_000);
     }
 }
