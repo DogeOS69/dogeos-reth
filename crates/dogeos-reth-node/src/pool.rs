@@ -1,18 +1,23 @@
 use crate::DogeosCompatibleNodeTypes;
+use dogeos_chainspec::DogeosChainSpec;
+use dogeos_reth_primitives::DogeosPrimitives;
 use dogeos_reth_txpool::{
-    CodeWitnessValidationConfig, DogeosL1FeeSnapshot, DogeosPooledTransaction,
-    DogeosTransactionPool, DogeosTransactionValidator, DogeosValidationExecutor,
-    validate_code_witness,
+    CodeWitnessValidationConfig, DogeosL1FeeSnapshot, DogeosPoolMaintenance,
+    DogeosPooledTransaction, DogeosTransactionPool, DogeosTransactionValidator,
+    DogeosValidationExecutor, validate_code_witness,
 };
+use reth_chainspec::ChainSpecProvider;
 use reth_evm::ConfigureEvm;
 use reth_node_builder::{
     BuilderContext, FullNodeTypes,
     components::{PoolBuilder, PoolBuilderConfigOverrides},
 };
 use reth_primitives_traits::NodePrimitives;
-use reth_provider::{CanonStateNotifications, CanonStateSubscriptions};
+use reth_provider::{CanonStateNotification, CanonStateNotifications, CanonStateSubscriptions};
+use reth_storage_api::{BlockReaderIdExt, StateProviderFactory};
 use reth_transaction_pool::{
-    CoinbaseTipOrdering, TransactionValidationTaskExecutor, blobstore::DiskFileBlobStore,
+    CoinbaseTipOrdering, PoolTransaction, TransactionPoolExt, TransactionValidationTaskExecutor,
+    blobstore::DiskFileBlobStore,
 };
 use tokio::sync::{broadcast::error, oneshot};
 
@@ -127,6 +132,42 @@ async fn run_dogeos_l1_fee_cache_maintenance<N, Refresh>(
             }
         }
     }
+}
+
+/// Returns Reth's txpool maintenance task with the pool behind [`DogeosPoolMaintenance`].
+///
+/// Audit 10008: upstream maintenance predicts the pending base fee without the L2 system-config
+/// overhead or the protocol cap; the wrapper replaces it with the payload builder's fee.
+fn dogeos_pool_maintenance_future<Client, P, St>(
+    client: Client,
+    pool: P,
+    events: St,
+    task_executor: reth_tasks::TaskExecutor,
+    config: reth_transaction_pool::maintain::MaintainPoolConfig,
+) -> futures::future::BoxFuture<'static, ()>
+where
+    Client: StateProviderFactory
+        + BlockReaderIdExt<Header = <DogeosPrimitives as NodePrimitives>::BlockHeader>
+        + ChainSpecProvider<ChainSpec = DogeosChainSpec>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+    P: TransactionPoolExt<
+            Transaction: PoolTransaction<
+                Consensus = <DogeosPrimitives as NodePrimitives>::SignedTx,
+            >,
+            Block = <DogeosPrimitives as NodePrimitives>::Block,
+        > + 'static,
+    St: futures::Stream<Item = CanonStateNotification<DogeosPrimitives>> + Send + Unpin + 'static,
+{
+    reth_transaction_pool::maintain::maintain_transaction_pool_future(
+        client.clone(),
+        DogeosPoolMaintenance::new(pool, client),
+        events,
+        task_executor,
+        config,
+    )
 }
 
 /// Builds the DogeOS transaction pool and its canonical-chain maintenance tasks.
@@ -259,7 +300,7 @@ where
 
         ctx.task_executor().spawn_critical_task(
             "txpool maintenance task",
-            reth_transaction_pool::maintain::maintain_transaction_pool_future(
+            dogeos_pool_maintenance_future(
                 ctx.provider().clone(),
                 pool.clone(),
                 canonical_state_stream,
@@ -277,6 +318,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    mod base_fee;
     use super::*;
     use crate::DogeosNodeTypes;
     use alloy_consensus::{Block, Signed, TxLegacy, transaction::Recovered};
