@@ -7,7 +7,7 @@ use alloy_primitives::U256;
 use dogeos_chainspec::{ChainConfig, ScrollChainConfig};
 use dogeos_hardforks::DogeosHardforks;
 use dogeos_reth_engine::{ScrollBuiltPayload, ScrollPayloadAttributes};
-use dogeos_reth_evm::{ScrollBaseFeeProvider, ScrollNextBlockEnvAttributes};
+use dogeos_reth_evm::{CodeWitnessHandle, ScrollBaseFeeProvider, ScrollNextBlockEnvAttributes};
 use dogeos_reth_primitives::{DogeosPrimitives, ScrollTransactionSigned};
 use either::Either;
 use reth_basic_payload_builder::{
@@ -18,7 +18,8 @@ use reth_chainspec::{ChainSpecProvider, EthChainSpec};
 use reth_errors::{BlockExecutionError, BlockValidationError};
 use reth_evm::{
     ConfigureEvm, Evm,
-    execute::{BlockBuilder, BlockBuilderOutcome, BlockExecutor},
+    block::CommitChanges,
+    execute::{BlockBuilder, BlockBuilderOutcome, BlockExecutor, ExecutorTx},
 };
 use reth_execution_cache::CachedStateProvider;
 use reth_execution_types::BlockExecutionOutput;
@@ -29,7 +30,8 @@ use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_storage_api::StateProviderFactory;
 use reth_transaction_pool::{
     BestTransactions, BestTransactionsAttributes, PoolTransaction, TransactionPool,
-    ValidPoolTransaction, error::InvalidPoolTransactionError,
+    ValidPoolTransaction,
+    error::{InvalidPoolTransactionError, PoolTransactionError},
 };
 use revm::context_interface::Block as _;
 use std::sync::Arc;
@@ -50,6 +52,27 @@ pub enum ScrollPayloadBuilderError {
     BlockGasLimitExceededByForcedTransactions { gas_spent_by_tx: Vec<u64>, gas: u64 },
     #[error("forced transactions use {bytes} encoded bytes, exceeding block DA limit {limit}")]
     BlockDaLimitExceededByForcedTransactions { bytes: u64, limit: u64 },
+    #[error("forced transactions exceed block code witness limit {limit} bytes")]
+    BlockCodeLimitExceededByForcedTransactions { limit: u64 },
+    #[error("system execution exceeds block code witness limit {limit} bytes")]
+    BlockCodeLimitExceededBySystemExecution { limit: u64 },
+}
+
+/// A candidate-local resource rejection, not evidence of a consensus-invalid transaction.
+#[derive(Debug, thiserror::Error)]
+#[error("transaction would exceed block code witness limit {limit} bytes")]
+struct CodeWitnessBudgetExceeded {
+    limit: u64,
+}
+
+impl PoolTransactionError for CodeWitnessBudgetExceeded {
+    fn is_bad_transaction(&self) -> bool {
+        false
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 /// Reth 2 payload builder for DogeOS/Scroll execution payloads.
@@ -197,18 +220,23 @@ where
         .gas_limit
         .or(builder_config.gas_limit)
         .unwrap_or(parent_header.gas_limit);
-    let mut builder = evm_config
-        .builder_for_next_block(
-            &mut db,
-            &parent_header,
-            ScrollNextBlockEnvAttributes {
-                timestamp: attributes.payload_attributes.timestamp,
-                suggested_fee_recipient: attributes.payload_attributes.suggested_fee_recipient,
-                gas_limit,
-                base_fee,
-            },
-        )
+    let next_attributes = ScrollNextBlockEnvAttributes {
+        timestamp: attributes.payload_attributes.timestamp,
+        suggested_fee_recipient: attributes.payload_attributes.suggested_fee_recipient,
+        gas_limit,
+        base_fee,
+    };
+    let evm_env = evm_config
+        .next_evm_env(&parent_header, &next_attributes)
         .map_err(PayloadBuilderError::other)?;
+    let execution_ctx = evm_config
+        .context_for_next_block(&parent_header, next_attributes)
+        .map_err(PayloadBuilderError::other)?;
+    // The handle tracks logical code accesses independently of the database caches. Admission
+    // work limits do not apply here: a builder only enforces its block-level code budget.
+    let code_witness = CodeWitnessHandle::new(builder_config.max_code_witness_bytes, u64::MAX);
+    let evm = evm_config.evm_with_env_and_inspector(&mut db, evm_env, code_witness.inspector());
+    let mut builder = evm_config.create_block_builder(evm, &parent_header, execution_ctx);
 
     debug!(target: "payload_builder", id=%payload_id, parent=?parent_header.hash(), "building DogeOS payload");
     if let Some(ref handle) = trie_handle {
@@ -216,10 +244,12 @@ where
             .executor_mut()
             .set_state_hook(Some(Box::new(handle.state_hook())));
     }
+    code_witness.begin_transaction();
     builder.apply_pre_execution_changes().map_err(|err| {
         warn!(target: "payload_builder", %err, "failed to apply pre-execution changes");
         PayloadBuilderError::Internal(err.into())
     })?;
+    accept_system_code_budget(&code_witness, builder_config.max_code_witness_bytes)?;
 
     let mut info = ExecutionInfo::new();
     let block_gas_limit = builder.evm().block().gas_limit();
@@ -258,8 +288,11 @@ where
                 },
             ));
         }
-        let gas_used = match builder.execute_transaction(tx.clone()) {
-            Ok(gas_used) => gas_used,
+        let gas_used = match execute_with_code_budget(&mut builder, tx.clone(), &code_witness) {
+            Ok(gas_used) => {
+                forced_code_budget_result(gas_used, builder_config.max_code_witness_bytes)
+                    .map_err(PayloadBuilderError::other)?
+            }
             Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                 error, ..
             })) => {
@@ -304,8 +337,17 @@ where
                 break;
             }
             let miner_fee = tx.effective_tip_per_gas(base_fee);
-            let gas_used = match builder.execute_transaction(tx.clone()) {
-                Ok(gas_used) => gas_used,
+            let gas_used = match execute_with_code_budget(&mut builder, tx.clone(), &code_witness) {
+                Ok(Some(gas_used)) => gas_used,
+                Ok(None) => {
+                    best.mark_invalid(
+                        &pool_tx,
+                        &InvalidPoolTransactionError::other(CodeWitnessBudgetExceeded {
+                            limit: builder_config.max_code_witness_bytes,
+                        }),
+                    );
+                    continue;
+                }
                 Err(BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                     error,
                     ..
@@ -335,6 +377,7 @@ where
         }
     }
 
+    code_witness.begin_transaction();
     let BlockBuilderOutcome {
         execution_result,
         hashed_state,
@@ -361,6 +404,9 @@ where
         builder.finish(state_provider.as_ref(), None)?
     };
 
+    // Finalization may execute system calls. Abort the whole candidate if these do not fit.
+    accept_system_code_budget(&code_witness, builder_config.max_code_witness_bytes)?;
+
     if !attributes.block_data_hint.is_empty() {
         trace!(
             target: "payload_builder",
@@ -385,5 +431,300 @@ where
             payload,
             cached_reads,
         })
+    }
+}
+
+/// System calls belong to the block even when it contains no user transactions.
+fn accept_system_code_budget(
+    code_witness: &CodeWitnessHandle,
+    limit: u64,
+) -> Result<(), PayloadBuilderError> {
+    if !code_witness.accept_transaction() {
+        return Err(PayloadBuilderError::other(
+            ScrollPayloadBuilderError::BlockCodeLimitExceededBySystemExecution { limit },
+        ));
+    }
+    Ok(())
+}
+
+/// Forced inputs may not be silently dropped when their code does not fit.
+fn forced_code_budget_result(
+    gas_used: Option<u64>,
+    limit: u64,
+) -> Result<u64, ScrollPayloadBuilderError> {
+    gas_used.ok_or(ScrollPayloadBuilderError::BlockCodeLimitExceededByForcedTransactions { limit })
+}
+
+/// This gate runs before state changes, receipts, and the transaction list are committed.
+fn code_witness_commit(code_witness: &CodeWitnessHandle) -> CommitChanges {
+    if code_witness.exceeded().is_some() {
+        CommitChanges::No
+    } else {
+        CommitChanges::Yes
+    }
+}
+
+/// Commits code identities only when the corresponding EVM result was committed successfully.
+fn execute_with_code_budget<B: BlockBuilder>(
+    builder: &mut B,
+    tx: impl ExecutorTx<B::Executor>,
+    code_witness: &CodeWitnessHandle,
+) -> Result<Option<u64>, BlockExecutionError> {
+    code_witness.begin_transaction();
+    let outcome = builder
+        .execute_transaction_with_commit_condition(tx, |_| code_witness_commit(code_witness));
+    if matches!(outcome, Ok(Some(_))) {
+        code_witness.accept_transaction();
+    } else {
+        code_witness.reject_transaction();
+    }
+    outcome
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_consensus::{Header, Sealable, Signed, TxLegacy, transaction::Recovered};
+    use alloy_primitives::{Address, B256, Bytes, Signature, TxKind};
+    use dogeos_chainspec::DOGEOS_MAINNET;
+    use dogeos_reth_evm::ScrollEvmConfig;
+    use reth_primitives_traits::SealedHeader;
+    use revm::{Database, bytecode::Bytecode, database::EmptyDB, state::AccountInfo};
+
+    const SENDER: Address = Address::repeat_byte(0x11);
+    const FIRST: Address = Address::repeat_byte(0x22);
+    const SECOND: Address = Address::repeat_byte(0x33);
+
+    fn transaction(to: Address, nonce: u64) -> Recovered<ScrollTransactionSigned> {
+        let tx = Signed::new_unchecked(
+            TxLegacy {
+                chain_id: Some(DOGEOS_MAINNET.chain().id()),
+                nonce,
+                gas_price: 1,
+                gas_limit: 100_000,
+                to: TxKind::Call(to),
+                ..Default::default()
+            },
+            Signature::test_signature(),
+            B256::repeat_byte(nonce as u8),
+        );
+        Recovered::new_unchecked(tx.into(), SENDER)
+    }
+
+    fn state_with_code() -> State<EmptyDB> {
+        let mut state = State::builder()
+            .with_database(EmptyDB::default())
+            .with_bundle_update()
+            .build();
+        state.insert_account(
+            SENDER,
+            AccountInfo {
+                balance: U256::from(1_000_000_000u64),
+                ..Default::default()
+            },
+        );
+        for (address, value) in [(FIRST, 1), (SECOND, 2)] {
+            // Store the unique value in slot zero, then stop. Pad to 64 bytes.
+            let mut bytes = vec![0x60, value, 0x60, 0x00, 0x55, 0x00];
+            bytes.resize(64, 0);
+            let code = Bytecode::new_raw(Bytes::from(bytes));
+            state.insert_account(
+                address,
+                AccountInfo {
+                    code_hash: code.hash_slow(),
+                    code: Some(code),
+                    ..Default::default()
+                },
+            );
+        }
+        state
+    }
+
+    fn block_environment() -> (
+        ScrollEvmConfig,
+        SealedHeader<Header>,
+        ScrollNextBlockEnvAttributes,
+    ) {
+        let config = ScrollEvmConfig::dogeos(DOGEOS_MAINNET.clone());
+        let parent = SealedHeader::seal_slow(Header {
+            number: 1,
+            gas_limit: 30_000_000,
+            ..Default::default()
+        });
+        let attributes = ScrollNextBlockEnvAttributes {
+            timestamp: 1,
+            suggested_fee_recipient: Address::ZERO,
+            gas_limit: 30_000_000,
+            base_fee: 0,
+        };
+        (config, parent, attributes)
+    }
+
+    #[test]
+    fn block_budget_rejects_split_access_and_preserves_nonce_state_and_receipts() {
+        let (config, parent, attributes) = block_environment();
+        let mut state = state_with_code();
+        let meter = CodeWitnessHandle::new(80, u64::MAX);
+        let env = config.next_evm_env(&parent, &attributes).unwrap();
+        let ctx = config.context_for_next_block(&parent, attributes).unwrap();
+        let evm = config.evm_with_env_and_inspector(&mut state, env, meter.inspector());
+        let mut builder = config.create_block_builder(evm, &parent, ctx);
+
+        assert!(
+            execute_with_code_budget(&mut builder, transaction(FIRST, 0), &meter)
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(meter.block_code_bytes(), 64);
+        // Individually this transaction fits; its distinct code exceeds the block's remainder.
+        assert!(
+            execute_with_code_budget(&mut builder, transaction(SECOND, 1), &meter)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(meter.block_code_bytes(), 64);
+        assert_eq!(
+            builder
+                .evm_mut()
+                .db_mut()
+                .basic(SENDER)
+                .unwrap()
+                .unwrap()
+                .nonce,
+            1
+        );
+        assert_eq!(
+            builder
+                .evm_mut()
+                .db_mut()
+                .storage(SECOND, U256::ZERO)
+                .unwrap(),
+            U256::ZERO
+        );
+        // Retrying cached code must still fail and must not spend the rejected nonce.
+        assert!(
+            execute_with_code_budget(&mut builder, transaction(SECOND, 1), &meter)
+                .unwrap()
+                .is_none()
+        );
+        // Overlapping accepted code costs zero, even when the block has insufficient room for
+        // another copy. The same nonce is still valid after both rejected attempts.
+        assert!(
+            execute_with_code_budget(&mut builder, transaction(FIRST, 1), &meter)
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(meter.block_code_bytes(), 64);
+        let (_, output) = builder.into_executor().finish().unwrap();
+        assert_eq!(output.receipts.len(), 2);
+        assert_eq!(state.basic(SENDER).unwrap().unwrap().nonce, 2);
+        assert_eq!(state.storage(FIRST, U256::ZERO).unwrap(), U256::ONE);
+    }
+
+    #[test]
+    fn reverted_transaction_keeps_its_code_budget_and_receipt() {
+        use alloy_consensus::TxReceipt;
+
+        let (config, parent, attributes) = block_environment();
+        let mut state = state_with_code();
+        let mut bytes = vec![0x60, 0, 0x60, 0, 0xfd];
+        bytes.resize(64, 0);
+        let code = Bytecode::new_raw(Bytes::from(bytes));
+        state.insert_account(
+            FIRST,
+            AccountInfo {
+                code_hash: code.hash_slow(),
+                code: Some(code),
+                ..Default::default()
+            },
+        );
+        let meter = CodeWitnessHandle::new(64, u64::MAX);
+        let env = config.next_evm_env(&parent, &attributes).unwrap();
+        let ctx = config.context_for_next_block(&parent, attributes).unwrap();
+        let evm = config.evm_with_env_and_inspector(&mut state, env, meter.inspector());
+        let mut builder = config.create_block_builder(evm, &parent, ctx);
+
+        assert!(
+            execute_with_code_budget(&mut builder, transaction(FIRST, 0), &meter)
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(meter.block_code_bytes(), 64);
+        let (_, output) = builder.into_executor().finish().unwrap();
+        assert_eq!(output.receipts.len(), 1);
+        assert!(!output.receipts[0].status());
+        assert_eq!(state.basic(SENDER).unwrap().unwrap().nonce, 1);
+    }
+
+    #[test]
+    fn forced_l1_message_overflow_fails_without_committing() {
+        use dogeos_protocol_types::{ScrollTxEnvelope, TxL1Message};
+
+        let (config, parent, attributes) = block_environment();
+        let mut state = state_with_code();
+        let meter = CodeWitnessHandle::new(63, u64::MAX);
+        let env = config.next_evm_env(&parent, &attributes).unwrap();
+        let ctx = config.context_for_next_block(&parent, attributes).unwrap();
+        let evm = config.evm_with_env_and_inspector(&mut state, env, meter.inspector());
+        let mut builder = config.create_block_builder(evm, &parent, ctx);
+        let forced = ScrollTxEnvelope::L1Message(
+            TxL1Message {
+                gas_limit: 100_000,
+                sender: SENDER,
+                to: FIRST,
+                ..Default::default()
+            }
+            .seal_slow(),
+        )
+        .try_clone_into_recovered()
+        .unwrap();
+
+        let outcome = execute_with_code_budget(&mut builder, forced, &meter).unwrap();
+        assert!(matches!(
+            forced_code_budget_result(outcome, 63),
+            Err(
+                ScrollPayloadBuilderError::BlockCodeLimitExceededByForcedTransactions { limit: 63 }
+            )
+        ));
+        assert_eq!(meter.block_code_bytes(), 0);
+        let (_, output) = builder.into_executor().finish().unwrap();
+        assert!(output.receipts.is_empty());
+        assert_eq!(state.basic(SENDER).unwrap().unwrap().nonce, 0);
+        assert_eq!(state.storage(FIRST, U256::ZERO).unwrap(), U256::ZERO);
+    }
+
+    #[test]
+    fn system_code_is_reserved_before_user_transactions() {
+        use alloy_eips::eip2935::{HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE};
+
+        let (config, parent, attributes) = block_environment();
+        let mut state = state_with_code();
+        let code = Bytecode::new_raw(HISTORY_STORAGE_CODE.clone());
+        state.insert_account(
+            HISTORY_STORAGE_ADDRESS,
+            AccountInfo {
+                code_hash: code.hash_slow(),
+                code: Some(code),
+                ..Default::default()
+            },
+        );
+        let meter = CodeWitnessHandle::new(1, u64::MAX);
+        let env = config.next_evm_env(&parent, &attributes).unwrap();
+        let ctx = config.context_for_next_block(&parent, attributes).unwrap();
+        let evm = config.evm_with_env_and_inspector(&mut state, env, meter.inspector());
+        let mut builder = config.create_block_builder(evm, &parent, ctx);
+
+        meter.begin_transaction();
+        builder.apply_pre_execution_changes().unwrap();
+        assert!(accept_system_code_budget(&meter, 1).is_err());
+    }
+
+    #[test]
+    fn pool_resource_rejection_does_not_penalize_peers() {
+        let error = reth_transaction_pool::error::PoolError::new(
+            B256::ZERO,
+            InvalidPoolTransactionError::other(CodeWitnessBudgetExceeded { limit: 80 }),
+        );
+        assert!(!error.is_bad_transaction());
     }
 }

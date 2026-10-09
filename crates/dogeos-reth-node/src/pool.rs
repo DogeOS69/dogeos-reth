@@ -2,8 +2,9 @@ use crate::DogeosCompatibleNodeTypes;
 use dogeos_chainspec::DogeosChainSpec;
 use dogeos_reth_primitives::DogeosPrimitives;
 use dogeos_reth_txpool::{
-    DogeosL1FeeSnapshot, DogeosPoolMaintenance, DogeosPooledTransaction, DogeosTransactionPool,
-    DogeosTransactionValidator,
+    CodeWitnessValidationConfig, DogeosL1FeeSnapshot, DogeosPoolMaintenance,
+    DogeosPooledTransaction, DogeosTransactionPool, DogeosTransactionValidator,
+    DogeosValidationExecutor, validate_code_witness,
 };
 use reth_chainspec::ChainSpecProvider;
 use reth_evm::ConfigureEvm;
@@ -173,9 +174,15 @@ where
 #[derive(Debug, Clone, Default)]
 pub struct DogeosPoolBuilder {
     pub pool_config_overrides: PoolBuilderConfigOverrides,
+    pub code_witness_config: CodeWitnessValidationConfig,
 }
 
 impl DogeosPoolBuilder {
+    pub const fn with_code_witness_config(mut self, config: CodeWitnessValidationConfig) -> Self {
+        self.code_witness_config = config;
+        self
+    }
+
     pub fn with_pool_config_overrides(mut self, overrides: PoolBuilderConfigOverrides) -> Self {
         self.pool_config_overrides = overrides;
         self
@@ -231,9 +238,21 @@ where
             }
             None => DogeosTransactionValidator::disabled(inner, require_l1_data_fee_buffer),
         };
-        let validator = TransactionValidationTaskExecutor::spawn(
+        let simulation_client = ctx.provider().clone();
+        let simulation_evm = dogeos_reth_evm::ScrollEvmConfig::dogeos(ctx.chain_spec());
+        let code_witness_config = self.code_witness_config;
+        let validator = validator.with_admission_check(move |transaction| {
+            validate_code_witness(
+                &simulation_client,
+                &simulation_evm,
+                transaction,
+                code_witness_config,
+            )
+            .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)
+        });
+        let validator = DogeosValidationExecutor::new(
             validator,
-            ctx.task_executor(),
+            code_witness_config.max_inflight,
             additional_validation_tasks,
         );
 

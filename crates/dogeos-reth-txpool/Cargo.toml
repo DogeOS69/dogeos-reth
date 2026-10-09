@@ -29,7 +29,7 @@ reth-storage-errors.workspace = true
 reth-transaction-pool.workspace = true
 revm-scroll.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["rt", "sync"] }
 tracing.workspace = true
 
 [features]
@@ -37,5 +37,6 @@ default = ["std"]
 std = []
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
 dogeos-reth-primitives = { workspace = true, features = ["serde"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
