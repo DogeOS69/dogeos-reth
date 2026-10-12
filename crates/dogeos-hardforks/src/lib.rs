@@ -109,10 +109,20 @@ impl DogeosChainHardforks {
 
 impl EthereumHardforks for DogeosChainHardforks {
     fn ethereum_fork_activation(&self, fork: EthereumHardfork) -> ForkCondition {
-        if fork <= EthereumHardfork::Shanghai {
-            self.dogeos_fork_activation(DogeosHardfork::Feynman)
-        } else {
-            ForkCondition::Never
+        // Match the Ethereum baseline in dogeos-chainspec's feynman_hardforks.
+        match fork {
+            EthereumHardfork::Frontier
+            | EthereumHardfork::Homestead
+            | EthereumHardfork::Tangerine
+            | EthereumHardfork::SpuriousDragon
+            | EthereumHardfork::Byzantium
+            | EthereumHardfork::Constantinople
+            | EthereumHardfork::Petersburg
+            | EthereumHardfork::Istanbul
+            | EthereumHardfork::Berlin
+            | EthereumHardfork::London => ForkCondition::Block(0),
+            EthereumHardfork::Shanghai => ForkCondition::Timestamp(0),
+            _ => ForkCondition::Never,
         }
     }
 }
@@ -129,6 +139,32 @@ impl DogeosHardforks for DogeosChainHardforks {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ethereum_baseline_preserves_activation_kinds_and_excludes_unsupported_forks() {
+        for hardforks in [
+            DogeosChainHardforks::mainnet(),
+            DogeosChainHardforks::chikyu(),
+            DogeosChainHardforks::dev(),
+        ] {
+            assert!(hardforks.is_london_active_at_block(0));
+            assert!(hardforks.is_shanghai_active_at_timestamp(0));
+            for fork in [
+                EthereumHardfork::Dao,
+                EthereumHardfork::MuirGlacier,
+                EthereumHardfork::ArrowGlacier,
+                EthereumHardfork::GrayGlacier,
+                EthereumHardfork::Paris,
+                EthereumHardfork::Cancun,
+            ] {
+                assert_eq!(
+                    hardforks.ethereum_fork_activation(fork),
+                    ForkCondition::Never,
+                    "{fork:?} must remain unscheduled"
+                );
+            }
+        }
+    }
 
     #[test]
     fn mainnet_and_dev_activate_feynman_and_tsuki_at_genesis() {
