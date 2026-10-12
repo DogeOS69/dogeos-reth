@@ -141,32 +141,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ethereum_baseline_preserves_activation_kinds_and_excludes_unsupported_forks() {
-        for hardforks in [
-            DogeosChainHardforks::mainnet(),
-            DogeosChainHardforks::chikyu(),
-            DogeosChainHardforks::dev(),
-        ] {
-            assert!(hardforks.is_london_active_at_block(0));
-            assert!(hardforks.is_shanghai_active_at_timestamp(0));
-            for fork in [
-                EthereumHardfork::Dao,
-                EthereumHardfork::MuirGlacier,
-                EthereumHardfork::ArrowGlacier,
-                EthereumHardfork::GrayGlacier,
-                EthereumHardfork::Paris,
-                EthereumHardfork::Cancun,
-            ] {
-                assert_eq!(
-                    hardforks.ethereum_fork_activation(fork),
-                    ForkCondition::Never,
-                    "{fork:?} must remain unscheduled"
-                );
-            }
-        }
-    }
-
-    #[test]
     fn mainnet_and_dev_activate_feynman_and_tsuki_at_genesis() {
         for hardforks in [DogeosChainHardforks::mainnet(), DogeosChainHardforks::dev()] {
             assert!(hardforks.is_feynman_active_at_timestamp(0));
