@@ -375,8 +375,51 @@ mod tests {
     }
 
     #[test]
-    fn supported_chain_ids_match_the_current_node() {
-        assert_eq!(DOGEOS_MAINNET.chain().id(), 0xff);
+    fn mainnet_json_matches_builtin_spec() {
+        let genesis: Genesis =
+            serde_json::from_str(include_str!("../res/genesis/dogeos.json")).unwrap();
+        let custom = DogeosChainSpec::from_custom_genesis(genesis);
+        let builtin = &**DOGEOS_MAINNET;
+
+        assert_eq!(custom.chain(), builtin.chain());
+        assert_eq!(custom.genesis_hash(), builtin.genesis_hash());
+        assert_eq!(custom.genesis_header(), builtin.genesis_header());
+        assert_eq!(custom.config, builtin.config);
+        assert_eq!(custom.hardforks, builtin.hardforks);
+        assert_eq!(custom.latest_fork_id(), builtin.latest_fork_id());
+        assert!(
+            custom == *builtin,
+            "mainnet JSON and built-in specs must be identical"
+        );
+        assert_eq!(custom.config, ScrollChainConfig::dogeos_mainnet());
+        for (fork, activation) in DogeosHardfork::mainnet() {
+            assert_eq!(custom.fork(fork), activation);
+        }
+    }
+
+    #[test]
+    fn mainnet_genesis_contains_canonical_history_account() {
+        use alloy_eips::eip2935::{HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE};
+
+        let account = DOGEOS_MAINNET
+            .genesis()
+            .alloc
+            .get(&HISTORY_STORAGE_ADDRESS)
+            .expect("Feynman-at-genesis requires the EIP-2935 history account");
+        assert_eq!(account.code.as_ref(), Some(&HISTORY_STORAGE_CODE));
+        assert_eq!(account.nonce, Some(1));
+        assert_eq!(account.balance, U256::ZERO);
+        assert!(
+            account
+                .storage
+                .as_ref()
+                .is_none_or(|storage| storage.is_empty())
+        );
+    }
+
+    #[test]
+    fn supported_chain_ids_match_the_networks() {
+        assert_eq!(DOGEOS_MAINNET.chain().id(), 1_122_005);
         assert_eq!(DOGEOS_CHIKYU.chain().id(), 0x5fdaf3);
         assert_eq!(DOGEOS_DEV.chain(), Chain::dev());
     }
@@ -462,9 +505,12 @@ mod tests {
     }
 
     #[test]
-    fn existing_network_fork_ids_are_unchanged() {
+    fn network_fork_ids_match_frozen_genesis() {
         for (spec, hash) in [
-            (&*DOGEOS_MAINNET, ForkHash([0x62, 0xd8, 0x20, 0xb2])),
+            (
+                &*DOGEOS_MAINNET,
+                ForkHash::from(DOGEOS_MAINNET_GENESIS_HASH),
+            ),
             (&*DOGEOS_CHIKYU, ForkHash([0x6c, 0x55, 0x6e, 0x50])),
             (&*DOGEOS_DEV, ForkHash::from(DOGEOS_DEV.genesis_hash())),
         ] {
