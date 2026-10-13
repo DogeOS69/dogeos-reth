@@ -127,7 +127,10 @@ where
 {
     /// Executes all transactions in a block, applying pre and post execution changes. The provided
     /// transaction compression infos are expected to be in the same order as the
-    /// transactions.
+    /// transactions, one per transaction.
+    ///
+    /// Returns an error if there are fewer or more compression infos than transactions, so a
+    /// short list can never silently skip trailing transactions.
     pub fn execute_block_with_compression_cache(
         mut self,
         transactions: impl IntoIterator<
@@ -141,11 +144,20 @@ where
     {
         self.apply_pre_execution_changes()?;
 
-        for (tx, (compression_ratio, compressed_size)) in
-            transactions.into_iter().zip(compression_infos)
-        {
+        let mut compression_infos = compression_infos.into_iter();
+        for tx in transactions {
+            let Some((compression_ratio, compressed_size)) = compression_infos.next() else {
+                return Err(BlockExecutionError::msg(
+                    "fewer compression infos than transactions",
+                ));
+            };
             let tx = tx.with_compression_info(compression_ratio, compressed_size);
             self.execute_transaction(&tx)?;
+        }
+        if compression_infos.next().is_some() {
+            return Err(BlockExecutionError::msg(
+                "more compression infos than transactions",
+            ));
         }
 
         self.apply_post_execution_changes()
@@ -513,6 +525,77 @@ mod tests {
             l1_fee: U256::ZERO,
             tx_type: 0,
         }
+    }
+
+    fn zero_fee_transfers(
+        count: u64,
+    ) -> Vec<(dogeos_reth_primitives::ScrollTransactionSigned, Address)> {
+        use alloy_consensus::{Signed, TxLegacy};
+        use alloy_primitives::{Signature, TxKind};
+
+        let sender = Address::repeat_byte(0x55);
+        (0..count)
+            .map(|nonce| {
+                let tx = TxLegacy {
+                    nonce,
+                    gas_limit: 21_000,
+                    to: TxKind::Call(Address::repeat_byte(0x66)),
+                    ..Default::default()
+                };
+                let signed = Signed::new_unchecked(tx, Signature::test_signature(), B256::ZERO);
+                (signed.into(), sender)
+            })
+            .collect()
+    }
+
+    fn execute_with_compression_infos(
+        tx_count: u64,
+        info_count: usize,
+    ) -> Result<BlockExecutionResult<dogeos_reth_primitives::ScrollReceipt>, BlockExecutionError>
+    {
+        let transactions = zero_fee_transfers(tx_count);
+        let executor = ScrollBlockExecutor::new(
+            empty_state_evm(),
+            ScrollBlockExecutionCtx::default(),
+            DOGEOS_MAINNET.clone(),
+            ScrollRethReceiptBuilder,
+        );
+        executor.execute_block_with_compression_cache(
+            transactions.iter().map(|(tx, sender)| {
+                alloy_consensus::transaction::Recovered::new_unchecked(tx, *sender)
+            }),
+            vec![(U256::ONE, 1); info_count],
+        )
+    }
+
+    #[test]
+    fn compression_cache_executes_every_transaction_when_counts_match() {
+        let result = execute_with_compression_infos(3, 3).unwrap();
+        assert_eq!(result.receipts.len(), 3);
+    }
+
+    #[test]
+    fn compression_cache_accepts_empty_block_without_infos() {
+        let result = execute_with_compression_infos(0, 0).unwrap();
+        assert!(result.receipts.is_empty());
+    }
+
+    #[test]
+    fn compression_cache_rejects_fewer_infos_than_transactions() {
+        let err = execute_with_compression_infos(3, 2).unwrap_err();
+        assert_eq!(err.to_string(), "fewer compression infos than transactions");
+    }
+
+    #[test]
+    fn compression_cache_rejects_more_infos_than_transactions() {
+        let err = execute_with_compression_infos(3, 4).unwrap_err();
+        assert_eq!(err.to_string(), "more compression infos than transactions");
+    }
+
+    #[test]
+    fn compression_cache_rejects_infos_for_empty_block() {
+        let err = execute_with_compression_infos(0, 1).unwrap_err();
+        assert_eq!(err.to_string(), "more compression infos than transactions");
     }
 
     #[test]
