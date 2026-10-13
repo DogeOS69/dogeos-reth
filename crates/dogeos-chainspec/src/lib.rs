@@ -368,33 +368,11 @@ mod tests {
             DOGEOS_MAINNET_GENESIS_HASH
         );
         assert_eq!(DOGEOS_MAINNET.genesis_hash(), DOGEOS_MAINNET_GENESIS_HASH);
-        assert_eq!(
-            ScrollChainConfig::extract_from(&genesis.config.extra_fields).unwrap(),
-            DOGEOS_MAINNET.config
-        );
-    }
-
-    #[test]
-    fn mainnet_json_matches_builtin_spec() {
-        let genesis: Genesis =
-            serde_json::from_str(include_str!("../res/genesis/dogeos.json")).unwrap();
-        let custom = DogeosChainSpec::from_custom_genesis(genesis);
-        let builtin = &**DOGEOS_MAINNET;
-
-        assert_eq!(custom.chain(), builtin.chain());
-        assert_eq!(custom.genesis_hash(), builtin.genesis_hash());
-        assert_eq!(custom.genesis_header(), builtin.genesis_header());
-        assert_eq!(custom.config, builtin.config);
-        assert_eq!(custom.hardforks, builtin.hardforks);
-        assert_eq!(custom.latest_fork_id(), builtin.latest_fork_id());
+        assert_eq!(ScrollChainConfig::dogeos_mainnet(), DOGEOS_MAINNET.config);
         assert!(
-            custom == *builtin,
+            DogeosChainSpec::from_custom_genesis(genesis) == **DOGEOS_MAINNET,
             "mainnet JSON and built-in specs must be identical"
         );
-        assert_eq!(custom.config, ScrollChainConfig::dogeos_mainnet());
-        for (fork, activation) in DogeosHardfork::mainnet() {
-            assert_eq!(custom.fork(fork), activation);
-        }
     }
 
     #[test]
