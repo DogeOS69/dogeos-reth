@@ -83,10 +83,14 @@ impl DogeosChainSpecBuilder {
     }
 
     pub fn build(self, config: ScrollChainConfig) -> DogeosChainSpec {
-        DogeosChainSpec {
-            inner: self.inner.build(),
+        let inner = self.inner.build();
+        build_spec_with_hardforks(
+            inner.genesis,
             config,
-        }
+            inner.hardforks,
+            None,
+            Some(inner.chain),
+        )
     }
 }
 
@@ -248,6 +252,24 @@ pub(crate) fn build_spec(
     known_hash: Option<B256>,
     chain_override: Option<Chain>,
 ) -> DogeosChainSpec {
+    build_spec_with_hardforks(
+        genesis,
+        config,
+        feynman_hardforks(dogeos_forks),
+        known_hash,
+        chain_override,
+    )
+}
+
+/// Shared construction for built-in specs, custom genesis documents, and the builder.
+/// DogeOS headers omit Ethereum withdrawals even when Shanghai rules are active.
+fn build_spec_with_hardforks(
+    genesis: Genesis,
+    config: ScrollChainConfig,
+    hardforks: ChainHardforks,
+    known_hash: Option<B256>,
+    chain_override: Option<Chain>,
+) -> DogeosChainSpec {
     let chain = chain_override.unwrap_or_else(|| Chain::from_id(genesis.config.chain_id));
     let header = make_genesis_header(&genesis);
     let genesis_header = match known_hash {
@@ -260,7 +282,7 @@ pub(crate) fn build_spec(
             chain,
             genesis_header,
             genesis,
-            hardforks: feynman_hardforks(dogeos_forks),
+            hardforks,
             base_fee_params: BaseFeeParamsKind::Variable(
                 alloc::vec![(
                     DogeosHardfork::Feynman.boxed(),
@@ -341,6 +363,13 @@ fn make_genesis_header(genesis: &Genesis) -> Header {
 mod tests {
     use super::*;
     use reth_chainspec::ForkHash;
+
+    #[test]
+    fn mainnet_builder_matches_builtin_spec() {
+        let spec = DogeosChainSpecBuilder::dogeos_mainnet().build(DOGEOS_MAINNET.config);
+        assert_eq!(spec.genesis_hash(), DOGEOS_MAINNET.genesis_hash());
+        assert_eq!(spec, **DOGEOS_MAINNET);
+    }
 
     #[test]
     fn supported_specs_are_feynman_baseline_without_withdrawals() {
