@@ -129,8 +129,9 @@ where
     /// transaction compression infos are expected to be in the same order as the
     /// transactions, one per transaction.
     ///
-    /// Returns an error before applying any state changes if the transaction and compression
-    /// info counts differ.
+    /// Returns an error if the transaction and compression info counts differ. Pre-execution
+    /// changes and earlier transactions may already be applied, so the caller must discard
+    /// the executor's state on error.
     pub fn execute_block_with_compression_cache(
         mut self,
         transactions: impl IntoIterator<
@@ -142,21 +143,22 @@ where
     where
         Self: Sized,
     {
-        let transactions = transactions.into_iter().collect::<Vec<_>>();
-        let compression_infos = compression_infos.into_iter().collect::<Vec<_>>();
-        if transactions.len() != compression_infos.len() {
-            return Err(BlockExecutionError::msg(
-                "compression info count does not match transaction count",
-            ));
-        }
-
         self.apply_pre_execution_changes()?;
 
-        for (tx, (compression_ratio, compressed_size)) in
-            transactions.into_iter().zip(compression_infos)
-        {
+        let mut compression_infos = compression_infos.into_iter();
+        for tx in transactions {
+            let Some((compression_ratio, compressed_size)) = compression_infos.next() else {
+                return Err(BlockExecutionError::msg(
+                    "fewer compression infos than transactions",
+                ));
+            };
             let tx = tx.with_compression_info(compression_ratio, compressed_size);
             self.execute_transaction(&tx)?;
+        }
+        if compression_infos.next().is_some() {
+            return Err(BlockExecutionError::msg(
+                "more compression infos than transactions",
+            ));
         }
 
         self.apply_post_execution_changes()
@@ -570,12 +572,12 @@ mod tests {
 
     #[test]
     fn compression_cache_rejects_mismatched_counts() {
-        for info_count in [2, 4] {
+        for (info_count, expected_error) in [
+            (2, "fewer compression infos than transactions"),
+            (4, "more compression infos than transactions"),
+        ] {
             let err = execute_with_compression_infos(3, info_count).unwrap_err();
-            assert_eq!(
-                err.to_string(),
-                "compression info count does not match transaction count"
-            );
+            assert_eq!(err.to_string(), expected_error);
         }
     }
 
