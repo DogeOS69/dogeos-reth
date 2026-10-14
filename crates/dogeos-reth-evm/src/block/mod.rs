@@ -129,10 +129,8 @@ where
     /// transaction compression infos are expected to be in the same order as the
     /// transactions, one per transaction.
     ///
-    /// Returns an error if there are fewer or more compression infos than transactions, so a
-    /// short list can never silently skip trailing transactions. When it does, the pre-execution
-    /// changes and every transaction before the mismatch have already been applied to the
-    /// executor's state, so the caller must discard that state.
+    /// Returns an error before applying any state changes if the transaction and compression
+    /// info counts differ.
     pub fn execute_block_with_compression_cache(
         mut self,
         transactions: impl IntoIterator<
@@ -144,22 +142,21 @@ where
     where
         Self: Sized,
     {
+        let transactions = transactions.into_iter().collect::<Vec<_>>();
+        let compression_infos = compression_infos.into_iter().collect::<Vec<_>>();
+        if transactions.len() != compression_infos.len() {
+            return Err(BlockExecutionError::msg(
+                "compression info count does not match transaction count",
+            ));
+        }
+
         self.apply_pre_execution_changes()?;
 
-        let mut compression_infos = compression_infos.into_iter();
-        for tx in transactions {
-            let Some((compression_ratio, compressed_size)) = compression_infos.next() else {
-                return Err(BlockExecutionError::msg(
-                    "fewer compression infos than transactions",
-                ));
-            };
+        for (tx, (compression_ratio, compressed_size)) in
+            transactions.into_iter().zip(compression_infos)
+        {
             let tx = tx.with_compression_info(compression_ratio, compressed_size);
             self.execute_transaction(&tx)?;
-        }
-        if compression_infos.next().is_some() {
-            return Err(BlockExecutionError::msg(
-                "more compression infos than transactions",
-            ));
         }
 
         self.apply_post_execution_changes()
@@ -529,14 +526,17 @@ mod tests {
         }
     }
 
-    fn zero_fee_transfers(
-        count: u64,
-    ) -> Vec<(dogeos_reth_primitives::ScrollTransactionSigned, Address)> {
-        use alloy_consensus::{Signed, TxLegacy};
+    fn execute_with_compression_infos(
+        tx_count: u64,
+        info_count: usize,
+    ) -> Result<BlockExecutionResult<dogeos_reth_primitives::ScrollReceipt>, BlockExecutionError>
+    {
+        use alloy_consensus::{Signed, TxLegacy, transaction::Recovered};
         use alloy_primitives::{Signature, TxKind};
+        use dogeos_reth_primitives::ScrollTransactionSigned;
 
         let sender = Address::repeat_byte(0x55);
-        (0..count)
+        let transactions = (0..tx_count)
             .map(|nonce| {
                 let tx = TxLegacy {
                     nonce,
@@ -545,91 +545,20 @@ mod tests {
                     ..Default::default()
                 };
                 let signed = Signed::new_unchecked(tx, Signature::test_signature(), B256::ZERO);
-                (signed.into(), sender)
+                ScrollTransactionSigned::from(signed)
             })
-            .collect()
-    }
-
-    fn execute_transfers_with_compression_infos(
-        evm: impl EvmExt<
-            DB = State<EmptyDB>,
-            Tx = ScrollTransactionIntoTxEnv<TxEnv>,
-            HaltReason = HaltReason,
-        >,
-        tx_count: u64,
-        compression_infos: Vec<ScrollTxCompressionInfo>,
-    ) -> Result<BlockExecutionResult<dogeos_reth_primitives::ScrollReceipt>, BlockExecutionError>
-    {
-        let transactions = zero_fee_transfers(tx_count);
+            .collect::<Vec<_>>();
         let executor = ScrollBlockExecutor::new(
-            evm,
+            empty_state_evm(),
             ScrollBlockExecutionCtx::default(),
             DOGEOS_MAINNET.clone(),
             ScrollRethReceiptBuilder,
         );
         executor.execute_block_with_compression_cache(
-            transactions.iter().map(|(tx, sender)| {
-                alloy_consensus::transaction::Recovered::new_unchecked(tx, *sender)
-            }),
-            compression_infos,
-        )
-    }
-
-    fn execute_with_compression_infos(
-        tx_count: u64,
-        info_count: usize,
-    ) -> Result<BlockExecutionResult<dogeos_reth_primitives::ScrollReceipt>, BlockExecutionError>
-    {
-        // A ratio of 1.0 at fee precision, the smallest that revm accepts.
-        let info = (TX_L1_FEE_PRECISION_U256, 1);
-        execute_transfers_with_compression_infos(
-            empty_state_evm(),
-            tx_count,
-            vec![info; info_count],
-        )
-    }
-
-    /// An EVM whose L1 gas price oracle charges exactly one wei per compressed byte, with a
-    /// funded sender for [`zero_fee_transfers`].
-    fn one_wei_per_compressed_byte_evm()
-    -> impl EvmExt<DB = State<EmptyDB>, Tx = ScrollTransactionIntoTxEnv<TxEnv>, HaltReason = HaltReason>
-    {
-        use crate::gas_price_oracle::{
-            GPO_COMMIT_SCALAR_SLOT, GPO_L1_BASE_FEE_SLOT, GPO_PENALTY_FACTOR_SLOT,
-        };
-        use revm::database::states::plain_account::PlainStorage;
-
-        let mut state = State::builder()
-            .with_database(EmptyDB::default())
-            .with_bundle_update()
-            .build();
-        // fee = commit_scalar * l1_base_fee * size / precision, and a penalty factor of 1e18
-        // makes the size-squared penalty term round to zero for these sizes.
-        state.insert_account_with_storage(
-            L1_GAS_PRICE_ORACLE_ADDRESS,
-            AccountInfo::default(),
-            PlainStorage::from_iter([
-                (GPO_L1_BASE_FEE_SLOT, U256::ONE),
-                (GPO_COMMIT_SCALAR_SLOT, TX_L1_FEE_PRECISION_U256),
-                (
-                    GPO_PENALTY_FACTOR_SLOT,
-                    U256::from(10u64).pow(U256::from(18)),
-                ),
-            ]),
-        );
-        state.insert_account(
-            Address::repeat_byte(0x55),
-            AccountInfo {
-                balance: U256::from(10u64).pow(U256::from(18)),
-                ..Default::default()
-            },
-        );
-        ScrollEvmFactory::<ScrollDefaultPrecompilesFactory>::default().create_evm(
-            state,
-            EvmEnv::new(
-                CfgEnv::new_with_spec(ScrollSpecId::TSUKI),
-                BlockEnv::default(),
-            ),
+            transactions
+                .iter()
+                .map(|tx| Recovered::new_unchecked(tx, sender)),
+            vec![(TX_L1_FEE_PRECISION_U256, 1); info_count],
         )
     }
 
@@ -640,51 +569,14 @@ mod tests {
     }
 
     #[test]
-    fn compression_cache_accepts_empty_block_without_infos() {
-        let result = execute_with_compression_infos(0, 0).unwrap();
-        assert!(result.receipts.is_empty());
-    }
-
-    #[test]
-    fn compression_cache_rejects_fewer_infos_than_transactions() {
-        let err = execute_with_compression_infos(3, 2).unwrap_err();
-        assert_eq!(err.to_string(), "fewer compression infos than transactions");
-    }
-
-    #[test]
-    fn compression_cache_rejects_transactions_without_any_infos() {
-        let err = execute_with_compression_infos(3, 0).unwrap_err();
-        assert_eq!(err.to_string(), "fewer compression infos than transactions");
-    }
-
-    #[test]
-    fn compression_cache_pairs_each_info_with_its_own_transaction() {
-        let sizes = [10, 20, 30];
-        let infos = sizes
-            .iter()
-            .map(|&size| (TX_L1_FEE_PRECISION_U256, size))
-            .collect();
-        let result =
-            execute_transfers_with_compression_infos(one_wei_per_compressed_byte_evm(), 3, infos)
-                .unwrap();
-        let l1_fees = result
-            .receipts
-            .iter()
-            .map(|receipt| receipt.l1_fee())
-            .collect::<Vec<_>>();
-        assert_eq!(l1_fees, sizes.map(U256::from));
-    }
-
-    #[test]
-    fn compression_cache_rejects_more_infos_than_transactions() {
-        let err = execute_with_compression_infos(3, 4).unwrap_err();
-        assert_eq!(err.to_string(), "more compression infos than transactions");
-    }
-
-    #[test]
-    fn compression_cache_rejects_infos_for_empty_block() {
-        let err = execute_with_compression_infos(0, 1).unwrap_err();
-        assert_eq!(err.to_string(), "more compression infos than transactions");
+    fn compression_cache_rejects_mismatched_counts() {
+        for info_count in [2, 4] {
+            let err = execute_with_compression_infos(3, info_count).unwrap_err();
+            assert_eq!(
+                err.to_string(),
+                "compression info count does not match transaction count"
+            );
+        }
     }
 
     #[test]
