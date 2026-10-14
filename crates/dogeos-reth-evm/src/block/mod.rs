@@ -130,7 +130,9 @@ where
     /// transactions, one per transaction.
     ///
     /// Returns an error if there are fewer or more compression infos than transactions, so a
-    /// short list can never silently skip trailing transactions.
+    /// short list can never silently skip trailing transactions. When it does, the pre-execution
+    /// changes and every transaction before the mismatch have already been applied to the
+    /// executor's state, so the caller must discard that state.
     pub fn execute_block_with_compression_cache(
         mut self,
         transactions: impl IntoIterator<
@@ -457,7 +459,7 @@ where
 mod tests {
     use super::*;
     use crate::{
-        ScrollRethReceiptBuilder, ScrollTransactionIntoTxEnv,
+        ScrollRethReceiptBuilder, ScrollTransactionIntoTxEnv, TX_L1_FEE_PRECISION_U256,
         gas_price_oracle::L1_GAS_PRICE_ORACLE_ADDRESS,
     };
     use alloy_evm::{EvmEnv, block::StateChangePreBlockSource};
@@ -548,14 +550,19 @@ mod tests {
             .collect()
     }
 
-    fn execute_with_compression_infos(
+    fn execute_transfers_with_compression_infos(
+        evm: impl EvmExt<
+            DB = State<EmptyDB>,
+            Tx = ScrollTransactionIntoTxEnv<TxEnv>,
+            HaltReason = HaltReason,
+        >,
         tx_count: u64,
-        info_count: usize,
+        compression_infos: Vec<ScrollTxCompressionInfo>,
     ) -> Result<BlockExecutionResult<dogeos_reth_primitives::ScrollReceipt>, BlockExecutionError>
     {
         let transactions = zero_fee_transfers(tx_count);
         let executor = ScrollBlockExecutor::new(
-            empty_state_evm(),
+            evm,
             ScrollBlockExecutionCtx::default(),
             DOGEOS_MAINNET.clone(),
             ScrollRethReceiptBuilder,
@@ -564,7 +571,65 @@ mod tests {
             transactions.iter().map(|(tx, sender)| {
                 alloy_consensus::transaction::Recovered::new_unchecked(tx, *sender)
             }),
-            vec![(U256::ONE, 1); info_count],
+            compression_infos,
+        )
+    }
+
+    fn execute_with_compression_infos(
+        tx_count: u64,
+        info_count: usize,
+    ) -> Result<BlockExecutionResult<dogeos_reth_primitives::ScrollReceipt>, BlockExecutionError>
+    {
+        // A ratio of 1.0 at fee precision, the smallest that revm accepts.
+        let info = (TX_L1_FEE_PRECISION_U256, 1);
+        execute_transfers_with_compression_infos(
+            empty_state_evm(),
+            tx_count,
+            vec![info; info_count],
+        )
+    }
+
+    /// An EVM whose L1 gas price oracle charges exactly one wei per compressed byte, with a
+    /// funded sender for [`zero_fee_transfers`].
+    fn one_wei_per_compressed_byte_evm()
+    -> impl EvmExt<DB = State<EmptyDB>, Tx = ScrollTransactionIntoTxEnv<TxEnv>, HaltReason = HaltReason>
+    {
+        use crate::gas_price_oracle::{
+            GPO_COMMIT_SCALAR_SLOT, GPO_L1_BASE_FEE_SLOT, GPO_PENALTY_FACTOR_SLOT,
+        };
+        use revm::database::states::plain_account::PlainStorage;
+
+        let mut state = State::builder()
+            .with_database(EmptyDB::default())
+            .with_bundle_update()
+            .build();
+        // fee = commit_scalar * l1_base_fee * size / precision, and a penalty factor of 1e18
+        // makes the size-squared penalty term round to zero for these sizes.
+        state.insert_account_with_storage(
+            L1_GAS_PRICE_ORACLE_ADDRESS,
+            AccountInfo::default(),
+            PlainStorage::from_iter([
+                (GPO_L1_BASE_FEE_SLOT, U256::ONE),
+                (GPO_COMMIT_SCALAR_SLOT, TX_L1_FEE_PRECISION_U256),
+                (
+                    GPO_PENALTY_FACTOR_SLOT,
+                    U256::from(10u64).pow(U256::from(18)),
+                ),
+            ]),
+        );
+        state.insert_account(
+            Address::repeat_byte(0x55),
+            AccountInfo {
+                balance: U256::from(10u64).pow(U256::from(18)),
+                ..Default::default()
+            },
+        );
+        ScrollEvmFactory::<ScrollDefaultPrecompilesFactory>::default().create_evm(
+            state,
+            EvmEnv::new(
+                CfgEnv::new_with_spec(ScrollSpecId::TSUKI),
+                BlockEnv::default(),
+            ),
         )
     }
 
@@ -584,6 +649,30 @@ mod tests {
     fn compression_cache_rejects_fewer_infos_than_transactions() {
         let err = execute_with_compression_infos(3, 2).unwrap_err();
         assert_eq!(err.to_string(), "fewer compression infos than transactions");
+    }
+
+    #[test]
+    fn compression_cache_rejects_transactions_without_any_infos() {
+        let err = execute_with_compression_infos(3, 0).unwrap_err();
+        assert_eq!(err.to_string(), "fewer compression infos than transactions");
+    }
+
+    #[test]
+    fn compression_cache_pairs_each_info_with_its_own_transaction() {
+        let sizes = [10, 20, 30];
+        let infos = sizes
+            .iter()
+            .map(|&size| (TX_L1_FEE_PRECISION_U256, size))
+            .collect();
+        let result =
+            execute_transfers_with_compression_infos(one_wei_per_compressed_byte_evm(), 3, infos)
+                .unwrap();
+        let l1_fees = result
+            .receipts
+            .iter()
+            .map(|receipt| receipt.l1_fee())
+            .collect::<Vec<_>>();
+        assert_eq!(l1_fees, sizes.map(U256::from));
     }
 
     #[test]
