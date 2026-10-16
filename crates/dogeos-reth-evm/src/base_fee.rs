@@ -164,6 +164,46 @@ mod tests {
     }
 
     #[test]
+    fn delayed_fee_params_preserve_historical_fees_until_the_child_activation() -> eyre::Result<()>
+    {
+        let mut genesis = DOGEOS_MAINNET.genesis().clone();
+        let tsuki = genesis.timestamp + 40;
+        let activation = genesis.timestamp + 100;
+        genesis
+            .config
+            .extra_fields
+            .insert("tsukiTime".into(), tsuki.into());
+        genesis
+            .config
+            .extra_fields
+            .insert("tsukiFeeParamsTime".into(), activation.into());
+        let spec = dogeos_chainspec::DogeosChainSpec::from_custom_genesis(genesis);
+        assert!(spec.is_tsuki_active_at_timestamp(tsuki));
+        let provider = ScrollBaseFeeProvider::new(spec);
+        // A full block with a 1 gwei fee and 0.1 gwei overhead grows the excess by
+        // 1/8 before activation, and 9/48 afterwards. Use literal historical fee values.
+        for (timestamp, expected) in [
+            (tsuki - 1, 1_112_500_000),
+            (tsuki, 1_112_500_000),
+            (activation - 1, 1_112_500_000),
+            (activation, 1_168_750_000),
+            (activation + 1, 1_168_750_000),
+        ] {
+            let mut parent = parent(1_000_000_000, GAS_LIMIT);
+            parent.timestamp = timestamp - 1;
+            assert_eq!(
+                provider.next_block_base_fee(
+                    &mut state_with_overhead(100_000_000),
+                    &parent,
+                    timestamp
+                )?,
+                expected
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn base_fee_is_capped() -> eyre::Result<()> {
         assert_eq!(
             next_base_fee(OVERHEAD, MAX_L2_BASE_FEE, GAS_LIMIT)?,

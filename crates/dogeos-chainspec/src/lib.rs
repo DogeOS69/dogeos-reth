@@ -39,6 +39,16 @@ pub use dogeos::DOGEOS_MAINNET;
 
 pub use reth_chainspec::ChainSpecProvider;
 
+/// Internal schedule key for the fee policy, separate from the Tsuki execution transition.
+#[derive(Debug, Clone, Copy)]
+struct TsukiFeeParams;
+
+impl Hardfork for TsukiFeeParams {
+    fn name(&self) -> &'static str {
+        "TsukiFeeParams"
+    }
+}
+
 /// Builder for a Feynman+ DogeOS chain specification.
 #[derive(Debug, Default)]
 pub struct DogeosChainSpecBuilder {
@@ -266,10 +276,18 @@ pub(crate) fn build_spec(
 fn build_spec_with_hardforks(
     genesis: Genesis,
     config: ScrollChainConfig,
-    hardforks: ChainHardforks,
+    mut hardforks: ChainHardforks,
     known_hash: Option<B256>,
     chain_override: Option<Chain>,
 ) -> DogeosChainSpec {
+    let fee_params_time = DogeosHardforkInfo::try_from(&genesis.config.extra_fields)
+        .expect("DogeOS genesis fee-parameter timestamp must be valid")
+        .tsuki_fee_params_time;
+    let fee_params_activation = fee_params_time
+        .map(ForkCondition::Timestamp)
+        .unwrap_or_else(|| hardforks.fork(DogeosHardfork::Tsuki));
+    hardforks.insert(TsukiFeeParams, fee_params_activation);
+
     let chain = chain_override.unwrap_or_else(|| Chain::from_id(genesis.config.chain_id));
     let header = make_genesis_header(&genesis);
     let genesis_header = match known_hash {
@@ -289,7 +307,7 @@ fn build_spec_with_hardforks(
                         DogeosHardfork::Feynman.boxed(),
                         DOGEOS_BASE_FEE_PARAMS_FEYNMAN,
                     ),
-                    (DogeosHardfork::Tsuki.boxed(), DOGEOS_BASE_FEE_PARAMS_TSUKI),
+                    (TsukiFeeParams.boxed(), DOGEOS_BASE_FEE_PARAMS_TSUKI),
                 ]
                 .into(),
             ),
@@ -415,6 +433,184 @@ mod tests {
         assert_eq!(spec.base_fee_params_at_timestamp(39), feynman);
         assert_eq!(spec.base_fee_params_at_timestamp(40), tsuki);
         assert_eq!(spec.base_fee_params_at_timestamp(u64::MAX), tsuki);
+    }
+
+    fn genesis_with_fee_params_time(time: Option<serde_json::Value>) -> Genesis {
+        let mut genesis = DOGEOS_MAINNET.genesis().clone();
+        genesis
+            .config
+            .extra_fields
+            .insert("tsukiTime".into(), (genesis.timestamp + 40).into());
+        genesis.config.extra_fields.remove("tsukiFeeParamsTime");
+        if let Some(time) = time {
+            genesis
+                .config
+                .extra_fields
+                .insert("tsukiFeeParamsTime".into(), time);
+        }
+        genesis
+    }
+
+    #[test]
+    fn missing_or_null_fee_params_time_follows_tsuki() {
+        for value in [None, Some(serde_json::Value::Null)] {
+            let genesis = genesis_with_fee_params_time(value);
+            let tsuki = genesis.timestamp + 40;
+            let spec = DogeosChainSpec::from_custom_genesis(genesis);
+            assert_eq!(
+                spec.base_fee_params_at_timestamp(tsuki - 1),
+                DOGEOS_BASE_FEE_PARAMS_FEYNMAN
+            );
+            assert_eq!(
+                spec.base_fee_params_at_timestamp(tsuki),
+                DOGEOS_BASE_FEE_PARAMS_TSUKI
+            );
+            assert_eq!(
+                spec.base_fee_params_at_timestamp(u64::MAX),
+                DOGEOS_BASE_FEE_PARAMS_TSUKI
+            );
+            assert_eq!(spec.fork(TsukiFeeParams), spec.fork(DogeosHardfork::Tsuki));
+            assert_eq!(spec.genesis_hash(), DOGEOS_MAINNET.genesis_hash());
+        }
+    }
+
+    #[test]
+    fn explicit_fee_params_time_preserves_post_tsuki_history_and_changes_fork_id() {
+        let activation = DOGEOS_MAINNET.genesis_timestamp() + 100;
+        let genesis = genesis_with_fee_params_time(Some(activation.into()));
+        let tsuki = genesis.timestamp + 40;
+        let spec = DogeosChainSpec::from_custom_genesis(genesis);
+        assert!(spec.is_tsuki_active_at_timestamp(tsuki));
+        for timestamp in [tsuki - 1, tsuki, activation - 1] {
+            assert_eq!(
+                spec.base_fee_params_at_timestamp(timestamp),
+                DOGEOS_BASE_FEE_PARAMS_FEYNMAN
+            );
+            assert_eq!(
+                spec.inner.base_fee_params_at_timestamp(timestamp),
+                DOGEOS_BASE_FEE_PARAMS_FEYNMAN
+            );
+        }
+        for timestamp in [activation, activation + 1, u64::MAX] {
+            assert_eq!(
+                spec.base_fee_params_at_timestamp(timestamp),
+                DOGEOS_BASE_FEE_PARAMS_TSUKI
+            );
+            assert_eq!(
+                spec.inner.base_fee_params_at_timestamp(timestamp),
+                DOGEOS_BASE_FEE_PARAMS_TSUKI
+            );
+        }
+        assert_eq!(spec.genesis_hash(), DOGEOS_MAINNET.genesis_hash());
+        let head = Head {
+            number: 1,
+            timestamp: activation - 1,
+            ..Default::default()
+        };
+        let base = ForkHash::from(spec.genesis_hash());
+        assert_eq!(
+            spec.fork_id(&head),
+            ForkId {
+                hash: base,
+                next: activation
+            }
+        );
+        assert_eq!(
+            spec.fork_id(&Head {
+                timestamp: activation,
+                ..head
+            }),
+            ForkId {
+                hash: base + activation,
+                next: 0
+            }
+        );
+        let round_trip: Genesis =
+            serde_json::from_str(&serde_json::to_string(spec.genesis()).unwrap()).unwrap();
+        assert_eq!(DogeosChainSpec::from_custom_genesis(round_trip), spec);
+    }
+
+    #[test]
+    fn explicit_zero_is_an_activation_and_absent_tsuki_defaults_to_never() {
+        let spec =
+            DogeosChainSpec::from_custom_genesis(genesis_with_fee_params_time(Some(0.into())));
+        assert_eq!(
+            spec.base_fee_params_at_timestamp(0),
+            DOGEOS_BASE_FEE_PARAMS_TSUKI
+        );
+        assert!(!spec.is_tsuki_active_at_timestamp(0));
+        for value in [None, Some(serde_json::Value::Null)] {
+            let mut genesis = genesis_with_fee_params_time(value);
+            genesis.config.extra_fields.remove("tsukiTime");
+            let spec = DogeosChainSpec::from_custom_genesis(genesis);
+            assert_eq!(spec.fork(TsukiFeeParams), ForkCondition::Never);
+            assert_eq!(
+                spec.base_fee_params_at_timestamp(u64::MAX),
+                DOGEOS_BASE_FEE_PARAMS_FEYNMAN
+            );
+        }
+    }
+
+    #[test]
+    fn builders_read_fee_params_time_and_default_to_their_effective_tsuki_fork() {
+        let activation = DOGEOS_DEV.genesis_timestamp() + 100;
+        for (builder, original) in [
+            (DogeosChainSpecBuilder::dev(), &**DOGEOS_DEV),
+            (DogeosChainSpecBuilder::dogeos_mainnet(), &**DOGEOS_MAINNET),
+            (DogeosChainSpecBuilder::dogeos_chikyu(), &**DOGEOS_CHIKYU),
+        ] {
+            let mut genesis = original.genesis().clone();
+            genesis
+                .config
+                .extra_fields
+                .insert("tsukiFeeParamsTime".into(), activation.into());
+            let spec = builder.genesis(genesis).build(original.config);
+            assert_eq!(
+                spec.base_fee_params_at_timestamp(activation - 1),
+                DOGEOS_BASE_FEE_PARAMS_FEYNMAN
+            );
+            assert_eq!(
+                spec.base_fee_params_at_timestamp(activation),
+                DOGEOS_BASE_FEE_PARAMS_TSUKI
+            );
+        }
+        for value in [None, Some(serde_json::Value::Null)] {
+            let mut genesis = DOGEOS_DEV.genesis().clone();
+            genesis.config.extra_fields.remove("tsukiFeeParamsTime");
+            if let Some(value) = value {
+                genesis
+                    .config
+                    .extra_fields
+                    .insert("tsukiFeeParamsTime".into(), value);
+            }
+            let spec = DogeosChainSpecBuilder::dev()
+                .genesis(genesis)
+                .with_fork(DogeosHardfork::Tsuki, ForkCondition::Timestamp(activation))
+                .build(DOGEOS_DEV.config);
+            assert_eq!(
+                spec.base_fee_params_at_timestamp(activation - 1),
+                DOGEOS_BASE_FEE_PARAMS_FEYNMAN
+            );
+            assert_eq!(
+                spec.base_fee_params_at_timestamp(activation),
+                DOGEOS_BASE_FEE_PARAMS_TSUKI
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_fee_params_time_fails_custom_and_builder_construction() {
+        let genesis = genesis_with_fee_params_time(Some(true.into()));
+        assert!(
+            std::panic::catch_unwind(|| DogeosChainSpec::from_custom_genesis(genesis.clone()))
+                .is_err()
+        );
+        assert!(
+            std::panic::catch_unwind(|| DogeosChainSpecBuilder::dogeos_mainnet()
+                .genesis(genesis)
+                .build(DOGEOS_MAINNET.config))
+            .is_err()
+        );
     }
 
     #[test]
