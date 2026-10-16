@@ -301,11 +301,8 @@ where
             }
             Err(err) => return Err(PayloadBuilderError::evm(err)),
         };
-        let gas_used = if tx.is_l1_message() {
-            tx.gas_limit()
-        } else {
-            gas_used
-        };
+        // Count executed gas for every forced transaction, L1 messages included, so this budget
+        // matches the executor's block-gas rule (and the header `gas_used`).
         info.cumulative_gas_used += gas_used;
         info.cumulative_da_bytes_used += encoded_len;
         forced_gas.push(gas_used);
@@ -482,7 +479,7 @@ fn execute_with_code_budget<B: BlockBuilder>(
 }
 
 #[cfg(test)]
-mod tests {
+mod code_witness_tests {
     use super::*;
     use alloy_consensus::{Header, Sealable, Signed, TxLegacy, transaction::Recovered};
     use alloy_primitives::{Address, B256, Bytes, Signature, TxKind};
@@ -726,5 +723,239 @@ mod tests {
             InvalidPoolTransactionError::other(CodeWitnessBudgetExceeded { limit: 80 }),
         );
         assert!(!error.is_bad_transaction());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_consensus::{Sealable, SignableTransaction, TxEip1559};
+    use alloy_eips::eip2718::Encodable2718;
+    use alloy_primitives::{Address, B256, Bytes, Signature, TxKind};
+    use alloy_rpc_types_engine::{PayloadAttributes, PayloadId};
+    use dogeos_chainspec::{DOGEOS_DEV, DogeosChainSpec};
+    use dogeos_protocol_types::{ScrollTxEnvelope, TxL1Message};
+    use dogeos_reth_engine::ScrollPayloadAttributes;
+    use dogeos_reth_evm::ScrollEvmConfig;
+    use dogeos_reth_primitives::DogeosBlock;
+    use dogeos_reth_txpool::DogeosPooledTransaction;
+    use reth_payload_primitives::BuiltPayload;
+    use reth_primitives_traits::{Recovered, SealedBlock, SealedHeader};
+    use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+    use reth_transaction_pool::{
+        TransactionOrigin,
+        identifier::{SenderId, TransactionId},
+        noop::NoopTransactionPool,
+    };
+    use std::{collections::BTreeMap, time::Duration};
+
+    type Provider = MockEthProvider<DogeosPrimitives, DogeosChainSpec>;
+    type Pool = NoopTransactionPool<DogeosPooledTransaction>;
+    type PooledTx = Arc<ValidPoolTransaction<DogeosPooledTransaction>>;
+
+    const BLOCK_GAS_LIMIT: u64 = 300_000;
+    const L1_MESSAGE_GAS_LIMIT: u64 = 200_000;
+    const L2_GAS_LIMIT: u64 = 200_000;
+    const _: () = assert!(L1_MESSAGE_GAS_LIMIT + L2_GAS_LIMIT > BLOCK_GAS_LIMIT);
+
+    struct VecBestTransactions(std::vec::IntoIter<PooledTx>);
+
+    impl Iterator for VecBestTransactions {
+        type Item = PooledTx;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            self.0.next()
+        }
+    }
+
+    impl BestTransactions for VecBestTransactions {
+        fn mark_invalid(&mut self, _: &Self::Item, _: &InvalidPoolTransactionError) {}
+        fn no_updates(&mut self) {}
+        fn set_skip_blobs(&mut self, _: bool) {}
+    }
+
+    /// Mock state seeded with the dev genesis allocation, so system contracts and the L1
+    /// gas-price oracle are present.
+    fn provider() -> Provider {
+        let chain_spec = DOGEOS_DEV.clone();
+        let provider = MockEthProvider::<DogeosPrimitives>::new()
+            .with_chain_spec(chain_spec.as_ref().clone())
+            .with_genesis_block();
+        for (address, account) in &chain_spec.genesis().alloc {
+            let storage = account
+                .storage
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(key, value)| (key, value.into()))
+                .collect::<BTreeMap<_, _>>();
+            let mut extended =
+                ExtendedAccount::new(account.nonce.unwrap_or_default(), account.balance)
+                    .extend_storage(storage);
+            if let Some(code) = account.code.clone() {
+                extended = extended.with_bytecode(code);
+            }
+            provider.add_account(*address, extended);
+        }
+        provider
+    }
+
+    /// An L1 message whose 1800 bytes of non-zero calldata make it use about 50k gas, well below
+    /// its 200k gas limit.
+    fn l1_message() -> Bytes {
+        ScrollTxEnvelope::L1Message(
+            TxL1Message {
+                queue_index: 0,
+                gas_limit: L1_MESSAGE_GAS_LIMIT,
+                to: Address::repeat_byte(0xde),
+                sender: Address::repeat_byte(0x11),
+                input: Bytes::from(vec![1; 1800]),
+                ..Default::default()
+            }
+            .seal_slow(),
+        )
+        .encoded_2718()
+        .into()
+    }
+
+    /// A funded L2 transfer with a gas limit that only fits beside the L1 message if the message
+    /// is counted at its actual gas.
+    fn l2_transaction(provider: &Provider, gas_limit: u64) -> Recovered<ScrollTransactionSigned> {
+        let tx: ScrollTransactionSigned = TxEip1559 {
+            chain_id: DOGEOS_DEV.chain().id(),
+            gas_limit,
+            max_fee_per_gas: 10_000_000_000,
+            max_priority_fee_per_gas: 1_000_000_000,
+            to: TxKind::Call(Address::repeat_byte(0xbe)),
+            ..Default::default()
+        }
+        .into_signed(Signature::test_signature())
+        .into();
+        let tx = tx.try_into_recovered().unwrap();
+        provider.add_account(
+            tx.signer(),
+            ExtendedAccount::new(0, U256::from(10).pow(U256::from(21))),
+        );
+        tx
+    }
+
+    fn build(
+        provider: Provider,
+        forced: Vec<Bytes>,
+        pool: Vec<Recovered<ScrollTransactionSigned>>,
+    ) -> Result<SealedBlock<DogeosBlock>, PayloadBuilderError> {
+        let chain_spec = DOGEOS_DEV.clone();
+        let parent = Arc::new(SealedHeader::seal_slow(chain_spec.genesis_header().clone()));
+        let attributes = ScrollPayloadAttributes {
+            payload_attributes: PayloadAttributes {
+                timestamp: parent.timestamp + 1,
+                ..Default::default()
+            },
+            transactions: Some(forced),
+            no_tx_pool: pool.is_empty(),
+            gas_limit: Some(BLOCK_GAS_LIMIT),
+            ..Default::default()
+        };
+        let pool = pool
+            .into_iter()
+            .enumerate()
+            .map(|(nonce, tx)| {
+                let encoded_length = tx.encode_2718_len();
+                Arc::new(ValidPoolTransaction {
+                    transaction: DogeosPooledTransaction::new(tx, encoded_length),
+                    transaction_id: TransactionId::new(SenderId::from(0), nonce as u64),
+                    propagate: false,
+                    timestamp: std::time::Instant::now(),
+                    origin: TransactionOrigin::External,
+                    authority_ids: None,
+                })
+            })
+            .collect::<Vec<_>>();
+        let args = BuildArguments::new(
+            Default::default(),
+            None,
+            None,
+            PayloadConfig::new(parent, attributes, PayloadId::default()),
+            Default::default(),
+            None,
+        );
+        let outcome = build_payload::<_, _, Pool, _>(
+            ScrollEvmConfig::dogeos(chain_spec),
+            provider,
+            ScrollBuilderConfig::new(Some(BLOCK_GAS_LIMIT), Duration::from_secs(60), None),
+            args,
+            |_| Box::new(VecBestTransactions(pool.into_iter())) as BestTransactionsIter<Pool>,
+        )?;
+        Ok(outcome
+            .into_payload()
+            .expect("payload was built")
+            .block()
+            .clone())
+    }
+
+    fn l1_message_gas_used() -> u64 {
+        let block = build(provider(), vec![l1_message()], vec![]).unwrap();
+        let gas_used = block.gas_used;
+        assert!(
+            (40_000..60_000).contains(&gas_used),
+            "L1 message should use about 50k gas, used {gas_used}"
+        );
+        // The L2 transaction fits only when the L1 message is counted at its actual gas.
+        assert!(gas_used + L2_GAS_LIMIT <= BLOCK_GAS_LIMIT);
+        gas_used
+    }
+
+    #[test]
+    fn forced_l2_transaction_fits_after_l1_message_at_actual_gas() {
+        let l1_gas = l1_message_gas_used();
+        let provider = provider();
+        let l2 = l2_transaction(&provider, L2_GAS_LIMIT);
+        let block = build(
+            provider,
+            vec![l1_message(), l2.encoded_2718().into()],
+            vec![],
+        )
+        .expect("follower rebuild accepts a block the executor accepts");
+
+        assert_eq!(block.body().transactions.len(), 2);
+        assert_eq!(block.gas_used, l1_gas + 21_000);
+    }
+
+    #[test]
+    fn pool_transaction_fits_after_l1_message_at_actual_gas() {
+        let l1_gas = l1_message_gas_used();
+        let provider = provider();
+        let l2 = l2_transaction(&provider, L2_GAS_LIMIT);
+        let l2_hash = *l2.tx_hash();
+        let block = build(provider, vec![l1_message()], vec![l2]).unwrap();
+
+        let hashes = block
+            .body()
+            .transactions
+            .iter()
+            .map(|tx| *tx.tx_hash())
+            .collect::<Vec<B256>>();
+        assert_eq!(hashes.len(), 2, "pool transaction was left out");
+        assert_eq!(hashes[1], l2_hash);
+        assert_eq!(block.gas_used, l1_gas + 21_000);
+    }
+
+    #[test]
+    fn forced_transaction_over_remaining_gas_is_still_rejected() {
+        let l1_gas = l1_message_gas_used();
+        let provider = provider();
+        // One gas more than the block has left after the L1 message's actual gas.
+        let l2 = l2_transaction(&provider, BLOCK_GAS_LIMIT - l1_gas + 1);
+        let err = build(
+            provider,
+            vec![l1_message(), l2.encoded_2718().into()],
+            vec![],
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("forced transactions exceed block gas limit"),
+            "unexpected error: {err}"
+        );
     }
 }

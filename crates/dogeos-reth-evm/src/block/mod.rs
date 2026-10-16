@@ -127,7 +127,11 @@ where
 {
     /// Executes all transactions in a block, applying pre and post execution changes. The provided
     /// transaction compression infos are expected to be in the same order as the
-    /// transactions.
+    /// transactions, one per transaction.
+    ///
+    /// Returns an error if the transaction and compression info counts differ. Pre-execution
+    /// changes and earlier transactions may already be applied, so the caller must discard
+    /// the executor's state on error.
     pub fn execute_block_with_compression_cache(
         mut self,
         transactions: impl IntoIterator<
@@ -141,11 +145,20 @@ where
     {
         self.apply_pre_execution_changes()?;
 
-        for (tx, (compression_ratio, compressed_size)) in
-            transactions.into_iter().zip(compression_infos)
-        {
+        let mut compression_infos = compression_infos.into_iter();
+        for tx in transactions {
+            let Some((compression_ratio, compressed_size)) = compression_infos.next() else {
+                return Err(BlockExecutionError::msg(
+                    "fewer compression infos than transactions",
+                ));
+            };
             let tx = tx.with_compression_info(compression_ratio, compressed_size);
             self.execute_transaction(&tx)?;
+        }
+        if compression_infos.next().is_some() {
+            return Err(BlockExecutionError::msg(
+                "more compression infos than transactions",
+            ));
         }
 
         self.apply_post_execution_changes()
@@ -445,7 +458,7 @@ where
 mod tests {
     use super::*;
     use crate::{
-        ScrollRethReceiptBuilder, ScrollTransactionIntoTxEnv,
+        ScrollRethReceiptBuilder, ScrollTransactionIntoTxEnv, TX_L1_FEE_PRECISION_U256,
         gas_price_oracle::L1_GAS_PRICE_ORACLE_ADDRESS,
     };
     use alloy_evm::{EvmEnv, block::StateChangePreBlockSource};
@@ -512,6 +525,59 @@ mod tests {
             },
             l1_fee: U256::ZERO,
             tx_type: 0,
+        }
+    }
+
+    fn execute_with_compression_infos(
+        tx_count: u64,
+        info_count: usize,
+    ) -> Result<BlockExecutionResult<dogeos_reth_primitives::ScrollReceipt>, BlockExecutionError>
+    {
+        use alloy_consensus::{Signed, TxLegacy, transaction::Recovered};
+        use alloy_primitives::{Signature, TxKind};
+        use dogeos_reth_primitives::ScrollTransactionSigned;
+
+        let sender = Address::repeat_byte(0x55);
+        let transactions = (0..tx_count)
+            .map(|nonce| {
+                let tx = TxLegacy {
+                    nonce,
+                    gas_limit: 21_000,
+                    to: TxKind::Call(Address::repeat_byte(0x66)),
+                    ..Default::default()
+                };
+                let signed = Signed::new_unchecked(tx, Signature::test_signature(), B256::ZERO);
+                ScrollTransactionSigned::from(signed)
+            })
+            .collect::<Vec<_>>();
+        let executor = ScrollBlockExecutor::new(
+            empty_state_evm(),
+            ScrollBlockExecutionCtx::default(),
+            DOGEOS_MAINNET.clone(),
+            ScrollRethReceiptBuilder,
+        );
+        executor.execute_block_with_compression_cache(
+            transactions
+                .iter()
+                .map(|tx| Recovered::new_unchecked(tx, sender)),
+            vec![(TX_L1_FEE_PRECISION_U256, 1); info_count],
+        )
+    }
+
+    #[test]
+    fn compression_cache_executes_every_transaction_when_counts_match() {
+        let result = execute_with_compression_infos(3, 3).unwrap();
+        assert_eq!(result.receipts.len(), 3);
+    }
+
+    #[test]
+    fn compression_cache_rejects_mismatched_counts() {
+        for (info_count, expected_error) in [
+            (2, "fewer compression infos than transactions"),
+            (4, "more compression infos than transactions"),
+        ] {
+            let err = execute_with_compression_infos(3, info_count).unwrap_err();
+            assert_eq!(err.to_string(), expected_error);
         }
     }
 

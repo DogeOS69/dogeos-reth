@@ -83,10 +83,14 @@ impl DogeosChainSpecBuilder {
     }
 
     pub fn build(self, config: ScrollChainConfig) -> DogeosChainSpec {
-        DogeosChainSpec {
-            inner: self.inner.build(),
+        let inner = self.inner.build();
+        build_spec_with_hardforks(
+            inner.genesis,
             config,
-        }
+            inner.hardforks,
+            None,
+            Some(inner.chain),
+        )
     }
 }
 
@@ -248,6 +252,24 @@ pub(crate) fn build_spec(
     known_hash: Option<B256>,
     chain_override: Option<Chain>,
 ) -> DogeosChainSpec {
+    build_spec_with_hardforks(
+        genesis,
+        config,
+        feynman_hardforks(dogeos_forks),
+        known_hash,
+        chain_override,
+    )
+}
+
+/// Shared construction for built-in specs, custom genesis documents, and the builder.
+/// DogeOS headers omit Ethereum withdrawals even when Shanghai rules are active.
+fn build_spec_with_hardforks(
+    genesis: Genesis,
+    config: ScrollChainConfig,
+    hardforks: ChainHardforks,
+    known_hash: Option<B256>,
+    chain_override: Option<Chain>,
+) -> DogeosChainSpec {
     let chain = chain_override.unwrap_or_else(|| Chain::from_id(genesis.config.chain_id));
     let header = make_genesis_header(&genesis);
     let genesis_header = match known_hash {
@@ -260,7 +282,7 @@ pub(crate) fn build_spec(
             chain,
             genesis_header,
             genesis,
-            hardforks: feynman_hardforks(dogeos_forks),
+            hardforks,
             base_fee_params: BaseFeeParamsKind::Variable(
                 alloc::vec![(
                     DogeosHardfork::Feynman.boxed(),
@@ -343,6 +365,13 @@ mod tests {
     use reth_chainspec::ForkHash;
 
     #[test]
+    fn mainnet_builder_matches_builtin_spec() {
+        let spec = DogeosChainSpecBuilder::dogeos_mainnet().build(DOGEOS_MAINNET.config);
+        assert_eq!(spec.genesis_hash(), DOGEOS_MAINNET.genesis_hash());
+        assert_eq!(spec, **DOGEOS_MAINNET);
+    }
+
+    #[test]
     fn supported_specs_are_feynman_baseline_without_withdrawals() {
         for spec in [&*DOGEOS_MAINNET, &*DOGEOS_CHIKYU, &*DOGEOS_DEV] {
             assert!(spec.is_feynman_active_at_timestamp(0));
@@ -368,15 +397,36 @@ mod tests {
             DOGEOS_MAINNET_GENESIS_HASH
         );
         assert_eq!(DOGEOS_MAINNET.genesis_hash(), DOGEOS_MAINNET_GENESIS_HASH);
-        assert_eq!(
-            ScrollChainConfig::extract_from(&genesis.config.extra_fields).unwrap(),
-            DOGEOS_MAINNET.config
+        assert_eq!(ScrollChainConfig::dogeos_mainnet(), DOGEOS_MAINNET.config);
+        assert!(
+            DogeosChainSpec::from_custom_genesis(genesis) == **DOGEOS_MAINNET,
+            "mainnet JSON and built-in specs must be identical"
         );
     }
 
     #[test]
-    fn supported_chain_ids_match_the_current_node() {
-        assert_eq!(DOGEOS_MAINNET.chain().id(), 0xff);
+    fn mainnet_genesis_contains_canonical_history_account() {
+        use alloy_eips::eip2935::{HISTORY_STORAGE_ADDRESS, HISTORY_STORAGE_CODE};
+
+        let account = DOGEOS_MAINNET
+            .genesis()
+            .alloc
+            .get(&HISTORY_STORAGE_ADDRESS)
+            .expect("Feynman-at-genesis requires the EIP-2935 history account");
+        assert_eq!(account.code.as_ref(), Some(&HISTORY_STORAGE_CODE));
+        assert_eq!(account.nonce, Some(1));
+        assert_eq!(account.balance, U256::ZERO);
+        assert!(
+            account
+                .storage
+                .as_ref()
+                .is_none_or(|storage| storage.is_empty())
+        );
+    }
+
+    #[test]
+    fn supported_chain_ids_match_the_networks() {
+        assert_eq!(DOGEOS_MAINNET.chain().id(), 1_122_005);
         assert_eq!(DOGEOS_CHIKYU.chain().id(), 0x5fdaf3);
         assert_eq!(DOGEOS_DEV.chain(), Chain::dev());
     }
@@ -462,9 +512,12 @@ mod tests {
     }
 
     #[test]
-    fn existing_network_fork_ids_are_unchanged() {
+    fn network_fork_ids_match_frozen_genesis() {
         for (spec, hash) in [
-            (&*DOGEOS_MAINNET, ForkHash([0x62, 0xd8, 0x20, 0xb2])),
+            (
+                &*DOGEOS_MAINNET,
+                ForkHash::from(DOGEOS_MAINNET_GENESIS_HASH),
+            ),
             (&*DOGEOS_CHIKYU, ForkHash([0x6c, 0x55, 0x6e, 0x50])),
             (&*DOGEOS_DEV, ForkHash::from(DOGEOS_DEV.genesis_hash())),
         ] {
