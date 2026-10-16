@@ -12,6 +12,13 @@ pub use tx::{
 
 extern crate alloc;
 
+#[cfg(feature = "std")]
+pub mod code_witness;
+#[cfg(feature = "std")]
+pub use code_witness::{
+    CodeWitnessHandle, CodeWitnessInspector, CodeWitnessLimit, DEFAULT_MAX_CODE_WITNESS_BYTES,
+};
+
 mod base_fee;
 pub mod gas_price_oracle;
 pub use base_fee::{
@@ -57,10 +64,10 @@ use core::{
 };
 use revm::{
     Context, ExecuteEvm, InspectEvm, Inspector, SystemCallEvm,
-    context::{BlockEnv, TxEnv, result::HaltReason},
+    context::{BlockEnv, ContextSetters, TxEnv, result::HaltReason},
     context_interface::result::{EVMError, ResultAndState},
-    handler::PrecompileProvider,
-    inspector::NoOpInspector,
+    handler::{EthFrame, PrecompileProvider, SystemCallTx},
+    inspector::{InspectorHandler, NoOpInspector},
     interpreter::{InterpreterResult, interpreter::EthInterpreter},
 };
 use revm_scroll::{
@@ -166,7 +173,24 @@ where
         contract: Address,
         data: Bytes,
     ) -> Result<ResultAndState<Self::HaltReason>, Self::Error> {
-        self.inner.system_call_with_caller(caller, contract, data)
+        if self.inspect {
+            self.inner
+                .0
+                .ctx
+                .set_tx(revm_scroll::ScrollTransaction::new_system_tx_with_caller(
+                    caller, contract, data,
+                ));
+            let result = revm_scroll::handler::ScrollHandler::<
+                _,
+                EVMError<DB::Error>,
+                EthFrame<EthInterpreter>,
+            >::new()
+            .inspect_run_system_call(&mut self.inner)?;
+            let state = self.inner.finalize();
+            Ok(ResultAndState { result, state })
+        } else {
+            self.inner.system_call_with_caller(caller, contract, data)
+        }
     }
 
     fn db_mut(&mut self) -> &mut Self::DB {

@@ -11,6 +11,9 @@ pub const MAX_TX_PAYLOAD_BYTES_PER_BLOCK: usize = 120 * 1024;
 /// Feynman EIP-1559 parameters.
 pub const DOGEOS_BASE_FEE_PARAMS_FEYNMAN: BaseFeeParams = BaseFeeParams::new(8, 2);
 
+/// Tsuki EIP-1559 parameters: max change denominator 48, elasticity 10.
+pub const DOGEOS_BASE_FEE_PARAMS_TSUKI: BaseFeeParams = BaseFeeParams::new(48, 10);
+
 /// DogeOS development-network L1 configuration.
 pub const DOGEOS_DEV_L1_CONFIG: L1Config = L1Config {
     l1_chain_id: alloy_chains::NamedChain::Goerli as u64,
@@ -23,17 +26,17 @@ pub const DOGEOS_DEV_L1_CONFIG: L1Config = L1Config {
 
 /// DogeOS mainnet L1 configuration frozen in `res/genesis/dogeos.json`.
 pub const DOGEOS_MAINNET_L1_CONFIG: L1Config = L1Config {
-    l1_chain_id: 111_111,
-    l1_message_queue_address: DOGEOS_CHIKYU_L1_MESSAGE_QUEUE_ADDRESS,
-    l1_message_queue_v2_address: DOGEOS_CHIKYU_L1_MESSAGE_QUEUE_V2_ADDRESS,
-    scroll_chain_address: DOGEOS_CHIKYU_L1_PROXY_ADDRESS,
-    l2_system_config_address: DOGEOS_CHIKYU_L2_SYSTEM_CONFIG_CONTRACT_ADDRESS,
+    l1_chain_id: 1,
+    l1_message_queue_address: address!("890579692e4eFb4353852ea192663a17632C2b75"),
+    l1_message_queue_v2_address: address!("97E03805774DC6A8219F6c0a11c1998CC7F60990"),
+    scroll_chain_address: address!("23834c0FcC397dDd8292174E99F95b93577a91DA"),
+    l2_system_config_address: address!("198c9525615604f871f74857DEDFcC7A7dEe6531"),
     num_l1_messages_per_block: 10,
 };
 
 /// Canonical header hash computed from the frozen DogeOS mainnet genesis document.
 pub const DOGEOS_MAINNET_GENESIS_HASH: B256 =
-    b256!("f9f7c524dce38b51a4d28ec2f18680773e5ba9d3f5f430d0e05f92cfeb65b1bc");
+    b256!("663e999bc2ffcef537120677b91ab85fbae8db1be456a4928b99def3dc6b8347");
 
 pub const DOGEOS_CHIKYU_L1_MESSAGE_QUEUE_ADDRESS: Address =
     address!("3396BeD5adB7d83CC6C424264d229478556d3C02");

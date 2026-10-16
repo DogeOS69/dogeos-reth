@@ -17,7 +17,7 @@ use reth_primitives_traits::{
     receipt::gas_spent_by_transactions,
 };
 
-pub const DOGEOS_MAXIMUM_BASE_FEE: u64 = 10_000_000_000;
+pub use dogeos_protocol_types::MAX_L2_BASE_FEE as DOGEOS_MAXIMUM_BASE_FEE;
 pub const DOGEOS_BLOCK_DIFFICULTY: U256 = U256::from_limbs([1, 0, 0, 0]);
 
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
@@ -375,6 +375,29 @@ mod tests {
         assert!(matches!(
             consensus.validate_header(&SealedHeader::seal_slow(header)),
             Err(ConsensusError::Other(message)) if message.contains("extra data must be empty")
+        ));
+    }
+
+    #[test]
+    fn base_fee_over_the_420_000_gwei_cap_is_rejected() {
+        assert_eq!(DOGEOS_MAXIMUM_BASE_FEE, 420_000_000_000_000);
+
+        // Above the previous 10 gwei cap, e.g. the 420 gwei activation overhead.
+        for base_fee in [10_000_000_001, 420_000_000_000, DOGEOS_MAXIMUM_BASE_FEE] {
+            let mut header = valid_header();
+            header.base_fee_per_gas = Some(base_fee);
+            assert!(
+                DogeosConsensus
+                    .validate_header(&SealedHeader::seal_slow(header))
+                    .is_ok()
+            );
+        }
+
+        let mut header = valid_header();
+        header.base_fee_per_gas = Some(DOGEOS_MAXIMUM_BASE_FEE + 1);
+        assert!(matches!(
+            DogeosConsensus.validate_header(&SealedHeader::seal_slow(header)),
+            Err(ConsensusError::Other(message)) if message.contains("base fee exceeds")
         ));
     }
 

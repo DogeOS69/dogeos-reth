@@ -35,7 +35,12 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+alloy-rpc-types-engine.workspace = true
 dogeos-protocol-types = { workspace = true, features = ["std"] }
+dogeos-reth-consensus.workspace = true
+dogeos-reth-txpool.workspace = true
+reth-consensus.workspace = true
+reth-provider = { workspace = true, features = ["test-utils"] }
 serde_json.workspace = true
 
 [features]
