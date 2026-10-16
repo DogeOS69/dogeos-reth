@@ -109,10 +109,20 @@ impl DogeosChainHardforks {
 
 impl EthereumHardforks for DogeosChainHardforks {
     fn ethereum_fork_activation(&self, fork: EthereumHardfork) -> ForkCondition {
-        if fork <= EthereumHardfork::Shanghai {
-            self.dogeos_fork_activation(DogeosHardfork::Feynman)
-        } else {
-            ForkCondition::Never
+        // Match the Ethereum baseline in dogeos-chainspec's feynman_hardforks.
+        match fork {
+            EthereumHardfork::Frontier
+            | EthereumHardfork::Homestead
+            | EthereumHardfork::Tangerine
+            | EthereumHardfork::SpuriousDragon
+            | EthereumHardfork::Byzantium
+            | EthereumHardfork::Constantinople
+            | EthereumHardfork::Petersburg
+            | EthereumHardfork::Istanbul
+            | EthereumHardfork::Berlin
+            | EthereumHardfork::London => ForkCondition::Block(0),
+            EthereumHardfork::Shanghai => ForkCondition::Timestamp(0),
+            _ => ForkCondition::Never,
         }
     }
 }

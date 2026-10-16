@@ -20,6 +20,10 @@ pub struct L1Config {
     pub l1_message_queue_v2_address: Address,
     pub scroll_chain_address: Address,
     pub l2_system_config_address: Address,
+    /// Default maximum number of L1 messages per L2 block for the rollup-node sequencer.
+    /// Overridden by `--sequencer.max-l1-messages`; this is local sequencer policy, not a
+    /// consensus or proof-enforced per-block count limit.
+    /// The JSON field remains `numL1MessagesPerBlock` for configuration compatibility.
     #[serde(deserialize_with = "deserialize_u64_flexible")]
     pub num_l1_messages_per_block: u64,
 }

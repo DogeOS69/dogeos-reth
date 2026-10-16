@@ -19,6 +19,7 @@ reth-cli = { git = "https://github.com/DogeOS69/reth.git", rev = "972366a0bfc11c
 reth-node-builder = { git = "https://github.com/DogeOS69/reth.git", rev = "972366a0bfc11cf6a0d5dc79d5e779cd81e32232", default-features = false }
 reth-node-types = { git = "https://github.com/DogeOS69/reth.git", rev = "972366a0bfc11cf6a0d5dc79d5e779cd81e32232", default-features = false }
 reth-chainspec = { git = "https://github.com/DogeOS69/reth.git", rev = "972366a0bfc11cf6a0d5dc79d5e779cd81e32232", default-features = false }
+reth-chain-state = { git = "https://github.com/DogeOS69/reth.git", rev = "972366a0bfc11cf6a0d5dc79d5e779cd81e32232", default-features = false }
 reth-consensus = { git = "https://github.com/DogeOS69/reth.git", rev = "972366a0bfc11cf6a0d5dc79d5e779cd81e32232", default-features = false }
 reth-consensus-common = { git = "https://github.com/DogeOS69/reth.git", rev = "972366a0bfc11cf6a0d5dc79d5e779cd81e32232", default-features = false }
 reth-ethereum-forks = { git = "https://github.com/DogeOS69/reth.git", rev = "972366a0bfc11cf6a0d5dc79d5e779cd81e32232", default-features = false }
