@@ -15,6 +15,8 @@ use revm::{database::BundleState, state::AccountInfo};
 
 const SLOT: U256 = U256::from_limbs([101, 0, 0, 0]);
 const GAS_LIMIT: u64 = 20_000_000;
+// The dev chain activates Tsuki at genesis: elasticity 10, change denominator 48.
+const GAS_TARGET: u64 = GAS_LIMIT / 10;
 const SENDER: Address = Address::repeat_byte(0x71);
 
 type TestPool = Pool<
@@ -278,7 +280,7 @@ async fn commit_uses_event_state_even_when_provider_is_ahead_and_reorg_changes_o
         .unbounded_send(CanonStateNotification::Commit { new: chain(&first) })
         .unwrap();
     wait_for_head(&pool, first_hash).await;
-    assert_eq!(pool.block_info().pending_basefee, 1_112_500_000);
+    assert_eq!(pool.block_info().pending_basefee, 1_168_750_000);
     assert_eq!(
         pool.block_info().pending_basefee,
         builder_fee(&provider, first_hash)
@@ -289,7 +291,7 @@ async fn commit_uses_event_state_even_when_provider_is_ahead_and_reorg_changes_o
         })
         .unwrap();
     wait_for_head(&pool, second_hash).await;
-    assert_eq!(pool.block_info().pending_basefee, 1_025_000_000);
+    assert_eq!(pool.block_info().pending_basefee, 1_037_500_000);
     assert_eq!(
         pool.block_info().pending_basefee,
         builder_fee(&provider, second_hash)
@@ -317,7 +319,7 @@ async fn commit_uses_event_state_even_when_provider_is_ahead_and_reorg_changes_o
         })
         .unwrap();
     wait_for_head(&pool, sibling_hash).await;
-    assert_eq!(pool.block_info().pending_basefee, 1_075_000_000);
+    assert_eq!(pool.block_info().pending_basefee, 1_112_500_000);
     assert_eq!(
         pool.block_info().pending_basefee,
         builder_fee(&provider, sibling_hash)
@@ -364,7 +366,7 @@ async fn default_and_non_default_overhead_match_builder_at_target_and_full_gas()
     let mut parent = provider.chain_spec().genesis_hash();
     let mut number = 0;
     for overhead in [0, 400_000_000, 420_000_000_000] {
-        for gas_used in [GAS_LIMIT / 2, GAS_LIMIT] {
+        for gas_used in [GAS_TARGET, GAS_LIMIT] {
             number += 1;
             let head = block(&provider, parent, number, 1_000_000_000, gas_used, overhead);
             parent = head.recovered_block.hash();
@@ -402,7 +404,7 @@ async fn unavailable_head_keeps_previous_fee_then_recovers() {
     assert_eq!(actual.last_seen_block_hash, unknown.last_seen_block_hash);
     assert_eq!(actual.pending_blob_fee, Some(7));
 
-    // Readable head: 1 gwei full parent with 400M overhead, (1e9 - 4e8) * 1.125 + 4e8.
+    // Readable head: 1 gwei full parent with 400M overhead, (1e9 - 4e8) * (1 + 9/48) + 4e8.
     let head = block(
         &provider,
         provider.chain_spec().genesis_hash(),
@@ -418,7 +420,7 @@ async fn unavailable_head_keeps_previous_fee_then_recovers() {
         pending_basefee: 0,
         ..unknown
     });
-    assert_eq!(pool.block_info().pending_basefee, 1_075_000_000);
+    assert_eq!(pool.block_info().pending_basefee, 1_112_500_000);
 
     // A priced-out transaction stays parked while the next head is unreadable.
     let underpriced = priced_transaction(&provider, 1_000_000_000);
@@ -441,7 +443,7 @@ async fn unavailable_head_keeps_previous_fee_then_recovers() {
         mined_transactions: vec![],
         update_kind: PoolUpdateKind::Commit,
     });
-    assert_eq!(pool.block_info().pending_basefee, 1_075_000_000);
+    assert_eq!(pool.block_info().pending_basefee, 1_112_500_000);
     assert_eq!(pool.pool_size().pending, 0);
     assert_eq!(pool.pool_size().basefee, 1);
 

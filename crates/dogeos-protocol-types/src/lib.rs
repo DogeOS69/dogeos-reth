@@ -11,6 +11,9 @@ extern crate alloc;
 #[cfg(not(feature = "std"))]
 extern crate alloc as std;
 
+/// Maximum L2 base fee (420,000 gwei): the sequencer clamp and the consensus header limit.
+pub const MAX_L2_BASE_FEE: u64 = 420_000_000_000_000;
+
 mod transaction;
 pub use transaction::{
     L1_MESSAGE_TRANSACTION_TYPE, L1_MESSAGE_TX_TYPE_ID, ScrollAdditionalInfo,

@@ -67,7 +67,7 @@ where
         .transpose()
 }
 
-/// DogeOS hardfork timestamps encoded in a custom genesis config.
+/// DogeOS hardfork and fee-parameter timestamps encoded in a genesis config.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DogeosHardforkInfo {
@@ -79,10 +79,14 @@ pub struct DogeosHardforkInfo {
     pub galileo_v2_time: Option<u64>,
     #[serde(default, deserialize_with = "deserialize_optional_u64_flexible")]
     pub tsuki_time: Option<u64>,
+    /// Optional D48/E10 activation time, independent of the Tsuki execution transition.
+    /// Missing or null uses the chain spec's Tsuki activation condition.
+    #[serde(default, deserialize_with = "deserialize_optional_u64_flexible")]
+    pub tsuki_fee_params_time: Option<u64>,
 }
 
 impl DogeosHardforkInfo {
-    /// Converts genesis timestamps into an explicit, fail-closed activation schedule.
+    /// Converts execution-fork timestamps into an explicit, fail-closed activation schedule.
     pub const fn activation_schedule(self) -> [(DogeosHardfork, ForkCondition); 4] {
         const fn condition(timestamp: Option<u64>) -> ForkCondition {
             match timestamp {
@@ -160,6 +164,47 @@ impl TryFrom<&OtherFields> for ScrollChainConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fee_params_time_accepts_missing_null_and_flexible_unsigned_timestamps() {
+        for (json, expected) in [
+            (r#"{}"#, None),
+            (r#"{"tsukiFeeParamsTime":null}"#, None),
+            (r#"{"tsukiFeeParamsTime":0}"#, Some(0)),
+            (r#"{"tsukiFeeParamsTime":100}"#, Some(100)),
+            (r#"{"tsukiFeeParamsTime":"100"}"#, Some(100)),
+            (r#"{"tsukiFeeParamsTime":"0x64"}"#, Some(100)),
+            (
+                r#"{"tsukiFeeParamsTime":"18446744073709551615"}"#,
+                Some(u64::MAX),
+            ),
+        ] {
+            let fields: OtherFields = serde_json::from_str(json).unwrap();
+            assert_eq!(
+                DogeosHardforkInfo::try_from(&fields)
+                    .unwrap()
+                    .tsuki_fee_params_time,
+                expected,
+                "{json}"
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_fee_params_time_is_rejected_instead_of_defaulting_to_tsuki() {
+        for json in [
+            r#"{"tsukiFeeParamsTime":-1}"#,
+            r#"{"tsukiFeeParamsTime":1.5}"#,
+            r#"{"tsukiFeeParamsTime":true}"#,
+            r#"{"tsukiFeeParamsTime":""}"#,
+            r#"{"tsukiFeeParamsTime":"18446744073709551616"}"#,
+            r#"{"tsukiFeeParamsTime":[]}"#,
+            r#"{"tsukiFeeParamsTime":{}}"#,
+        ] {
+            let fields: OtherFields = serde_json::from_str(json).unwrap();
+            assert!(DogeosHardforkInfo::try_from(&fields).is_err(), "{json}");
+        }
+    }
 
     #[test]
     fn extracts_inherited_scroll_json_key() {
