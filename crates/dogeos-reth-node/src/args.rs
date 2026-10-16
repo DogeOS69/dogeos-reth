@@ -1,4 +1,4 @@
-use crate::payload::DOGEOS_DEFAULT_PAYLOAD_SIZE_LIMIT;
+use crate::{CodeWitnessArgs, payload::DOGEOS_DEFAULT_PAYLOAD_SIZE_LIMIT};
 use alloy_primitives::Address;
 use dogeos_chainspec::{DOGEOS_DEV, DogeosChainSpec};
 use dogeos_reth_rpc::DEFAULT_MIN_SUGGESTED_PRIORITY_FEE;
@@ -7,6 +7,10 @@ use reth_chainspec::EthChainSpec;
 /// Scroll-compatible runtime policy exposed by the standalone DogeOS node.
 #[derive(Clone, Debug, clap::Args, PartialEq, Eq)]
 pub struct DogeosRollupArgs {
+    /// Code witness limits shared by transaction admission and payload building.
+    #[command(flatten)]
+    pub code_witness: CodeWitnessArgs,
+
     /// Endpoint for the sequencer mempool.
     #[arg(long = "scroll.sequencer")]
     pub sequencer: Option<String>,
@@ -50,6 +54,7 @@ impl DogeosRollupArgs {
 impl Default for DogeosRollupArgs {
     fn default() -> Self {
         Self {
+            code_witness: CodeWitnessArgs::default(),
             sequencer: None,
             min_suggested_priority_fee: DEFAULT_MIN_SUGGESTED_PRIORITY_FEE,
             payload_size_limit: DOGEOS_DEFAULT_PAYLOAD_SIZE_LIMIT,

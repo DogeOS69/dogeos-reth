@@ -10,6 +10,8 @@ use reth_node_types::NodeTypes;
 
 mod args;
 pub use args::DogeosRollupArgs;
+mod code_witness_args;
+pub use code_witness_args::CodeWitnessArgs;
 mod payload;
 pub use payload::DogeosPayloadBuilderBuilder;
 mod engine;
@@ -280,10 +282,14 @@ where
         };
         ComponentsBuilder::default()
             .node_types::<N>()
-            .pool(DogeosPoolBuilder::default())
+            .pool(
+                DogeosPoolBuilder::default()
+                    .with_code_witness_config(self.args.code_witness.validation_config()),
+            )
             .executor(DogeosExecutorBuilder)
             .payload(BasicPayloadServiceBuilder::new(
                 DogeosPayloadBuilderBuilder {
+                    max_code_witness_bytes: self.args.code_witness.max_code_witness_bytes,
                     block_da_size_limit: Some(self.args.payload_size_limit),
                     ..Default::default()
                 },

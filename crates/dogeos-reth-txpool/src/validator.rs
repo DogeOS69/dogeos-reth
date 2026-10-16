@@ -27,6 +27,17 @@ const MAX_ROLLUP_FEE_PRE_TSUKI: U256 = U256::from_limbs([u64::MAX, 0, 0, 0]);
 const MAX_ROLLUP_FEE_TSUKI: U256 = U256::from_limbs([u64::MAX, u32::MAX as u64, 0, 0]);
 const MAX_L1_FEE_REFRESH_ATTEMPTS: usize = 3;
 
+type AdmissionResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
+
+/// A node-supplied execution check, separate from the generic Ethereum validation rules.
+struct AdmissionCheck<Tx>(Arc<dyn Fn(&Tx) -> AdmissionResult + Send + Sync>);
+
+impl<Tx> std::fmt::Debug for AdmissionCheck<Tx> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AdmissionCheck")
+    }
+}
+
 /// A complete L1 fee snapshot loaded from one sealed canonical head and its exact state.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DogeosL1FeeSnapshot {
@@ -251,6 +262,7 @@ pub struct DogeosTransactionValidator<Client, Tx, Evm> {
     l1_fee_cache: RwLock<DogeosL1FeeCache>,
     l1_fee_refresh_lock: Mutex<()>,
     require_l1_data_fee_buffer: bool,
+    admission_check: Option<AdmissionCheck<Tx>>,
 }
 
 impl<Client, Tx, Evm> DogeosTransactionValidator<Client, Tx, Evm> {
@@ -265,6 +277,7 @@ impl<Client, Tx, Evm> DogeosTransactionValidator<Client, Tx, Evm> {
             l1_fee_cache: RwLock::new(DogeosL1FeeCache::Ready(Arc::new(snapshot))),
             l1_fee_refresh_lock: Mutex::new(()),
             require_l1_data_fee_buffer,
+            admission_check: None,
         }
     }
 
@@ -278,7 +291,18 @@ impl<Client, Tx, Evm> DogeosTransactionValidator<Client, Tx, Evm> {
             l1_fee_cache: RwLock::new(DogeosL1FeeCache::Disabled),
             l1_fee_refresh_lock: Mutex::new(()),
             require_l1_data_fee_buffer,
+            admission_check: None,
         }
+    }
+
+    /// Installs the bounded code witness simulation used after the inexpensive pool checks.
+    /// A failed simulation rejects admission as a retryable, state-dependent error.
+    pub fn with_admission_check(
+        mut self,
+        check: impl Fn(&Tx) -> AdmissionResult + Send + Sync + 'static,
+    ) -> Self {
+        self.admission_check = Some(AdmissionCheck(Arc::new(check)));
+        self
     }
 
     pub fn chain_spec(&self) -> Arc<Client::ChainSpec>
@@ -308,6 +332,21 @@ where
     Evm: reth_evm::ConfigureEvm,
 {
     pub fn validate_one(
+        &self,
+        origin: TransactionOrigin,
+        transaction: Tx,
+    ) -> TransactionValidationOutcome<Tx> {
+        let outcome = self.validate_basic(origin, transaction);
+        if let (Some(check), Some(transaction)) =
+            (&self.admission_check, outcome.as_valid_transaction())
+            && let Err(error) = (check.0)(transaction.transaction())
+        {
+            return TransactionValidationOutcome::Error(*transaction.hash(), error);
+        }
+        outcome
+    }
+
+    fn validate_basic(
         &self,
         origin: TransactionOrigin,
         transaction: Tx,
@@ -1160,6 +1199,55 @@ mod tests {
             validator
                 .validate_one(TransactionOrigin::External, transaction(sender))
                 .is_valid()
+        );
+    }
+
+    #[test]
+    fn admission_check_runs_in_dev_only_after_basic_validation_and_returns_retryable_error() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let provider = provider(DOGEOS_CHIKYU.clone());
+        let sender = Address::repeat_byte(0x33);
+        provider.add_account(sender, ExtendedAccount::new(0, U256::MAX));
+        let inner = EthTransactionValidatorBuilder::new(
+            provider,
+            ScrollEvmConfig::dogeos(DOGEOS_CHIKYU.clone()),
+        )
+        .no_eip4844()
+        .build(InMemoryBlobStore::default());
+        let checks = Arc::new(AtomicUsize::new(0));
+        let observed = checks.clone();
+        let validator =
+            DogeosTransactionValidator::disabled(inner, false).with_admission_check(move |_| {
+                observed.fetch_add(1, Ordering::SeqCst);
+                Err(Box::new(crate::CodeWitnessValidationError::CodeBytes {
+                    observed: 33,
+                    limit: 32,
+                }))
+            });
+        let result = validator.validate_one(TransactionOrigin::External, transaction(sender));
+        let TransactionValidationOutcome::Error(_, error) = result else {
+            panic!("witness overflow must reject admission without permanently marking invalid")
+        };
+        assert!(matches!(
+            error.downcast_ref(),
+            Some(crate::CodeWitnessValidationError::CodeBytes {
+                observed: 33,
+                limit: 32
+            })
+        ));
+        assert_eq!(checks.load(Ordering::SeqCst), 1);
+        assert!(
+            validator
+                .validate_one(
+                    TransactionOrigin::External,
+                    transaction(Address::repeat_byte(0x34))
+                )
+                .is_invalid()
+        );
+        assert_eq!(
+            checks.load(Ordering::SeqCst),
+            1,
+            "unfunded transactions must not execute"
         );
     }
 
