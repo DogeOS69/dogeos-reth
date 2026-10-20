@@ -11,7 +11,7 @@ no copied upstream Reth crate and no production dependency on the legacy `scroll
 | --- | --- |
 | Reth | official `v2.0.0` plus the RocksDB durability, inbound/downloaded-header-only transform, and generic EIP-3607 empty-code sender layers / `972366a0bfc11cf6a0d5dc79d5e779cd81e32232` |
 | REVM | `36.0.0` |
-| `revm-scroll` | `dcf087684f255131c96c0d20f3291eef9198e990` (`dogeos`) |
+| `revm-scroll` | `acab500c0cb1a13a6c52b55f79e84493c2c8e533` (`dogeos`) |
 | Alloy API family | `alloy-consensus 1.8.2` |
 | alloy-evm | `0.30.0` |
 | Alloy primitives / Solidity types | `1.5.7` |

@@ -132,8 +132,8 @@ pub struct DogeosChainSpec {
 impl DogeosChainSpec {
     /// Builds a supported Feynman+ custom chain from its genesis document.
     pub fn from_custom_genesis(genesis: Genesis) -> Self {
-        let config = ScrollChainConfig::extract_from(&genesis.config.extra_fields)
-            .expect("custom DogeOS genesis must contain the inherited scroll config");
+        let config = ScrollChainConfig::try_from(&genesis.config.extra_fields)
+            .expect("custom DogeOS genesis must contain a valid inherited scroll config");
         let dogeos_forks = DogeosHardforkInfo::try_from(&genesis.config.extra_fields)
             .expect("custom DogeOS genesis hardfork timestamps must be valid")
             .activation_schedule();
@@ -402,6 +402,31 @@ mod tests {
         assert!(DOGEOS_DEV.is_tsuki_active_at_timestamp(0));
         assert!(!DOGEOS_CHIKYU.is_tsuki_active_at_timestamp(0));
         assert!(!DOGEOS_CHIKYU.is_tsuki_active_at_timestamp(u64::MAX));
+    }
+
+    #[test]
+    fn custom_genesis_rejects_unknown_scroll_fields() {
+        for document in [
+            include_str!("../res/genesis/dogeos.json"),
+            include_str!("../res/genesis/chikyu_dogeos.json"),
+        ] {
+            let genesis: Genesis = serde_json::from_str(document).unwrap();
+            DogeosChainSpec::from_custom_genesis(genesis.clone());
+
+            for (key, value) in [
+                ("l1DataFeeBufferCheck", serde_json::json!(false)),
+                ("l1DataFeeBufferCheck", serde_json::json!(true)),
+                ("unknownPolicy", serde_json::json!(true)),
+            ] {
+                let mut invalid = genesis.clone();
+                invalid.config.extra_fields.get_mut("scroll").unwrap()[key] = value;
+                assert!(
+                    std::panic::catch_unwind(|| DogeosChainSpec::from_custom_genesis(invalid))
+                        .is_err(),
+                    "custom genesis must reject unknown Scroll field {key}"
+                );
+            }
+        }
     }
 
     #[test]

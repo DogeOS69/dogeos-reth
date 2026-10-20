@@ -105,7 +105,6 @@ where
     let meter = CodeWitnessHandle::new(config.max_code_witness_bytes, config.max_steps);
     meter.begin_transaction();
     let mut evm = evm_config.evm_with_env_and_inspector(database, env, meter.inspector());
-    evm.with_l1_data_fee_buffer_check(evm_config.chain_spec().config.l1_data_fee_buffer_check);
     // Underpriced transactions may legitimately wait in the pool for a lower base fee. Execute
     // their code without changing their gas-price inputs; this policy is not fee validation.
     evm.with_base_fee_check(false);

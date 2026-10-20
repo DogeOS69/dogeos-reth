@@ -261,7 +261,6 @@ pub struct DogeosTransactionValidator<Client, Tx, Evm> {
     inner: EthTransactionValidator<Client, Tx, Evm>,
     l1_fee_cache: RwLock<DogeosL1FeeCache>,
     l1_fee_refresh_lock: Mutex<()>,
-    require_l1_data_fee_buffer: bool,
     admission_check: Option<AdmissionCheck<Tx>>,
 }
 
@@ -270,27 +269,21 @@ impl<Client, Tx, Evm> DogeosTransactionValidator<Client, Tx, Evm> {
     pub fn new(
         inner: EthTransactionValidator<Client, Tx, Evm>,
         snapshot: DogeosL1FeeSnapshot,
-        require_l1_data_fee_buffer: bool,
     ) -> Self {
         Self {
             inner,
             l1_fee_cache: RwLock::new(DogeosL1FeeCache::Ready(Arc::new(snapshot))),
             l1_fee_refresh_lock: Mutex::new(()),
-            require_l1_data_fee_buffer,
             admission_check: None,
         }
     }
 
     /// Constructs a development-mode validator with L1 fee checking explicitly disabled.
-    pub const fn disabled(
-        inner: EthTransactionValidator<Client, Tx, Evm>,
-        require_l1_data_fee_buffer: bool,
-    ) -> Self {
+    pub const fn disabled(inner: EthTransactionValidator<Client, Tx, Evm>) -> Self {
         Self {
             inner,
             l1_fee_cache: RwLock::new(DogeosL1FeeCache::Disabled),
             l1_fee_refresh_lock: Mutex::new(()),
-            require_l1_data_fee_buffer,
             admission_check: None,
         }
     }
@@ -318,10 +311,6 @@ impl<Client, Tx, Evm> DogeosTransactionValidator<Client, Tx, Evm> {
 
     pub fn requires_l1_data_gas_fee(&self) -> bool {
         !matches!(*self.l1_fee_cache.read(), DogeosL1FeeCache::Disabled)
-    }
-
-    pub const fn requires_l1_data_fee_buffer(&self) -> bool {
-        self.require_l1_data_fee_buffer
     }
 }
 
@@ -428,13 +417,10 @@ where
                     InvalidTransactionError::GasUintOverflow.into(),
                 );
             }
-            let mut required = valid_transaction
+            let required = valid_transaction
                 .transaction()
                 .cost()
                 .saturating_add(l1_data_fee);
-            if self.require_l1_data_fee_buffer {
-                required = required.saturating_add(l1_data_fee);
-            }
             if required > balance {
                 return TransactionValidationOutcome::Invalid(
                     valid_transaction.into_transaction(),
@@ -611,7 +597,7 @@ where
 mod tests {
     use super::*;
     use crate::DogeosPooledTransaction;
-    use alloy_consensus::{Signed, TxLegacy};
+    use alloy_consensus::{Signed, Transaction, TxLegacy};
     use alloy_eips::Encodable2718;
     use alloy_primitives::{Address, Signature, TxKind};
     use dogeos_chainspec::{DOGEOS_CHIKYU, DOGEOS_DEV, DogeosChainSpec};
@@ -712,7 +698,7 @@ mod tests {
             EthTransactionValidatorBuilder::new(provider, ScrollEvmConfig::dogeos(chain_spec))
                 .no_eip4844()
                 .build(InMemoryBlobStore::default());
-        DogeosTransactionValidator::new(inner, snapshot, false)
+        DogeosTransactionValidator::new(inner, snapshot)
     }
 
     fn transaction(sender: Address) -> DogeosPooledTransaction {
@@ -1182,6 +1168,59 @@ mod tests {
     }
 
     #[test]
+    fn admission_requires_exactly_one_l1_fee() {
+        for shortfall in [0, 1] {
+            let provider = provider(DOGEOS_CHIKYU.clone());
+            let sender = Address::repeat_byte(0x35);
+            provider.add_account(
+                L1_GAS_PRICE_ORACLE_ADDRESS,
+                oracle_account(
+                    &DOGEOS_CHIKYU,
+                    [
+                        (L1_BASE_FEE_SLOT, U256::ONE),
+                        (L1_COMMIT_SCALAR_SLOT, U256::from(1_000_000_000_u64)),
+                    ],
+                ),
+            );
+            let snapshot = DogeosL1FeeSnapshot::load_latest(&provider).unwrap();
+            let candidate = transaction(sender);
+            let encoded = candidate.clone_into_consensus().encoded_2718();
+            let compression = (
+                compute_compression_ratio(candidate.input()),
+                compute_compressed_size(&encoded),
+            );
+            let l1_fee = snapshot
+                .l1_block_info
+                .l1_tx_data_fee(
+                    DOGEOS_CHIKYU.as_ref(),
+                    snapshot.timestamp,
+                    snapshot.number,
+                    &encoded,
+                    Some(compression),
+                    false,
+                )
+                .unwrap();
+            assert!(l1_fee > U256::ZERO);
+            let required = candidate.cost().checked_add(l1_fee).unwrap();
+            let balance = required - U256::from(shortfall);
+            provider.add_account(sender, ExtendedAccount::new(0, balance));
+            let outcome =
+                validator(provider, snapshot).validate_one(TransactionOrigin::External, candidate);
+            if shortfall == 0 {
+                assert!(outcome.is_valid(), "{outcome:?}");
+            } else {
+                assert!(matches!(
+                    outcome,
+                    TransactionValidationOutcome::Invalid(_, error)
+                        if matches!(error, reth_transaction_pool::error::InvalidPoolTransactionError::Consensus(
+                            InvalidTransactionError::InsufficientFunds(_)
+                        ))
+                ));
+            }
+        }
+    }
+
+    #[test]
     fn disabled_validator_bypasses_only_l1_fee_state() {
         let provider = provider(DOGEOS_CHIKYU.clone());
         let sender = Address::repeat_byte(0x33);
@@ -1191,10 +1230,9 @@ mod tests {
             EthTransactionValidatorBuilder::new(provider, ScrollEvmConfig::dogeos(chain_spec))
                 .no_eip4844()
                 .build(InMemoryBlobStore::default());
-        let validator = DogeosTransactionValidator::disabled(inner, true);
+        let validator = DogeosTransactionValidator::disabled(inner);
 
         assert!(!validator.requires_l1_data_gas_fee());
-        assert!(validator.requires_l1_data_fee_buffer());
         assert!(
             validator
                 .validate_one(TransactionOrigin::External, transaction(sender))
@@ -1217,7 +1255,7 @@ mod tests {
         let checks = Arc::new(AtomicUsize::new(0));
         let observed = checks.clone();
         let validator =
-            DogeosTransactionValidator::disabled(inner, false).with_admission_check(move |_| {
+            DogeosTransactionValidator::disabled(inner).with_admission_check(move |_| {
                 observed.fetch_add(1, Ordering::SeqCst);
                 Err(Box::new(crate::CodeWitnessValidationError::CodeBytes {
                     observed: 33,
