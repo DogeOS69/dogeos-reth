@@ -1,6 +1,6 @@
 # DogeOS Reth 2 Migration TODO
 
-Last updated: 2026-08-13
+Last updated: 2026-10-20 (Chikyu genesis and schedule)
 
 This list tracks the remaining work required to qualify and cut over to the standalone DogeOS Reth
 2 node. Completed migration evidence is recorded in [CAPABILITY_MATRIX.md](CAPABILITY_MATRIX.md),
@@ -10,16 +10,16 @@ This list tracks the remaining work required to qualify and cut over to the stan
 ## P0 — Release Blockers
 
 - [x] **Separate the Chikyu hardfork schedule and restore custom-genesis parsing.**
-  - Chikyu is Feynman-active from genesis; Galileo, Galileo V2, and Tsuki fail closed until an
-    authoritative activation timestamp is published.
+  - Chikyu is Feynman-active from genesis. The operator-provided network genesis now supplies
+    Galileo/Galileo V2 at `1790030800` and Tsuki at `1790030900`.
   - Public checkpoint `0x676c32` confirms the Feynman oracle remains installed, the Galileo marker
     is zero, and the Tsuki NativeDogeToken predeploy is absent.
   - Custom genesis files preserve numeric, decimal-string, and hexadecimal fork timestamps.
   - See [CHIKYU_HARDFORK_SCHEDULE.md](CHIKYU_HARDFORK_SCHEDULE.md) and the frozen fixture.
-  - **Re-opened follow-up (2026-08-12):** operations report Chikyu has since activated Tsuki
-    directly from Feynman. The built-in schedule still fails closed; encoding the operator-owned
-    activation timestamp, refreshing the frozen fixture, and qualifying replay through the
-    boundary is a release blocker.
+  - **Veridise 9991 (2026-10-20):** built-in Chikyu now computes its genesis hash and parses
+    its configuration from the network document, matching custom-file loading. The erroneous
+    sealed hash and L1 chain ID are corrected, and the schedule fixture is refreshed.
+    Historical replay through the transitions remains a separate qualification item below.
 
 - [x] **Integrate the RocksDB synchronous-write durability fix.**
   - The selected `DogeOS69/reth` revision `972366a0bfc11cf6a0d5dc79d5e779cd81e32232`

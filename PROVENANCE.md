@@ -35,10 +35,11 @@ them against the pinned oracle checkout before an extraction changes them.
 | `crates/scroll/chainspec/res/genesis/chikyu_dogeos.json` | `c6effe795d7a5b000f07167ca1c97b6fa8c428acfdcf65641ee6bf9e4b32390b` |
 | `crates/scroll/chainspec/res/genesis/dev.json` | `2e450321d7bf396ca9597d86e1cc5e603065e1ee78663f4b3b85d8265ba92619` |
 
-These hashes address the *oracle-side* files. The repository-side Chikyu
-genesis intentionally diverges from the oracle copy: the incorrect
-`tsukiTime: 0` field was removed (see `CHIKYU_HARDFORK_SCHEDULE.md`), which
-changes the file hash without changing the genesis header.
+These hashes address the *oracle-side* files. The repository-side Chikyu genesis
+uses the network document supplied by Akase on 2026-10-20, including the actual
+Galileo/Galileo V2/Tsuki timestamps and L1 configuration. Its header fields and
+allocation match the previous repository document, so the computed genesis header
+is unchanged. See `CHIKYU_HARDFORK_SCHEDULE.md` for the source and qualification scope.
 
 The oracle checkout does not contain a fixture generator or a complete
 differential replay corpus. This repository now freezes the initial byte-level
