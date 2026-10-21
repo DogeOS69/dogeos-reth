@@ -203,7 +203,7 @@ impl HeaderValidator<alloy_consensus::Header> for DogeosConsensus {
                 timestamp: header.timestamp(),
             });
         }
-        validate_parent_gas_limit(header.header(), parent.header())
+        validate_gas_limit_against_parent(header.gas_limit(), parent.gas_limit())
     }
 }
 
@@ -246,28 +246,29 @@ pub fn validate_l1_messages<'a>(
     Ok(())
 }
 
-fn validate_parent_gas_limit(
-    header: &alloy_consensus::Header,
-    parent: &alloy_consensus::Header,
+/// Validate the gas-limit relationship using values authenticated by headers or proof inputs.
+pub fn validate_gas_limit_against_parent(
+    gas_limit: u64,
+    parent_gas_limit: u64,
 ) -> Result<(), ConsensusError> {
-    let diff = header.gas_limit().abs_diff(parent.gas_limit());
-    let limit = parent.gas_limit() / GAS_LIMIT_BOUND_DIVISOR;
+    let diff = gas_limit.abs_diff(parent_gas_limit);
+    let limit = parent_gas_limit / GAS_LIMIT_BOUND_DIVISOR;
     if diff > limit {
-        return if header.gas_limit() > parent.gas_limit() {
+        return if gas_limit > parent_gas_limit {
             Err(ConsensusError::GasLimitInvalidIncrease {
-                parent_gas_limit: parent.gas_limit(),
-                child_gas_limit: header.gas_limit(),
+                parent_gas_limit: parent_gas_limit,
+                child_gas_limit: gas_limit,
             })
         } else {
             Err(ConsensusError::GasLimitInvalidDecrease {
-                parent_gas_limit: parent.gas_limit(),
-                child_gas_limit: header.gas_limit(),
+                parent_gas_limit: parent_gas_limit,
+                child_gas_limit: gas_limit,
             })
         };
     }
-    if header.gas_limit() < MINIMUM_GAS_LIMIT {
+    if gas_limit < MINIMUM_GAS_LIMIT {
         return Err(ConsensusError::GasLimitInvalidMinimum {
-            child_gas_limit: header.gas_limit(),
+            child_gas_limit: gas_limit,
         });
     }
     Ok(())
