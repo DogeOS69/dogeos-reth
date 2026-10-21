@@ -36,7 +36,7 @@ pub const DOGEOS_MAINNET_L1_CONFIG: L1Config = L1Config {
 
 /// Canonical header hash computed from the frozen DogeOS mainnet genesis document.
 pub const DOGEOS_MAINNET_GENESIS_HASH: B256 =
-    b256!("663e999bc2ffcef537120677b91ab85fbae8db1be456a4928b99def3dc6b8347");
+    b256!("7625074f5aa1dcf0e4df0e1061a5a3cfa0b599e221efe1d7acb7ceaceffe4039");
 
 pub const DOGEOS_CHIKYU_L1_MESSAGE_QUEUE_ADDRESS: Address =
     address!("3396BeD5adB7d83CC6C424264d229478556d3C02");
