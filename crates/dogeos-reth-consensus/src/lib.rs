@@ -183,6 +183,9 @@ impl HeaderValidator<alloy_consensus::Header> for DogeosConsensus {
         {
             return Err(DogeosConsensusError::BlobFieldsPresent.into());
         }
+        // A proof guest has no wall clock. Future-block admission is a host check; all
+        // deterministic header rules below and above also apply inside the guest.
+        #[cfg(not(target_os = "zkvm"))]
         validate_header_timestamp(header)?;
         validate_header_gas(header)?;
         Ok(())
@@ -204,6 +207,7 @@ impl HeaderValidator<alloy_consensus::Header> for DogeosConsensus {
     }
 }
 
+#[cfg(not(target_os = "zkvm"))]
 fn validate_header_timestamp(header: &alloy_consensus::Header) -> Result<(), ConsensusError> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
