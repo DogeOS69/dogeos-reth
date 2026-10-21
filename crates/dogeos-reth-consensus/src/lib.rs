@@ -256,12 +256,12 @@ pub fn validate_gas_limit_against_parent(
     if diff > limit {
         return if gas_limit > parent_gas_limit {
             Err(ConsensusError::GasLimitInvalidIncrease {
-                parent_gas_limit: parent_gas_limit,
+                parent_gas_limit,
                 child_gas_limit: gas_limit,
             })
         } else {
             Err(ConsensusError::GasLimitInvalidDecrease {
-                parent_gas_limit: parent_gas_limit,
+                parent_gas_limit,
                 child_gas_limit: gas_limit,
             })
         };
