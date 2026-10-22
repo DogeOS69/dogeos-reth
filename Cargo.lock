@@ -2855,6 +2855,7 @@ dependencies = [
  "revm",
  "revm-scroll",
  "serde",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -2897,6 +2898,7 @@ dependencies = [
  "reth-payload-primitives",
  "reth-primitives-traits",
  "reth-provider",
+ "reth-revm",
  "reth-rpc",
  "reth-rpc-builder",
  "reth-rpc-convert",

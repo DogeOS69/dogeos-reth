@@ -1,7 +1,9 @@
 //! DogeOS payload-building policy and forced-transaction boundary.
 
 mod config;
-pub use config::{MIN_TRANSACTION_DATA_SIZE, PayloadBuildingBreaker, ScrollBuilderConfig};
+pub use config::{
+    MIN_TRANSACTION_DATA_SIZE, PayloadBuildingBreaker, ScrollBuilderConfig, next_block_gas_limit,
+};
 mod forced;
 pub use forced::decode_forced_transactions;
 pub(crate) use forced::forced_transactions_da_bytes;

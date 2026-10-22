@@ -8,8 +8,10 @@ pub const SCROLL_FEE_VAULT_ADDRESS: Address = address!("530000000000000000000000
 /// Maximum transaction payload size produced by a DogeOS block.
 pub const MAX_TX_PAYLOAD_BYTES_PER_BLOCK: usize = 120 * 1024;
 
-/// Feynman EIP-1559 parameters.
-pub const DOGEOS_BASE_FEE_PARAMS_FEYNMAN: BaseFeeParams = BaseFeeParams::new(8, 2);
+/// Compatibility default for inherited header-only Reth interfaces.
+///
+/// Payload production uses node-local sequencer policy instead of this chainspec value.
+pub const DOGEOS_BASE_FEE_PARAMS_COMPAT: BaseFeeParams = BaseFeeParams::new(512, 10);
 
 /// DogeOS development-network L1 configuration.
 pub const DOGEOS_DEV_L1_CONFIG: L1Config = L1Config {
