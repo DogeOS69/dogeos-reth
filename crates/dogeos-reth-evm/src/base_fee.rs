@@ -47,14 +47,19 @@ impl ScrollBaseFeeParent {
 
 /// What the Feynman+ base-fee rule should do for the block an executor is about to run.
 ///
-/// Fails closed by default: a context nobody filled in cannot quietly skip the rule.
+/// Opaque on purpose. Only [`ScrollBaseFeeRule::check`] and
+/// [`ScrollBaseFeeRule::for_parent_header`] can be called from outside this crate, so a caller
+/// elsewhere — the stateless block verifier, for instance — can ask for the rule to run or get
+/// a context that fails closed, but can never build one that skips it. The variant that skips
+/// the rule belongs to block building, which lives here.
+///
+/// The default fails closed: a context nobody filled in cannot quietly skip the rule.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ScrollBaseFeeRule {
+pub struct ScrollBaseFeeRule(pub(crate) BaseFeeRuleKind);
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum BaseFeeRuleKind {
     /// The block has a header, and its base fee is checked against these parent inputs.
-    ///
-    /// Produced by `ConfigureEvm::context_for_block_with_parent` and
-    /// `ConfigureEngineEvm::context_for_payload_with_parent`, the two entry points every import
-    /// path goes through.
     Check(ScrollBaseFeeParent),
     /// The block has a header but the caller offered no usable parent, so the rule cannot run.
     /// Executing a Feynman+ block to completion in this state is an error.
@@ -62,11 +67,36 @@ pub enum ScrollBaseFeeRule {
     MissingParent,
     /// There is no header to check: the block is being built or simulated and its base fee is
     /// the caller's own, from the payload attributes.
-    ///
-    /// Produced only by `ConfigureEvm::context_for_next_block`, which by construction has no
-    /// block to validate — it is handed a parent and attributes, not a block. No import path can
-    /// reach it: importers build their context from a block or a payload.
     NoHeaderToCheck,
+}
+
+impl ScrollBaseFeeRule {
+    /// Check the block's base fee against these parent inputs.
+    ///
+    /// What every import path asks for.
+    pub const fn check(parent: ScrollBaseFeeParent) -> Self {
+        Self(BaseFeeRuleKind::Check(parent))
+    }
+
+    /// Check the block's base fee against this parent header, or fail closed if the header
+    /// carries no base fee — which no Feynman+ header may be.
+    pub fn for_parent_header<H: BlockHeader>(header: &H) -> Self {
+        ScrollBaseFeeParent::from_header(header).map_or_else(Self::missing_parent, Self::check)
+    }
+
+    /// Fail closed: there is a header to check but no parent to check it against.
+    pub const fn missing_parent() -> Self {
+        Self(BaseFeeRuleKind::MissingParent)
+    }
+
+    /// Skip the rule: the block is being built or simulated, so there is no header whose base
+    /// fee could be wrong.
+    ///
+    /// Crate-visible, and produced only by `ConfigureEvm::context_for_next_block`. An importer
+    /// starts from a block or a payload and so cannot reach it.
+    pub(crate) const fn no_header_to_check() -> Self {
+        Self(BaseFeeRuleKind::NoHeaderToCheck)
+    }
 }
 
 /// State-aware Feynman+ L2 base-fee calculator.
@@ -170,7 +200,7 @@ pub fn next_block_base_fee_with_overhead<ChainSpec: EthChainSpec>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dogeos_chainspec::DOGEOS_MAINNET;
+    use dogeos_chainspec::{DOGEOS_CHIKYU, DOGEOS_MAINNET};
     use revm::database::{EmptyDB, State, states::plain_account::PlainStorage};
 
     /// Mainnet-scale block gas limit; with elasticity 10 the target is 3M gas.
@@ -211,87 +241,113 @@ mod tests {
         )?)
     }
 
-    /// Parity vectors shared with the guest's base-fee rule (sbv) and the payload builder.
+    /// The parity vectors, shared with the guest's base-fee rule (sbv) and the payload builder,
+    /// live in a committed file so sbv can read the same rows instead of copying them:
+    /// `crates/dogeos-reth-evm/testdata/base-fee-parity-vectors.json`.
     ///
-    /// Every row is `(overhead, parent base fee, parent gas used, expected child base fee)` on
-    /// mainnet at a Tsuki timestamp: denominator 48, elasticity 10, 30M gas limit, so the gas
-    /// target is 3M. An overhead of zero means slot 101 is unset and the default applies.
-    /// Keep these in step with the guest; a divergence here is a chain split.
-    const PARITY_VECTORS: &[(u64, u64, u64, u64)] = &[
-        // Unset slot: the default overhead, idle, at target and full.
-        (0, 15_680_000, 0, 15_680_000),
-        (0, 15_680_000, GAS_TARGET, 15_680_000),
-        (
-            0,
-            15_680_000 + 1_000_000_000,
-            GAS_TARGET,
-            15_680_000 + 1_000_000_000,
-        ),
-        (
-            0,
-            15_680_000 + 1_000_000_000,
-            GAS_LIMIT,
-            15_680_000 + 1_187_500_000,
-        ),
-        (0, 15_680_000 + 1_000_000_000, 0, 15_680_000 + 979_166_667),
-        // A configured overhead replaces the default, and the fee never falls below it.
-        (1, 1_000_000_000, GAS_TARGET, 1_000_000_000),
-        (
-            OVERHEAD,
-            OVERHEAD + 1_000_000_000,
-            2 * GAS_TARGET,
-            OVERHEAD + 1_020_833_333,
-        ),
-        // Nothing above the overhead to grow, yet EIP-1559 still bumps a full block by one wei.
-        (OVERHEAD, OVERHEAD, GAS_LIMIT, OVERHEAD + 1),
-        (OVERHEAD, OVERHEAD, 0, OVERHEAD),
-        // A parent below its own overhead saturates to zero before the EIP-1559 step.
-        (OVERHEAD, OVERHEAD - 1, GAS_LIMIT, OVERHEAD + 1),
-        (OVERHEAD, 0, GAS_LIMIT, OVERHEAD + 1),
-        // The cap holds on the way up and is itself a fixed point.
-        (OVERHEAD, MAX_L2_BASE_FEE, GAS_LIMIT, MAX_L2_BASE_FEE),
-        (OVERHEAD, MAX_L2_BASE_FEE - 1, GAS_LIMIT, MAX_L2_BASE_FEE),
-        (0, MAX_L2_BASE_FEE, GAS_TARGET, MAX_L2_BASE_FEE),
-    ];
+    /// Each row is one `(chain, timestamp, slot 101, parent)` input and the base fee the rule
+    /// must produce. A divergence between this crate and the guest on any row is a chain split,
+    /// so the test checks both of this crate's entry points — the one that reads the overhead
+    /// from state and the one handed already-extracted inputs — against every row.
+    ///
+    /// Run with `UPDATE_PARITY_VECTORS=1` to rewrite the expectations from this implementation;
+    /// a reviewer then reads the diff.
+    const PARITY_VECTORS_PATH: &str = "testdata/base-fee-parity-vectors.json";
+
+    fn parity_spec(chain: &str) -> dogeos_chainspec::DogeosChainSpec {
+        match chain {
+            // Tsuki from genesis: denominator 48, elasticity 10.
+            "mainnet" => (**DOGEOS_MAINNET).clone(),
+            // Never Tsuki: the Feynman parameters, denominator 8, elasticity 2.
+            "chikyu" => (**DOGEOS_CHIKYU).clone(),
+            // Mainnet with the fee parameters delayed past the Tsuki execution transition, so
+            // rows on either side of `tsuki_fee_params_time` cross the boundary.
+            "delayed-fee-params" => {
+                let mut genesis = DOGEOS_MAINNET.genesis().clone();
+                genesis
+                    .config
+                    .extra_fields
+                    .insert("tsukiTime".into(), 0.into());
+                genesis
+                    .config
+                    .extra_fields
+                    .insert("tsukiFeeParamsTime".into(), 100.into());
+                dogeos_chainspec::DogeosChainSpec::from_custom_genesis(genesis)
+            }
+            other => panic!("unknown parity chain {other}"),
+        }
+    }
 
     #[test]
     fn parity_vectors_hold_for_both_entry_points() -> eyre::Result<()> {
-        let provider = ScrollBaseFeeProvider::new(DOGEOS_MAINNET.clone());
-        for &(overhead, parent_base_fee, gas_used, expected) in PARITY_VECTORS {
-            let parent = parent(parent_base_fee, gas_used);
-            let label = format!("overhead={overhead}, parent={parent_base_fee}, gas={gas_used}");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(PARITY_VECTORS_PATH);
+        let mut document: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+        let update = std::env::var_os("UPDATE_PARITY_VECTORS").is_some();
+
+        for row in document["vectors"]
+            .as_array_mut()
+            .expect("vectors is an array")
+        {
+            let chain = row["chain"].as_str().expect("chain").to_owned();
+            let spec = parity_spec(&chain);
+            let timestamp = row["timestamp"].as_u64().expect("timestamp");
+            let slot_101 = U256::from_str_radix(
+                row["slot_101"]
+                    .as_str()
+                    .expect("slot_101")
+                    .trim_start_matches("0x"),
+                16,
+            )?;
+            let inputs = ScrollBaseFeeParent {
+                base_fee_per_gas: row["parent_base_fee"].as_u64().expect("parent_base_fee"),
+                gas_used: row["parent_gas_used"].as_u64().expect("parent_gas_used"),
+                gas_limit: row["parent_gas_limit"].as_u64().expect("parent_gas_limit"),
+            };
+            let label = format!("{chain} {}", row["note"].as_str().unwrap_or_default());
 
             // Through the state, exactly as the payload builder calls it.
-            let mut state = if overhead == 0 {
-                State::builder()
-                    .with_database(EmptyDB::default())
-                    .with_bundle_update()
-                    .build()
-            } else {
-                state_with_overhead(overhead)
-            };
-            assert_eq!(
-                provider.next_block_base_fee(&mut state, &parent, 2)?,
-                expected,
-                "{label}"
-            );
+            let provider = ScrollBaseFeeProvider::new(spec.clone());
+            let mut state = State::builder()
+                .with_database(EmptyDB::default())
+                .with_bundle_update()
+                .build();
+            if slot_101 != U256::ZERO {
+                state.insert_account_with_storage(
+                    spec.config.l1_config.l2_system_config_address,
+                    Default::default(),
+                    PlainStorage::from_iter([(L2_BASE_FEE_OVERHEAD_SLOT, slot_101)]),
+                );
+            }
+            let mut header = parent(inputs.base_fee_per_gas, inputs.gas_used);
+            header.gas_limit = inputs.gas_limit;
+            header.timestamp = timestamp.saturating_sub(1);
+            let from_state = provider.next_block_base_fee(&mut state, &header, timestamp)?;
 
             // And from extracted inputs, as the block executor calls it.
-            let resolved = if overhead == 0 {
-                DEFAULT_BASE_FEE_OVERHEAD.saturating_to::<u64>()
-            } else {
-                overhead
-            };
+            let overhead = provider.base_fee_overhead(&mut state)?;
+            let from_parts = next_block_base_fee_with_overhead(&spec, &inputs, overhead, timestamp);
+            assert_eq!(from_state, from_parts, "{label}: entry points disagree");
             assert_eq!(
-                next_block_base_fee_with_overhead(
-                    &**DOGEOS_MAINNET,
-                    &ScrollBaseFeeParent::from_header(&parent).expect("parent has a base fee"),
-                    resolved,
-                    2,
-                ),
-                expected,
-                "{label}"
+                overhead,
+                row["overhead"].as_u64().expect("overhead"),
+                "{label}: overhead"
             );
+
+            if update {
+                row["expected_base_fee"] = from_state.into();
+            } else {
+                assert_eq!(
+                    from_state,
+                    row["expected_base_fee"]
+                        .as_u64()
+                        .expect("expected_base_fee"),
+                    "{label}"
+                );
+            }
+        }
+
+        if update {
+            std::fs::write(&path, serde_json::to_string_pretty(&document)? + "\n")?;
         }
         Ok(())
     }
@@ -319,6 +375,32 @@ mod tests {
             MAX_L2_BASE_FEE
         );
         Ok(())
+    }
+
+    /// Everything a caller outside this crate can build either runs the rule or fails closed.
+    /// The variant that skips it is crate-visible, so a downstream crate — the stateless block
+    /// verifier, say — cannot turn the rule off while fixing a compile error.
+    #[test]
+    fn only_enforcing_rules_are_reachable_from_outside_the_crate() {
+        let parent = parent(1_000_000_000, GAS_TARGET);
+        assert_eq!(
+            ScrollBaseFeeRule::for_parent_header(&parent),
+            ScrollBaseFeeRule::check(ScrollBaseFeeParent::from_header(&parent).unwrap())
+        );
+
+        // A header with no base fee is not a Feynman+ header; it fails closed.
+        let mut no_base_fee = parent;
+        no_base_fee.base_fee_per_gas = None;
+        assert_eq!(
+            ScrollBaseFeeRule::for_parent_header(&no_base_fee),
+            ScrollBaseFeeRule::missing_parent()
+        );
+
+        // And so does a rule nobody set.
+        assert_eq!(
+            ScrollBaseFeeRule::default(),
+            ScrollBaseFeeRule::missing_parent()
+        );
     }
 
     #[test]

@@ -5,6 +5,7 @@ use crate::{
     FromTxWithCompressionInfo, ScrollBaseFeeRule, ScrollDefaultPrecompilesFactory, ScrollEvm,
     ScrollEvmFactory, ScrollPrecompilesFactory, ScrollTransactionIntoTxEnv,
     ToTxWithCompressionInfo,
+    base_fee::BaseFeeRuleKind,
     system_caller::ScrollSystemCaller,
     transitions::{apply_feynman_hard_fork, apply_galileo_v2_hard_fork, apply_tsuki_hard_fork},
 };
@@ -63,15 +64,30 @@ impl<H> TxResult for ScrollTxResult<H> {
 pub type ScrollTxCompressionInfos = Vec<ScrollTxCompressionInfo>;
 
 /// Context for Scroll Block Execution.
+///
+/// Non-exhaustive so that it is built through [`ScrollBlockExecutionCtx::new`]: a caller
+/// outside this crate can only pair a parent hash with a rule it is allowed to ask for, and
+/// adding a field later does not silently leave it at a default somewhere else.
 #[derive(Debug, Default, Clone)]
+#[non_exhaustive]
 pub struct ScrollBlockExecutionCtx {
     /// Parent block hash.
     pub parent_hash: B256,
     /// What the Feynman+ base-fee rule should do for this block.
     ///
-    /// Defaults to [`ScrollBaseFeeRule::MissingParent`], so a context nobody filled in fails
+    /// Defaults to [`ScrollBaseFeeRule::missing_parent`], so a context nobody filled in fails
     /// closed rather than skipping the rule.
     pub base_fee: ScrollBaseFeeRule,
+}
+
+impl ScrollBlockExecutionCtx {
+    /// Builds a context for executing the child of `parent_hash` under `base_fee`.
+    pub const fn new(parent_hash: B256, base_fee: ScrollBaseFeeRule) -> Self {
+        Self {
+            parent_hash,
+            base_fee,
+        }
+    }
 }
 
 /// Block executor for Scroll.
@@ -210,14 +226,14 @@ where
             return Ok(());
         }
 
-        let parent = match self.ctx.base_fee {
-            ScrollBaseFeeRule::NoHeaderToCheck => return Ok(()),
-            ScrollBaseFeeRule::MissingParent => {
+        let parent = match self.ctx.base_fee.0 {
+            BaseFeeRuleKind::NoHeaderToCheck => return Ok(()),
+            BaseFeeRuleKind::MissingParent => {
                 return Err(BlockExecutionError::msg(
                     "cannot check the base fee: the caller supplied no parent header",
                 ));
             }
-            ScrollBaseFeeRule::Check(parent) => parent,
+            BaseFeeRuleKind::Check(parent) => parent,
         };
         let Some(overhead) = self.base_fee_overhead else {
             return Err(BlockExecutionError::msg(
@@ -586,14 +602,14 @@ mod tests {
 
     /// An execution context whose parent satisfies the base-fee rule for [`TEST_BASE_FEE`].
     fn test_ctx() -> ScrollBlockExecutionCtx {
-        ScrollBlockExecutionCtx {
-            parent_hash: B256::ZERO,
-            base_fee: ScrollBaseFeeRule::Check(ScrollBaseFeeParent {
+        ScrollBlockExecutionCtx::new(
+            B256::ZERO,
+            ScrollBaseFeeRule::check(ScrollBaseFeeParent {
                 base_fee_per_gas: TEST_BASE_FEE,
                 gas_used: TEST_GAS_LIMIT / 10,
                 gas_limit: TEST_GAS_LIMIT,
             }),
-        }
+        )
     }
 
     fn empty_state_evm()
@@ -722,7 +738,7 @@ mod tests {
         // One wei off the rule's output on either side.
         for delta in [-1i64, 1] {
             let mut ctx = test_ctx();
-            let ScrollBaseFeeRule::Check(parent) = &mut ctx.base_fee else {
+            let BaseFeeRuleKind::Check(parent) = &mut ctx.base_fee.0 else {
                 unreachable!("test_ctx carries a parent")
             };
             parent.base_fee_per_gas = parent.base_fee_per_gas.wrapping_add_signed(delta);
@@ -740,7 +756,7 @@ mod tests {
     #[test]
     fn a_wrong_base_fee_is_a_validation_error() {
         let mut ctx = test_ctx();
-        let ScrollBaseFeeRule::Check(parent) = &mut ctx.base_fee else {
+        let BaseFeeRuleKind::Check(parent) = &mut ctx.base_fee.0 else {
             unreachable!("test_ctx carries a parent")
         };
         parent.base_fee_per_gas += 1;
@@ -754,20 +770,14 @@ mod tests {
     /// simulation is free to zero the base fee or override it.
     #[test]
     fn a_block_with_no_header_to_check_skips_the_rule() {
-        let ctx = ScrollBlockExecutionCtx {
-            parent_hash: B256::ZERO,
-            base_fee: ScrollBaseFeeRule::NoHeaderToCheck,
-        };
+        let ctx = ScrollBlockExecutionCtx::new(B256::ZERO, ScrollBaseFeeRule::no_header_to_check());
         // A base fee that no parent could have produced, as `validation: false` would give.
         assert!(execute_with_overhead(ctx, 0, None).is_ok());
     }
 
     #[test]
     fn a_block_without_parent_inputs_is_rejected() {
-        let ctx = ScrollBlockExecutionCtx {
-            parent_hash: B256::ZERO,
-            base_fee: ScrollBaseFeeRule::MissingParent,
-        };
+        let ctx = ScrollBlockExecutionCtx::new(B256::ZERO, ScrollBaseFeeRule::missing_parent());
         let err = execute_empty_block(ctx, None).unwrap_err();
         assert_eq!(
             err.to_string(),
@@ -793,10 +803,8 @@ mod tests {
 
     #[test]
     fn an_unset_slot_means_the_default_overhead() {
-        let ctx = ScrollBlockExecutionCtx {
-            parent_hash: B256::ZERO,
-            base_fee: ScrollBaseFeeRule::Check(full_block_parent()),
-        };
+        let ctx =
+            ScrollBlockExecutionCtx::new(B256::ZERO, ScrollBaseFeeRule::check(full_block_parent()));
         let executor = ScrollBlockExecutor::new(
             empty_state_evm_with_base_fee(FULL_BLOCK_CHILD_BASE_FEE),
             ctx,
@@ -813,10 +821,8 @@ mod tests {
         let configured = DEFAULT_OVERHEAD + 1;
         let expected = FULL_BLOCK_CHILD_BASE_FEE - 1;
 
-        let ctx = ScrollBlockExecutionCtx {
-            parent_hash: B256::ZERO,
-            base_fee: ScrollBaseFeeRule::Check(full_block_parent()),
-        };
+        let ctx =
+            ScrollBlockExecutionCtx::new(B256::ZERO, ScrollBaseFeeRule::check(full_block_parent()));
         assert!(
             execute_with_overhead(ctx.clone(), expected, Some(configured)).is_ok(),
             "the configured overhead was not used"
@@ -918,10 +924,7 @@ mod tests {
                 B256::ZERO,
             ))
         };
-        let ctx = ScrollBlockExecutionCtx {
-            parent_hash: B256::ZERO,
-            base_fee: ScrollBaseFeeRule::Check(parent),
-        };
+        let ctx = ScrollBlockExecutionCtx::new(B256::ZERO, ScrollBaseFeeRule::check(parent));
         let result = ScrollBlockExecutor::new(
             evm_over(&mut state, under_old),
             ctx,
@@ -952,10 +955,7 @@ mod tests {
             next_block_base_fee_with_overhead(&**DOGEOS_MAINNET, &parent_n, NEW_OVERHEAD, 0);
         assert_ne!(stale, fresh);
 
-        let ctx = ScrollBlockExecutionCtx {
-            parent_hash: B256::ZERO,
-            base_fee: ScrollBaseFeeRule::Check(parent_n),
-        };
+        let ctx = ScrollBlockExecutionCtx::new(B256::ZERO, ScrollBaseFeeRule::check(parent_n));
         let err = ScrollBlockExecutor::new(
             evm_over(&mut state, stale),
             ctx.clone(),

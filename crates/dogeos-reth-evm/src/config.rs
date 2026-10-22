@@ -1,8 +1,7 @@
 use crate::{
-    ScrollBaseFeeParent, ScrollBaseFeeRule, ScrollBlockAssembler, ScrollBlockExecutionCtx,
-    ScrollBlockExecutorFactory, ScrollDefaultPrecompilesFactory, ScrollPrecompilesFactory,
-    ScrollReceiptBuilder, ScrollRethReceiptBuilder, ScrollTransactionIntoTxEnv,
-    spec_id_at_timestamp_and_number,
+    ScrollBaseFeeRule, ScrollBlockAssembler, ScrollBlockExecutionCtx, ScrollBlockExecutorFactory,
+    ScrollDefaultPrecompilesFactory, ScrollPrecompilesFactory, ScrollReceiptBuilder,
+    ScrollRethReceiptBuilder, ScrollTransactionIntoTxEnv, spec_id_at_timestamp_and_number,
 };
 use alloc::sync::Arc;
 use alloy_consensus::{Block, BlockBody, BlockHeader, Header};
@@ -94,10 +93,10 @@ where
         &self,
         payload: &ExecutionData,
     ) -> Result<ScrollBlockExecutionCtx, Self::Error> {
-        Ok(ScrollBlockExecutionCtx {
-            parent_hash: payload.parent_hash(),
-            base_fee: ScrollBaseFeeRule::MissingParent,
-        })
+        Ok(ScrollBlockExecutionCtx::new(
+            payload.parent_hash(),
+            ScrollBaseFeeRule::missing_parent(),
+        ))
     }
 
     fn context_for_payload_with_parent(
@@ -105,10 +104,10 @@ where
         payload: &ExecutionData,
         parent: &SealedHeader<Header>,
     ) -> Result<ScrollBlockExecutionCtx, Self::Error> {
-        Ok(ScrollBlockExecutionCtx {
-            parent_hash: payload.parent_hash(),
-            base_fee: base_fee_rule_for(payload.parent_hash(), parent),
-        })
+        Ok(ScrollBlockExecutionCtx::new(
+            payload.parent_hash(),
+            base_fee_rule_for(payload.parent_hash(), parent),
+        ))
     }
 
     fn tx_iterator_for_payload(
@@ -276,10 +275,10 @@ where
         &self,
         block: &SealedBlock<Block<N::SignedTx>>,
     ) -> Result<ScrollBlockExecutionCtx, Self::Error> {
-        Ok(ScrollBlockExecutionCtx {
-            parent_hash: block.header().parent_hash(),
-            base_fee: ScrollBaseFeeRule::MissingParent,
-        })
+        Ok(ScrollBlockExecutionCtx::new(
+            block.header().parent_hash(),
+            ScrollBaseFeeRule::missing_parent(),
+        ))
     }
 
     fn context_for_block_with_parent(
@@ -287,10 +286,10 @@ where
         block: &SealedBlock<Block<N::SignedTx>>,
         parent: &SealedHeader<Header>,
     ) -> Result<ScrollBlockExecutionCtx, Self::Error> {
-        Ok(ScrollBlockExecutionCtx {
-            parent_hash: block.header().parent_hash(),
-            base_fee: base_fee_rule_for(block.header().parent_hash(), parent),
-        })
+        Ok(ScrollBlockExecutionCtx::new(
+            block.header().parent_hash(),
+            base_fee_rule_for(block.header().parent_hash(), parent),
+        ))
     }
 
     fn context_for_next_block(
@@ -300,10 +299,10 @@ where
     ) -> Result<ScrollBlockExecutionCtx, Self::Error> {
         // Building, not validating: there is no header whose base fee could be wrong. The
         // caller's attributes carry the fee, and the builder derived it from this very parent.
-        Ok(ScrollBlockExecutionCtx {
-            parent_hash: parent.hash(),
-            base_fee: ScrollBaseFeeRule::NoHeaderToCheck,
-        })
+        Ok(ScrollBlockExecutionCtx::new(
+            parent.hash(),
+            ScrollBaseFeeRule::no_header_to_check(),
+        ))
     }
 }
 
@@ -313,15 +312,15 @@ where
 /// fee against it; the executor then fails closed on the missing parent.
 fn base_fee_rule_for(parent_hash: B256, parent: &SealedHeader<Header>) -> ScrollBaseFeeRule {
     if parent.hash() != parent_hash {
-        return ScrollBaseFeeRule::MissingParent;
+        return ScrollBaseFeeRule::missing_parent();
     }
-    ScrollBaseFeeParent::from_header(parent.header())
-        .map_or(ScrollBaseFeeRule::MissingParent, ScrollBaseFeeRule::Check)
+    ScrollBaseFeeRule::for_parent_header(parent.header())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ScrollBaseFeeParent;
     use alloy_rpc_types_engine::{ExecutionPayload, ExecutionPayloadSidecar, ExecutionPayloadV1};
     use dogeos_chainspec::{DOGEOS_CHIKYU, DOGEOS_MAINNET};
 
@@ -369,7 +368,7 @@ mod tests {
         // Without the parent there are no inputs, and block execution fails closed.
         assert_eq!(
             config.context_for_block(&block).unwrap().base_fee,
-            ScrollBaseFeeRule::MissingParent
+            ScrollBaseFeeRule::missing_parent()
         );
 
         let ctx = config
@@ -377,7 +376,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             ctx.base_fee,
-            ScrollBaseFeeRule::Check(ScrollBaseFeeParent {
+            ScrollBaseFeeRule::check(ScrollBaseFeeParent {
                 base_fee_per_gas: 15_680_000,
                 gas_used: 3_000_000,
                 gas_limit: 30_000_000,
@@ -397,7 +396,7 @@ mod tests {
                 .context_for_block_with_parent(&block, &impostor)
                 .unwrap()
                 .base_fee,
-            ScrollBaseFeeRule::MissingParent
+            ScrollBaseFeeRule::missing_parent()
         );
     }
 
@@ -419,7 +418,7 @@ mod tests {
                 .context_for_next_block(&feynman_parent(), attributes)
                 .unwrap()
                 .base_fee,
-            ScrollBaseFeeRule::NoHeaderToCheck
+            ScrollBaseFeeRule::no_header_to_check()
         );
     }
 
@@ -573,6 +572,66 @@ mod tests {
                 .unwrap_err()
                 .to_string(),
             "cannot check the base fee: the caller supplied no parent header"
+        );
+    }
+
+    /// `newPayload` is the import path for both the Engine API and `scroll/1` gossip, and the
+    /// parent it is given is whatever the engine tree resolved — commonly a block that has been
+    /// `newPayload`-ed but not yet made canonical, so it exists only in the tree's own state and
+    /// never on disk. The context does not care where the header came from, only that it is the
+    /// payload's parent.
+    #[test]
+    fn a_payload_context_carries_the_parent_fee_inputs() {
+        let config = ScrollEvmConfig::dogeos(DOGEOS_MAINNET.clone());
+        let parent = feynman_parent();
+        let payload = |parent_hash| {
+            ExecutionData::new(
+                ExecutionPayload::V1(ExecutionPayloadV1 {
+                    parent_hash,
+                    fee_recipient: Address::ZERO,
+                    state_root: B256::ZERO,
+                    receipts_root: B256::ZERO,
+                    logs_bloom: alloy_primitives::Bloom::ZERO,
+                    prev_randao: B256::ZERO,
+                    block_number: 7,
+                    gas_limit: 30_000_000,
+                    gas_used: 0,
+                    timestamp: 1,
+                    extra_data: Default::default(),
+                    base_fee_per_gas: U256::from(15_680_000),
+                    block_hash: B256::ZERO,
+                    transactions: Vec::new(),
+                }),
+                ExecutionPayloadSidecar::none(),
+            )
+        };
+
+        assert_eq!(
+            config
+                .context_for_payload_with_parent(&payload(parent.hash()), &parent)
+                .unwrap()
+                .base_fee,
+            ScrollBaseFeeRule::check(ScrollBaseFeeParent {
+                base_fee_per_gas: 15_680_000,
+                gas_used: 3_000_000,
+                gas_limit: 30_000_000,
+            })
+        );
+
+        // Without a parent, and with a header that is not this payload's parent, it fails closed.
+        assert_eq!(
+            config
+                .context_for_payload(&payload(parent.hash()))
+                .unwrap()
+                .base_fee,
+            ScrollBaseFeeRule::missing_parent()
+        );
+        assert_eq!(
+            config
+                .context_for_payload_with_parent(&payload(B256::repeat_byte(0x99)), &parent)
+                .unwrap()
+                .base_fee,
+            ScrollBaseFeeRule::missing_parent()
         );
     }
 

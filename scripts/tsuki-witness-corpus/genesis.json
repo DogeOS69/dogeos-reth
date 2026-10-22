@@ -1,6 +1,6 @@
 {
   "config": {
-    "chainId": 1122099,
+    "chainId": 6281971,
     "homesteadBlock": 0,
     "eip150Block": 0,
     "eip150Hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
@@ -34,7 +34,7 @@
         "l1MessageQueueV2Address": "0x97E03805774DC6A8219F6c0a11c1998CC7F60990",
         "scrollChainAddress": "0x23834c0FcC397dDd8292174E99F95b93577a91DA",
         "systemContractAddress": "0x471Ff39bC44a2307CA0429060924bA60E9Ed4f40",
-        "l2SystemConfigAddress": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853",
+        "l2SystemConfigAddress": "0x2669B071E88e272CBDA1e12182D8C754CB737400",
         "numL1MessagesPerBlock": 10,
         "startL1Block": 0
       }
@@ -143,6 +143,10 @@
       "balance": "0x0",
       "nonce": "0x1",
       "code": "0x5b600056"
+    },
+    "0x2669b071e88e272cbda1e12182d8c754cb737400": {
+      "balance": "0x0",
+      "code": "0x60043560655500"
     }
   },
   "baseFeePerGas": "0x000000000000000000000000000000000000000000000000000000003b9aca00"
