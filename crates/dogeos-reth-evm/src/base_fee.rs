@@ -386,20 +386,38 @@ mod tests {
         Ok(())
     }
 
-    /// A context's rule cannot be lifted out of it and dropped into another, so the rule that
-    /// `context_for_next_block` carries — which skips the check, soundly, because the block is
-    /// being built rather than validated — cannot be moved onto an imported block.
+    /// Every context a crate outside this one can build runs the rule or fails closed. It can
+    /// reach [`ScrollBlockExecutionCtx::new`], but the only rules it can put in are the ones
+    /// below, and it cannot read the skipping rule back out of a context that carries one —
+    /// there is no accessor for the rule, so `new(hash, building_ctx.base_fee())` is not
+    /// available to it.
+    ///
+    /// What is still possible, and accepted: passing a whole `context_for_next_block` context
+    /// to the executor for an imported block. No import path does — every one of them builds
+    /// its context through `context_for_block_with_parent` or `context_for_payload_with_parent`
+    /// — and splitting building and import contexts by type is more machinery than the risk
+    /// warrants.
     #[test]
-    fn a_contexts_rule_is_not_reachable_from_outside_the_crate() {
-        let ctx = crate::ScrollBlockExecutionCtx::new(
-            alloy_primitives::B256::ZERO,
-            ScrollBaseFeeRule::no_header_to_check(),
-        );
-        // Readable, as a diagnostic...
-        assert_eq!(ctx.base_fee(), ScrollBaseFeeRule::no_header_to_check());
-        // ... but the field itself is crate-private, so this is the only way out of the crate,
-        // and there is no public constructor that takes the value back in.
-        assert_eq!(ctx.parent_hash(), alloy_primitives::B256::ZERO);
+    fn every_context_reachable_from_outside_the_crate_runs_the_rule() {
+        let header = parent(1_000_000_000, GAS_TARGET);
+        let mut no_base_fee = header.clone();
+        no_base_fee.base_fee_per_gas = None;
+
+        for rule in [
+            ScrollBaseFeeRule::check(ScrollBaseFeeParent::from_header(&header).unwrap()),
+            ScrollBaseFeeRule::for_parent_header(&header),
+            ScrollBaseFeeRule::for_parent_header(&no_base_fee),
+            ScrollBaseFeeRule::missing_parent(),
+            ScrollBaseFeeRule::default(),
+        ] {
+            let ctx = crate::ScrollBlockExecutionCtx::new(alloy_primitives::B256::ZERO, rule);
+            assert_ne!(
+                ctx.base_fee,
+                ScrollBaseFeeRule::no_header_to_check(),
+                "a publicly reachable context skipped the rule"
+            );
+            assert_eq!(ctx.parent_hash(), alloy_primitives::B256::ZERO);
+        }
     }
 
     /// Everything a caller outside this crate can build either runs the rule or fails closed.

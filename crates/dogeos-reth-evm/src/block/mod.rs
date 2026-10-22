@@ -91,13 +91,13 @@ impl ScrollBlockExecutionCtx {
     }
 
     /// The parent block hash this context was built for.
+    ///
+    /// There is deliberately no accessor for the rule. Handing it back out, with
+    /// [`ScrollBlockExecutionCtx::new`] to take it in again, would be a two-step way to move
+    /// the skipping rule that `context_for_next_block` carries onto an imported block. A hash
+    /// cannot carry a rule, so reading this one launders nothing.
     pub const fn parent_hash(&self) -> B256 {
         self.parent_hash
-    }
-
-    /// What the Feynman+ base-fee rule should do for this block.
-    pub const fn base_fee(&self) -> ScrollBaseFeeRule {
-        self.base_fee
     }
 }
 
