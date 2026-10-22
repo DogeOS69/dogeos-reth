@@ -1,5 +1,5 @@
 use crate::{
-    ScrollBlockAssembler, ScrollBlockExecutionCtx, ScrollBlockExecutorFactory,
+    ScrollBaseFeeParent, ScrollBlockAssembler, ScrollBlockExecutionCtx, ScrollBlockExecutorFactory,
     ScrollDefaultPrecompilesFactory, ScrollPrecompilesFactory, ScrollReceiptBuilder,
     ScrollRethReceiptBuilder, ScrollTransactionIntoTxEnv, spec_id_at_timestamp_and_number,
 };
@@ -95,6 +95,18 @@ where
     ) -> Result<ScrollBlockExecutionCtx, Self::Error> {
         Ok(ScrollBlockExecutionCtx {
             parent_hash: payload.parent_hash(),
+            base_fee_parent: None,
+        })
+    }
+
+    fn context_for_payload_with_parent(
+        &self,
+        payload: &ExecutionData,
+        parent: &SealedHeader<Header>,
+    ) -> Result<ScrollBlockExecutionCtx, Self::Error> {
+        Ok(ScrollBlockExecutionCtx {
+            parent_hash: payload.parent_hash(),
+            base_fee_parent: base_fee_parent_of(payload.parent_hash(), parent),
         })
     }
 
@@ -265,6 +277,18 @@ where
     ) -> Result<ScrollBlockExecutionCtx, Self::Error> {
         Ok(ScrollBlockExecutionCtx {
             parent_hash: block.header().parent_hash(),
+            base_fee_parent: None,
+        })
+    }
+
+    fn context_for_block_with_parent(
+        &self,
+        block: &SealedBlock<Block<N::SignedTx>>,
+        parent: &SealedHeader<Header>,
+    ) -> Result<ScrollBlockExecutionCtx, Self::Error> {
+        Ok(ScrollBlockExecutionCtx {
+            parent_hash: block.header().parent_hash(),
+            base_fee_parent: base_fee_parent_of(block.header().parent_hash(), parent),
         })
     }
 
@@ -275,8 +299,22 @@ where
     ) -> Result<ScrollBlockExecutionCtx, Self::Error> {
         Ok(ScrollBlockExecutionCtx {
             parent_hash: parent.hash(),
+            base_fee_parent: ScrollBaseFeeParent::from_header(parent.header()),
         })
     }
+}
+
+/// Extracts the base-fee rule's parent inputs, but only from the real parent.
+///
+/// The hash check keeps a caller that offers the wrong header from silently validating the
+/// base fee against it; the executor then fails closed on the missing inputs.
+fn base_fee_parent_of(
+    parent_hash: B256,
+    parent: &SealedHeader<Header>,
+) -> Option<ScrollBaseFeeParent> {
+    (parent.hash() == parent_hash)
+        .then(|| ScrollBaseFeeParent::from_header(parent.header()))
+        .flatten()
 }
 
 #[cfg(test)]
@@ -300,6 +338,172 @@ mod tests {
         assert_eq!(
             config.spec_id_at_timestamp_and_number(1_785_892_970, 6_777_906),
             ScrollSpecId::FEYNMAN
+        );
+    }
+
+    fn feynman_parent() -> SealedHeader<Header> {
+        SealedHeader::seal_slow(Header {
+            number: 6,
+            gas_limit: 30_000_000,
+            gas_used: 3_000_000,
+            base_fee_per_gas: Some(15_680_000),
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn a_block_context_carries_the_parent_fee_inputs() {
+        let config = ScrollEvmConfig::dogeos(DOGEOS_MAINNET.clone());
+        let parent = feynman_parent();
+        let block = SealedBlock::seal_slow(Block::new(
+            Header {
+                number: 7,
+                parent_hash: parent.hash(),
+                ..Default::default()
+            },
+            Default::default(),
+        ));
+
+        // Without the parent there are no inputs, and block execution fails closed.
+        assert_eq!(
+            config.context_for_block(&block).unwrap().base_fee_parent,
+            None
+        );
+
+        let ctx = config
+            .context_for_block_with_parent(&block, &parent)
+            .unwrap();
+        assert_eq!(
+            ctx.base_fee_parent,
+            Some(ScrollBaseFeeParent {
+                base_fee_per_gas: 15_680_000,
+                gas_used: 3_000_000,
+                gas_limit: 30_000_000,
+            })
+        );
+
+        // A header that is not this block's parent is refused rather than believed.
+        let impostor = SealedHeader::seal_slow(Header {
+            number: 6,
+            gas_limit: 30_000_000,
+            gas_used: 30_000_000,
+            base_fee_per_gas: Some(99_000_000),
+            ..Default::default()
+        });
+        assert_eq!(
+            config
+                .context_for_block_with_parent(&block, &impostor)
+                .unwrap()
+                .base_fee_parent,
+            None
+        );
+    }
+
+    #[test]
+    fn a_next_block_context_carries_the_parent_fee_inputs() {
+        let config = ScrollEvmConfig::dogeos(DOGEOS_MAINNET.clone());
+        let parent = feynman_parent();
+        let attributes = ScrollNextBlockEnvAttributes {
+            timestamp: 1,
+            suggested_fee_recipient: Address::ZERO,
+            gas_limit: 30_000_000,
+            base_fee: 15_680_000,
+        };
+        assert_eq!(
+            config
+                .context_for_next_block(&parent, attributes)
+                .unwrap()
+                .base_fee_parent,
+            Some(ScrollBaseFeeParent {
+                base_fee_per_gas: 15_680_000,
+                gas_used: 3_000_000,
+                gas_limit: 30_000_000,
+            })
+        );
+    }
+
+    /// Seeding the executor with the parent of the first block and then letting it track the
+    /// parent itself is what covers staged sync (a contiguous range) and the single-block
+    /// re-execution behind `debug_executionWitness`.
+    #[test]
+    fn a_seeded_executor_checks_a_whole_range() {
+        use reth_evm::execute::Executor;
+        use reth_primitives_traits::RecoveredBlock;
+        use revm::database::EmptyDB;
+
+        const GAS_LIMIT: u64 = 30_000_000;
+        const OVERHEAD: u64 = 15_680_000;
+
+        let config = ScrollEvmConfig::dogeos(DOGEOS_MAINNET.clone());
+        let fee_after = |parent: &SealedHeader<Header>| {
+            crate::next_block_base_fee_with_overhead(
+                &**DOGEOS_MAINNET,
+                &ScrollBaseFeeParent::from_header(parent.header()).unwrap(),
+                OVERHEAD,
+                parent.timestamp() + 1,
+            )
+        };
+        let empty_block = |number: u64, parent: &SealedHeader<Header>, base_fee: u64| {
+            RecoveredBlock::new_sealed(
+                SealedBlock::seal_slow(Block::new(
+                    Header {
+                        number,
+                        parent_hash: parent.hash(),
+                        gas_limit: GAS_LIMIT,
+                        gas_used: 0,
+                        timestamp: parent.timestamp() + 1,
+                        base_fee_per_gas: Some(base_fee),
+                        ..Default::default()
+                    },
+                    Default::default(),
+                )),
+                Vec::new(),
+            )
+        };
+
+        // A full genesis block, so each later base fee differs from the last.
+        let genesis = SealedHeader::seal_slow(Header {
+            number: 0,
+            gas_limit: GAS_LIMIT,
+            gas_used: GAS_LIMIT,
+            base_fee_per_gas: Some(OVERHEAD + 1_000_000_000),
+            ..Default::default()
+        });
+        let first = empty_block(1, &genesis, fee_after(&genesis));
+        let second = empty_block(2, first.sealed_header(), fee_after(first.sealed_header()));
+        assert_ne!(
+            first.header().base_fee_per_gas,
+            second.header().base_fee_per_gas
+        );
+
+        // Seeded with the genesis header, the executor checks both blocks: the second one
+        // against the first, which it tracked itself.
+        let mut executor = config.executor_with_parent(EmptyDB::default(), Some(genesis.clone()));
+        executor.execute_one(&first).expect("first block");
+        executor.execute_one(&second).expect("second block");
+
+        // The second block's fee is judged against the first, not against the seed.
+        let wrong = empty_block(2, first.sealed_header(), fee_after(&genesis));
+        let mut executor = config.executor_with_parent(EmptyDB::default(), Some(genesis.clone()));
+        executor.execute_one(&first).expect("first block");
+        let err = executor.execute_one(&wrong).unwrap_err().to_string();
+        assert!(
+            err.starts_with("invalid base fee: got "),
+            "unexpected error: {err}"
+        );
+
+        // A gap in the range leaves no parent, and the block fails closed.
+        let mut executor = config.executor_with_parent(EmptyDB::default(), Some(genesis));
+        assert_eq!(
+            executor.execute_one(&second).unwrap_err().to_string(),
+            "cannot check the base fee: the caller supplied no parent header"
+        );
+
+        // So does an executor nobody seeded.
+        let mut executor = config.batch_executor(EmptyDB::default());
+        assert_eq!(
+            executor.execute_one(&first).unwrap_err().to_string(),
+            "cannot check the base fee: the caller supplied no parent header"
         );
     }
 

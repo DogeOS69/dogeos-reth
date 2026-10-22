@@ -18,6 +18,33 @@ pub const DEFAULT_BASE_FEE_OVERHEAD: U256 = U256::from_limbs([15_680_000, 0, 0, 
 /// Precision retained for external callers that share the inherited Scroll fee constants.
 pub const L1_BASE_FEE_PRECISION: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 
+/// The parent-header inputs of the Feynman+ base-fee rule.
+///
+/// Carried separately from the header itself so that a block executor, which is handed the
+/// parent by its caller, can run the rule without cloning a whole header.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScrollBaseFeeParent {
+    /// Parent base fee per gas.
+    pub base_fee_per_gas: u64,
+    /// Parent gas used.
+    pub gas_used: u64,
+    /// Parent gas limit.
+    pub gas_limit: u64,
+}
+
+impl ScrollBaseFeeParent {
+    /// Extracts the rule's inputs from a parent header.
+    ///
+    /// Returns `None` for a header without a base fee, which no Feynman+ header may be.
+    pub fn from_header<H: BlockHeader>(header: &H) -> Option<Self> {
+        Some(Self {
+            base_fee_per_gas: header.base_fee_per_gas()?,
+            gas_used: header.gas_used(),
+            gas_limit: header.gas_limit(),
+        })
+    }
+}
+
 /// State-aware Feynman+ L2 base-fee calculator.
 #[derive(Clone, Debug, Default)]
 pub struct ScrollBaseFeeProvider<ChainSpec>(ChainSpec);
@@ -43,30 +70,77 @@ where
         DB: Database,
         H: BlockHeader,
     {
-        let system_config = self.0.chain_config().l1_config.l2_system_config_address;
-        let configured_overhead = db.storage(system_config, L2_BASE_FEE_OVERHEAD_SLOT)?;
-        let overhead = if configured_overhead == U256::ZERO {
-            DEFAULT_BASE_FEE_OVERHEAD
-        } else {
-            configured_overhead
-        }
-        .saturating_to::<u64>();
-
-        let parent_base_fee = parent
-            .base_fee_per_gas()
+        let parent = ScrollBaseFeeParent::from_header(parent)
             .expect("Feynman+ parent headers carry a base fee");
-        let parent_eip1559_base_fee = parent_base_fee.saturating_sub(overhead);
-        let next_eip1559_base_fee = calc_next_block_base_fee(
-            parent.gas_used(),
-            parent.gas_limit(),
-            parent_eip1559_base_fee,
-            self.0.base_fee_params_at_timestamp(timestamp),
-        );
-
-        Ok(next_eip1559_base_fee
-            .saturating_add(overhead)
-            .min(MAX_L2_BASE_FEE))
+        self.next_block_base_fee_for_parent(db, &parent, timestamp)
     }
+
+    /// Reads the L2 base-fee overhead from the system config contract in `db`.
+    pub fn base_fee_overhead<DB: Database>(&self, db: &mut DB) -> Result<u64, DB::Error> {
+        base_fee_overhead(&self.0, db)
+    }
+
+    /// Calculates the next block's base fee from the parent's already-extracted inputs.
+    pub fn next_block_base_fee_for_parent<DB: Database>(
+        &self,
+        db: &mut DB,
+        parent: &ScrollBaseFeeParent,
+        timestamp: u64,
+    ) -> Result<u64, DB::Error> {
+        let overhead = self.base_fee_overhead(db)?;
+        Ok(next_block_base_fee_with_overhead(
+            &self.0, parent, overhead, timestamp,
+        ))
+    }
+}
+
+/// Reads the L2 base-fee overhead from the system config contract in `db`.
+///
+/// A zero (or unset) slot means the default overhead. This is a pure read: it loads the system
+/// config account and its slot 101 into the state it is given and changes nothing, which is
+/// what puts the slot into an execution witness.
+///
+/// Takes the chain spec by reference so that a block executor, which only borrows its spec, can
+/// call it.
+pub fn base_fee_overhead<ChainSpec, DB>(
+    chain_spec: &ChainSpec,
+    db: &mut DB,
+) -> Result<u64, DB::Error>
+where
+    ChainSpec: ChainConfig<Config = ScrollChainConfig>,
+    DB: Database,
+{
+    let system_config = chain_spec.chain_config().l1_config.l2_system_config_address;
+    let configured_overhead = db.storage(system_config, L2_BASE_FEE_OVERHEAD_SLOT)?;
+    Ok(if configured_overhead == U256::ZERO {
+        DEFAULT_BASE_FEE_OVERHEAD
+    } else {
+        configured_overhead
+    }
+    .saturating_to::<u64>())
+}
+
+/// Calculates the next block's base fee from the parent's inputs and a known overhead.
+///
+/// The one place the formula lives; every other entry point reads the overhead and defers to
+/// this.
+pub fn next_block_base_fee_with_overhead<ChainSpec: EthChainSpec>(
+    chain_spec: &ChainSpec,
+    parent: &ScrollBaseFeeParent,
+    overhead: u64,
+    timestamp: u64,
+) -> u64 {
+    let parent_eip1559_base_fee = parent.base_fee_per_gas.saturating_sub(overhead);
+    let next_eip1559_base_fee = calc_next_block_base_fee(
+        parent.gas_used,
+        parent.gas_limit,
+        parent_eip1559_base_fee,
+        chain_spec.base_fee_params_at_timestamp(timestamp),
+    );
+
+    next_eip1559_base_fee
+        .saturating_add(overhead)
+        .min(MAX_L2_BASE_FEE)
 }
 
 #[cfg(test)]
@@ -111,6 +185,91 @@ mod tests {
             &parent(parent_base_fee, gas_used),
             2,
         )?)
+    }
+
+    /// Parity vectors shared with the guest's base-fee rule (sbv) and the payload builder.
+    ///
+    /// Every row is `(overhead, parent base fee, parent gas used, expected child base fee)` on
+    /// mainnet at a Tsuki timestamp: denominator 48, elasticity 10, 30M gas limit, so the gas
+    /// target is 3M. An overhead of zero means slot 101 is unset and the default applies.
+    /// Keep these in step with the guest; a divergence here is a chain split.
+    const PARITY_VECTORS: &[(u64, u64, u64, u64)] = &[
+        // Unset slot: the default overhead, idle, at target and full.
+        (0, 15_680_000, 0, 15_680_000),
+        (0, 15_680_000, GAS_TARGET, 15_680_000),
+        (
+            0,
+            15_680_000 + 1_000_000_000,
+            GAS_TARGET,
+            15_680_000 + 1_000_000_000,
+        ),
+        (
+            0,
+            15_680_000 + 1_000_000_000,
+            GAS_LIMIT,
+            15_680_000 + 1_187_500_000,
+        ),
+        (0, 15_680_000 + 1_000_000_000, 0, 15_680_000 + 979_166_667),
+        // A configured overhead replaces the default, and the fee never falls below it.
+        (1, 1_000_000_000, GAS_TARGET, 1_000_000_000),
+        (
+            OVERHEAD,
+            OVERHEAD + 1_000_000_000,
+            2 * GAS_TARGET,
+            OVERHEAD + 1_020_833_333,
+        ),
+        // Nothing above the overhead to grow, yet EIP-1559 still bumps a full block by one wei.
+        (OVERHEAD, OVERHEAD, GAS_LIMIT, OVERHEAD + 1),
+        (OVERHEAD, OVERHEAD, 0, OVERHEAD),
+        // A parent below its own overhead saturates to zero before the EIP-1559 step.
+        (OVERHEAD, OVERHEAD - 1, GAS_LIMIT, OVERHEAD + 1),
+        (OVERHEAD, 0, GAS_LIMIT, OVERHEAD + 1),
+        // The cap holds on the way up and is itself a fixed point.
+        (OVERHEAD, MAX_L2_BASE_FEE, GAS_LIMIT, MAX_L2_BASE_FEE),
+        (OVERHEAD, MAX_L2_BASE_FEE - 1, GAS_LIMIT, MAX_L2_BASE_FEE),
+        (0, MAX_L2_BASE_FEE, GAS_TARGET, MAX_L2_BASE_FEE),
+    ];
+
+    #[test]
+    fn parity_vectors_hold_for_both_entry_points() -> eyre::Result<()> {
+        let provider = ScrollBaseFeeProvider::new(DOGEOS_MAINNET.clone());
+        for &(overhead, parent_base_fee, gas_used, expected) in PARITY_VECTORS {
+            let parent = parent(parent_base_fee, gas_used);
+            let label = format!("overhead={overhead}, parent={parent_base_fee}, gas={gas_used}");
+
+            // Through the state, exactly as the payload builder calls it.
+            let mut state = if overhead == 0 {
+                State::builder()
+                    .with_database(EmptyDB::default())
+                    .with_bundle_update()
+                    .build()
+            } else {
+                state_with_overhead(overhead)
+            };
+            assert_eq!(
+                provider.next_block_base_fee(&mut state, &parent, 2)?,
+                expected,
+                "{label}"
+            );
+
+            // And from extracted inputs, as the block executor calls it.
+            let resolved = if overhead == 0 {
+                DEFAULT_BASE_FEE_OVERHEAD.saturating_to::<u64>()
+            } else {
+                overhead
+            };
+            assert_eq!(
+                next_block_base_fee_with_overhead(
+                    &**DOGEOS_MAINNET,
+                    &ScrollBaseFeeParent::from_header(&parent).expect("parent has a base fee"),
+                    resolved,
+                    2,
+                ),
+                expected,
+                "{label}"
+            );
+        }
+        Ok(())
     }
 
     #[test]

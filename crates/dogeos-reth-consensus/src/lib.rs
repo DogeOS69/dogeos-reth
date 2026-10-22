@@ -406,6 +406,72 @@ mod tests {
         ));
     }
 
+    /// Every import path runs this check: the engine tree's payload validator after execution,
+    /// and the execution stage after each block of a range. A header that claims a different
+    /// gas_used from what executing it actually spent is rejected on both.
+    #[test]
+    fn header_gas_used_must_equal_executed_gas() {
+        use alloy_consensus::{Block, BlockBody, Receipt};
+        use dogeos_protocol_types::ScrollTransactionReceipt;
+        use dogeos_reth_primitives::ScrollReceipt;
+
+        const EXECUTED_GAS: u64 = 42_000;
+
+        let receipts = vec![ScrollReceipt::Eip1559(ScrollTransactionReceipt::new(
+            Receipt {
+                status: true.into(),
+                cumulative_gas_used: EXECUTED_GAS,
+                logs: Vec::new(),
+            },
+            U256::ZERO,
+        ))];
+        let logs_bloom = receipts
+            .iter()
+            .fold(Bloom::ZERO, |bloom, receipt| bloom | receipt.bloom());
+        let receipts_root = calculate_receipt_root(
+            &receipts
+                .iter()
+                .map(TxReceipt::with_bloom_ref)
+                .collect::<Vec<_>>(),
+        );
+
+        let block_with_gas_used = |gas_used| {
+            let header = alloy_consensus::Header {
+                gas_used,
+                receipts_root,
+                logs_bloom,
+                ..valid_header()
+            };
+            RecoveredBlock::new_unhashed(Block::new(header, BlockBody::<_>::default()), Vec::new())
+        };
+        let result = BlockExecutionResult {
+            receipts: receipts.clone(),
+            requests: Default::default(),
+            gas_used: EXECUTED_GAS,
+            blob_gas_used: 0,
+        };
+
+        assert!(
+            DogeosConsensus
+                .validate_block_post_execution(&block_with_gas_used(EXECUTED_GAS), &result, None)
+                .is_ok()
+        );
+        for claimed in [EXECUTED_GAS - 1, EXECUTED_GAS + 1, 0] {
+            assert!(
+                matches!(
+                    DogeosConsensus.validate_block_post_execution(
+                        &block_with_gas_used(claimed),
+                        &result,
+                        None,
+                    ),
+                    Err(ConsensusError::BlockGasUsed { gas, .. })
+                        if gas.got == EXECUTED_GAS && gas.expected == claimed
+                ),
+                "gas_used={claimed} was accepted"
+            );
+        }
+    }
+
     #[test]
     fn future_header_timestamp_is_rejected() {
         let mut header = valid_header();
