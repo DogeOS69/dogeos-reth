@@ -65,6 +65,10 @@ pub(crate) enum BaseFeeRuleKind {
     /// Executing a Feynman+ block to completion in this state is an error.
     #[default]
     MissingParent,
+    /// The caller offered a header that is not this block's parent, or one with no base fee.
+    /// Also an error, reported separately because it means something different: the caller had
+    /// a header and it was the wrong one.
+    WrongParent,
     /// There is no header to check: the block is being built or simulated and its base fee is
     /// the caller's own, from the payload attributes.
     NoHeaderToCheck,
@@ -81,12 +85,17 @@ impl ScrollBaseFeeRule {
     /// Check the block's base fee against this parent header, or fail closed if the header
     /// carries no base fee — which no Feynman+ header may be.
     pub fn for_parent_header<H: BlockHeader>(header: &H) -> Self {
-        ScrollBaseFeeParent::from_header(header).map_or_else(Self::missing_parent, Self::check)
+        ScrollBaseFeeParent::from_header(header).map_or_else(Self::wrong_parent, Self::check)
     }
 
     /// Fail closed: there is a header to check but no parent to check it against.
     pub const fn missing_parent() -> Self {
         Self(BaseFeeRuleKind::MissingParent)
+    }
+
+    /// Fail closed: the caller had a header but it is not this block's parent.
+    pub(crate) const fn wrong_parent() -> Self {
+        Self(BaseFeeRuleKind::WrongParent)
     }
 
     /// Skip the rule: the block is being built or simulated, so there is no header whose base
@@ -388,11 +397,16 @@ mod tests {
             ScrollBaseFeeRule::check(ScrollBaseFeeParent::from_header(&parent).unwrap())
         );
 
-        // A header with no base fee is not a Feynman+ header; it fails closed.
+        // A header with no base fee is not a Feynman+ header; it fails closed, and says so
+        // differently from a caller that offered nothing at all.
         let mut no_base_fee = parent;
         no_base_fee.base_fee_per_gas = None;
         assert_eq!(
             ScrollBaseFeeRule::for_parent_header(&no_base_fee),
+            ScrollBaseFeeRule::wrong_parent()
+        );
+        assert_ne!(
+            ScrollBaseFeeRule::wrong_parent(),
             ScrollBaseFeeRule::missing_parent()
         );
 

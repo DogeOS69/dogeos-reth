@@ -233,6 +233,12 @@ where
                     "cannot check the base fee: the caller supplied no parent header",
                 ));
             }
+            BaseFeeRuleKind::WrongParent => {
+                return Err(BlockExecutionError::msg(
+                    "cannot check the base fee: the header the caller supplied is not this \
+                     block's parent, or carries no base fee",
+                ));
+            }
             BaseFeeRuleKind::Check(parent) => parent,
         };
         let Some(overhead) = self.base_fee_overhead else {

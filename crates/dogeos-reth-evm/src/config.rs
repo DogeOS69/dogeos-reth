@@ -312,7 +312,7 @@ where
 /// fee against it; the executor then fails closed on the missing parent.
 fn base_fee_rule_for(parent_hash: B256, parent: &SealedHeader<Header>) -> ScrollBaseFeeRule {
     if parent.hash() != parent_hash {
-        return ScrollBaseFeeRule::missing_parent();
+        return ScrollBaseFeeRule::wrong_parent();
     }
     ScrollBaseFeeRule::for_parent_header(parent.header())
 }
@@ -396,7 +396,7 @@ mod tests {
                 .context_for_block_with_parent(&block, &impostor)
                 .unwrap()
                 .base_fee,
-            ScrollBaseFeeRule::missing_parent()
+            ScrollBaseFeeRule::wrong_parent()
         );
     }
 
@@ -631,7 +631,7 @@ mod tests {
                 .context_for_payload_with_parent(&payload(B256::repeat_byte(0x99)), &parent)
                 .unwrap()
                 .base_fee,
-            ScrollBaseFeeRule::missing_parent()
+            ScrollBaseFeeRule::wrong_parent()
         );
     }
 
