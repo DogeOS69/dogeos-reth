@@ -299,6 +299,11 @@ where
     ) -> Result<ScrollBlockExecutionCtx, Self::Error> {
         // Building, not validating: there is no header whose base fee could be wrong. The
         // caller's attributes carry the fee, and the builder derived it from this very parent.
+        //
+        // The context this returns is for a block being built here and must never be used to
+        // execute an imported one: its rule skips the base-fee check, which is only sound
+        // because there is no header to check. Importers go through `context_for_block` or
+        // `context_for_payload` and their `_with_parent` forms.
         Ok(ScrollBlockExecutionCtx::new(
             parent.hash(),
             ScrollBaseFeeRule::no_header_to_check(),

@@ -12,6 +12,14 @@ scripts/tsuki-witness-corpus/generate.sh [OUT_DIR]   # default: target/tsuki-wit
 Needs `cast` (foundry), `jq` and `python3`. The node runs in the foreground of the script and is
 stopped by its exit trap.
 
+It builds the node under a lock, so it does not start a second heavy cargo job beside one that is
+already running. The default lock is repo-local; on a machine shared with other builds, point
+`BUILD_LOCK` at whatever lock those builds use:
+
+```bash
+BUILD_LOCK=/path/to/shared/build.lock scripts/tsuki-witness-corpus/generate.sh
+```
+
 ## What it checks
 
 It is this repo's end-to-end check of the node, not only a fixture generator. Against the running
@@ -27,9 +35,18 @@ node it asserts that:
   against the node's own `eth_getProof`, both while slot 101 is unset and after it carries an
   overhead.
 
-The chain runs the Tsuki fee parameters (denominator 48, elasticity 10) from genesis. Its id is a
-registered DogeOS chain id, because a guest refuses a chain it has no authenticated
-L2SystemConfig address for.
+## The chain
+
+Chain id `6281971`, borrowed from Chikyū so that a guest has an authenticated L2SystemConfig
+address for it — a guest refuses a chain it does not know. **It is not Chikyū.** The corpus runs
+its own genesis schedule: Tsuki from genesis, so the fee parameters are (48, 10), where Chikyū's
+canonical spec never activates Tsuki and stays on Feynman's (8, 2). The genesis document also
+differs in its allocations: three funded development accounts, a gas burner, and the stand-in
+overhead setter `SSTORE(101, calldataload(4)); STOP` at the L2SystemConfig address, with slot 101
+unset.
+
+Six blocks are driven, and the wrong-fee probe's correct payload becomes a seventh, so the run
+produces seven witnesses (`1.json` … `7.json`).
 
 ## Relationship to the guest's fixtures
 

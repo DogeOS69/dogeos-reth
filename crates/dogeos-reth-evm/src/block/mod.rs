@@ -65,19 +65,20 @@ pub type ScrollTxCompressionInfos = Vec<ScrollTxCompressionInfo>;
 
 /// Context for Scroll Block Execution.
 ///
-/// Non-exhaustive so that it is built through [`ScrollBlockExecutionCtx::new`]: a caller
-/// outside this crate can only pair a parent hash with a rule it is allowed to ask for, and
-/// adding a field later does not silently leave it at a default somewhere else.
+/// Built through [`ScrollBlockExecutionCtx::new`] and read through its accessors. The fields
+/// are crate-private so that a rule cannot be lifted out of one context and dropped into
+/// another: the context `context_for_next_block` returns carries a rule that skips the
+/// base-fee check, and that rule is only sound for the block that context was made for.
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct ScrollBlockExecutionCtx {
     /// Parent block hash.
-    pub parent_hash: B256,
+    pub(crate) parent_hash: B256,
     /// What the Feynman+ base-fee rule should do for this block.
     ///
     /// Defaults to [`ScrollBaseFeeRule::missing_parent`], so a context nobody filled in fails
     /// closed rather than skipping the rule.
-    pub base_fee: ScrollBaseFeeRule,
+    pub(crate) base_fee: ScrollBaseFeeRule,
 }
 
 impl ScrollBlockExecutionCtx {
@@ -87,6 +88,16 @@ impl ScrollBlockExecutionCtx {
             parent_hash,
             base_fee,
         }
+    }
+
+    /// The parent block hash this context was built for.
+    pub const fn parent_hash(&self) -> B256 {
+        self.parent_hash
+    }
+
+    /// What the Feynman+ base-fee rule should do for this block.
+    pub const fn base_fee(&self) -> ScrollBaseFeeRule {
+        self.base_fee
     }
 }
 

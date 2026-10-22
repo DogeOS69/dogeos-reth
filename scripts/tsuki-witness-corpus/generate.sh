@@ -49,8 +49,11 @@ for tool in cast jq; do
   command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
 done
 
-# Builds go through the lane's shared lock, like every other cargo invocation on this box.
+# Builds take a lock, so this does not start a second heavy cargo job beside one already
+# running. The default is repo-local; on a machine shared with other builds, set BUILD_LOCK to
+# whatever lock those builds use.
 BUILD_LOCK="${BUILD_LOCK:-$repo_root/target/dogeos-reth-build.lock}"
+mkdir -p "$(dirname "$BUILD_LOCK")"
 touch "$BUILD_LOCK"
 binary="$repo_root/target/debug/dogeos-reth"
 if [[ ! -x "$binary" ]]; then
