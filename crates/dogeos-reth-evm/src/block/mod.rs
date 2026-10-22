@@ -2,7 +2,7 @@ pub use receipt_builder::{ReceiptBuilderCtx, ScrollReceiptBuilder};
 mod receipt_builder;
 
 use crate::{
-    FromTxWithCompressionInfo, ScrollBaseFeeParent, ScrollDefaultPrecompilesFactory, ScrollEvm,
+    FromTxWithCompressionInfo, ScrollBaseFeeRule, ScrollDefaultPrecompilesFactory, ScrollEvm,
     ScrollEvmFactory, ScrollPrecompilesFactory, ScrollTransactionIntoTxEnv,
     ToTxWithCompressionInfo,
     system_caller::ScrollSystemCaller,
@@ -67,12 +67,11 @@ pub type ScrollTxCompressionInfos = Vec<ScrollTxCompressionInfo>;
 pub struct ScrollBlockExecutionCtx {
     /// Parent block hash.
     pub parent_hash: B256,
-    /// The parent header's inputs to the Feynman+ base-fee rule.
+    /// What the Feynman+ base-fee rule should do for this block.
     ///
-    /// `None` when the caller had no parent header to offer. Executing a Feynman+ block to
-    /// completion then fails, rather than skipping the rule: see
-    /// [`ScrollBlockExecutor::apply_post_execution_changes`].
-    pub base_fee_parent: Option<ScrollBaseFeeParent>,
+    /// Defaults to [`ScrollBaseFeeRule::MissingParent`], so a context nobody filled in fails
+    /// closed rather than skipping the rule.
+    pub base_fee: ScrollBaseFeeRule,
 }
 
 /// Block executor for Scroll.
@@ -189,31 +188,40 @@ where
     /// overhead comes from slot 101 of the system config contract in this block's pre-state
     /// (read in [`BlockExecutor::apply_pre_execution_changes`]).
     ///
-    /// It runs at the end of execution rather than at the start for two reasons. A block
-    /// cannot be imported without reaching this point, so there is no import path that can
-    /// skip the rule; and the paths that stop after pre-execution — tracing, simulation,
-    /// access-list building — replay an already-validated block and have no parent to offer.
+    /// It runs at the end of execution rather than at the start. A block cannot be imported
+    /// without reaching this point, so no import path can skip the rule, while the paths that
+    /// stop after pre-execution — transaction tracing, `eth_callMany` — replay an
+    /// already-validated block and have no parent to offer.
     ///
-    /// A Feynman+ block executed to completion without parent inputs is an error, not a
-    /// skipped check.
+    /// A mismatch is a [`BlockValidationError`], so `newPayload` answers `INVALID` and the node
+    /// keeps running. The two remaining failures cannot be provoked by a peer: whether the
+    /// context carries a parent is decided by which `ConfigureEvm` entry point the node's own
+    /// code called, never by block content, and the overhead is always read in pre-execution.
+    /// They stay internal errors because they are caller bugs.
     fn validate_base_fee(&self) -> Result<(), BlockExecutionError> {
         let timestamp = self.evm.block().timestamp().to();
+        let number = self.evm.block().number().to();
+        // Matched to the EVM's own spec selection, which takes both.
         if !self
             .spec
             .dogeos_fork_activation(DogeosHardfork::Feynman)
-            .active_at_timestamp(timestamp)
+            .active_at_timestamp_or_number(timestamp, number)
         {
             return Ok(());
         }
 
+        let parent = match self.ctx.base_fee {
+            ScrollBaseFeeRule::NoHeaderToCheck => return Ok(()),
+            ScrollBaseFeeRule::MissingParent => {
+                return Err(BlockExecutionError::msg(
+                    "cannot check the base fee: the caller supplied no parent header",
+                ));
+            }
+            ScrollBaseFeeRule::Check(parent) => parent,
+        };
         let Some(overhead) = self.base_fee_overhead else {
             return Err(BlockExecutionError::msg(
                 "base-fee overhead was not read before execution",
-            ));
-        };
-        let Some(parent) = self.ctx.base_fee_parent else {
-            return Err(BlockExecutionError::msg(
-                "cannot check the base fee: the caller supplied no parent header",
             ));
         };
 
@@ -221,9 +229,10 @@ where
             crate::next_block_base_fee_with_overhead(&self.spec, &parent, overhead, timestamp);
         let got = self.evm.block().basefee();
         if got != expected {
-            return Err(BlockExecutionError::msg(format!(
+            return Err(BlockValidationError::msg(format!(
                 "invalid base fee: got {got}, expected {expected}"
-            )));
+            ))
+            .into());
         }
         Ok(())
     }
@@ -532,7 +541,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::next_block_base_fee_with_overhead;
+    use crate::{ScrollBaseFeeParent, next_block_base_fee_with_overhead};
     use crate::{
         ScrollRethReceiptBuilder, ScrollTransactionIntoTxEnv, TX_L1_FEE_PRECISION_U256,
         gas_price_oracle::L1_GAS_PRICE_ORACLE_ADDRESS,
@@ -540,6 +549,7 @@ mod tests {
     use alloy_evm::{EvmEnv, block::StateChangePreBlockSource};
     use alloy_primitives::{Address, Bytes};
     use dogeos_chainspec::DOGEOS_MAINNET;
+    use reth_revm::witness::ExecutionWitnessRecord;
     use revm::{
         context::{
             BlockEnv, CfgEnv, TxEnv,
@@ -578,7 +588,7 @@ mod tests {
     fn test_ctx() -> ScrollBlockExecutionCtx {
         ScrollBlockExecutionCtx {
             parent_hash: B256::ZERO,
-            base_fee_parent: Some(ScrollBaseFeeParent {
+            base_fee: ScrollBaseFeeRule::Check(ScrollBaseFeeParent {
                 base_fee_per_gas: TEST_BASE_FEE,
                 gas_used: TEST_GAS_LIMIT / 10,
                 gas_limit: TEST_GAS_LIMIT,
@@ -712,7 +722,9 @@ mod tests {
         // One wei off the rule's output on either side.
         for delta in [-1i64, 1] {
             let mut ctx = test_ctx();
-            let parent = ctx.base_fee_parent.as_mut().unwrap();
+            let ScrollBaseFeeRule::Check(parent) = &mut ctx.base_fee else {
+                unreachable!("test_ctx carries a parent")
+            };
             parent.base_fee_per_gas = parent.base_fee_per_gas.wrapping_add_signed(delta);
             let err = execute_empty_block(ctx, None).unwrap_err().to_string();
             assert!(
@@ -722,16 +734,47 @@ mod tests {
         }
     }
 
+    /// A wrong fee is the block's fault, so it has to be a validation error: the engine then
+    /// answers `newPayload` with `INVALID` and keeps running, instead of treating it as an
+    /// internal failure and exiting.
+    #[test]
+    fn a_wrong_base_fee_is_a_validation_error() {
+        let mut ctx = test_ctx();
+        let ScrollBaseFeeRule::Check(parent) = &mut ctx.base_fee else {
+            unreachable!("test_ctx carries a parent")
+        };
+        parent.base_fee_per_gas += 1;
+        assert!(matches!(
+            execute_empty_block(ctx, None),
+            Err(BlockExecutionError::Validation(_))
+        ));
+    }
+
+    /// Building or simulating a block is not validating one, so the rule does not run and a
+    /// simulation is free to zero the base fee or override it.
+    #[test]
+    fn a_block_with_no_header_to_check_skips_the_rule() {
+        let ctx = ScrollBlockExecutionCtx {
+            parent_hash: B256::ZERO,
+            base_fee: ScrollBaseFeeRule::NoHeaderToCheck,
+        };
+        // A base fee that no parent could have produced, as `validation: false` would give.
+        assert!(execute_with_overhead(ctx, 0, None).is_ok());
+    }
+
     #[test]
     fn a_block_without_parent_inputs_is_rejected() {
         let ctx = ScrollBlockExecutionCtx {
             parent_hash: B256::ZERO,
-            base_fee_parent: None,
+            base_fee: ScrollBaseFeeRule::MissingParent,
         };
+        let err = execute_empty_block(ctx, None).unwrap_err();
         assert_eq!(
-            execute_empty_block(ctx, None).unwrap_err().to_string(),
+            err.to_string(),
             "cannot check the base fee: the caller supplied no parent header"
         );
+        // A caller bug, not something a peer can provoke, so it stays internal.
+        assert!(matches!(err, BlockExecutionError::Internal(_)));
     }
 
     /// A parent that burned a full block, so the part of its fee above the overhead grows and
@@ -752,7 +795,7 @@ mod tests {
     fn an_unset_slot_means_the_default_overhead() {
         let ctx = ScrollBlockExecutionCtx {
             parent_hash: B256::ZERO,
-            base_fee_parent: Some(full_block_parent()),
+            base_fee: ScrollBaseFeeRule::Check(full_block_parent()),
         };
         let executor = ScrollBlockExecutor::new(
             empty_state_evm_with_base_fee(FULL_BLOCK_CHILD_BASE_FEE),
@@ -772,7 +815,7 @@ mod tests {
 
         let ctx = ScrollBlockExecutionCtx {
             parent_hash: B256::ZERO,
-            base_fee_parent: Some(full_block_parent()),
+            base_fee: ScrollBaseFeeRule::Check(full_block_parent()),
         };
         assert!(
             execute_with_overhead(ctx.clone(), expected, Some(configured)).is_ok(),
@@ -877,7 +920,7 @@ mod tests {
         };
         let ctx = ScrollBlockExecutionCtx {
             parent_hash: B256::ZERO,
-            base_fee_parent: Some(parent),
+            base_fee: ScrollBaseFeeRule::Check(parent),
         };
         let result = ScrollBlockExecutor::new(
             evm_over(&mut state, under_old),
@@ -911,7 +954,7 @@ mod tests {
 
         let ctx = ScrollBlockExecutionCtx {
             parent_hash: B256::ZERO,
-            base_fee_parent: Some(parent_n),
+            base_fee: ScrollBaseFeeRule::Check(parent_n),
         };
         let err = ScrollBlockExecutor::new(
             evm_over(&mut state, stale),
@@ -958,34 +1001,94 @@ mod tests {
         )
     }
 
-    #[test]
-    fn pre_execution_reads_the_system_config_slot() {
+    /// The slot-101 read has to reach the state an execution witness is recorded from, or
+    /// `debug_executionWitness` will not carry the proof the guest needs.
+    ///
+    /// Returns the recorded witness for the block's pre-execution state.
+    fn witness_after_pre_execution(overhead: Option<u64>) -> ExecutionWitnessRecord {
+        let mut evm = empty_state_evm();
+        if let Some(overhead) = overhead {
+            set_overhead(evm.db_mut(), overhead);
+        }
         let mut executor = ScrollBlockExecutor::new(
-            empty_state_evm(),
+            evm,
             test_ctx(),
             DOGEOS_MAINNET.clone(),
             ScrollRethReceiptBuilder,
         );
         executor.apply_pre_execution_changes().unwrap();
+        ExecutionWitnessRecord::from_executed_state(executor.evm_mut().db_mut())
+    }
 
-        // The read loaded the system config account and slot 101 into the state the execution
-        // witness is recorded from, and left them unchanged.
+    #[test]
+    fn the_witness_carries_the_system_config_slot() {
         let system_config = DOGEOS_MAINNET.config.l1_config.l2_system_config_address;
-        let account = executor
-            .evm_mut()
-            .db_mut()
-            .cache
-            .accounts
-            .get(&system_config)
-            .expect("system config account is in the state cache");
+        let hashed_address = alloy_primitives::keccak256(system_config);
+        let hashed_slot = alloy_primitives::keccak256(B256::from(U256::from(101)));
+
+        let record = witness_after_pre_execution(Some(15_680_001));
         assert!(
-            account
-                .account
-                .as_ref()
-                .is_some_and(|account| account.storage.contains_key(&U256::from(101)))
-                || account.account.is_none(),
-            "slot 101 was not read"
+            record
+                .hashed_state
+                .accounts
+                .get(&hashed_address)
+                .is_some_and(Option::is_some),
+            "the witness does not carry the system config account"
         );
+        assert!(
+            record
+                .hashed_state
+                .storages
+                .get(&hashed_address)
+                .is_some_and(|storage| storage.storage.contains_key(&hashed_slot)),
+            "the witness does not carry slot 101"
+        );
+        // The preimages a stateless verifier needs to re-derive both hashed keys.
+        assert!(record.keys.contains(&system_config.to_vec().into()));
+        assert!(record.keys.contains(&B256::from(U256::from(101)).into()));
+    }
+
+    /// Mainnet genesis does not allocate the system config contract, so the common case is an
+    /// account that is not there. An absence still has to be proven, not assumed: the witness
+    /// must target the account's path in the state trie so a stateless verifier can check that
+    /// nothing is there and fall back to the default overhead.
+    #[test]
+    fn the_witness_proves_an_absent_system_config_account() {
+        let system_config = DOGEOS_MAINNET.config.l1_config.l2_system_config_address;
+        let hashed_address = alloy_primitives::keccak256(system_config);
+
+        let record = witness_after_pre_execution(None);
+        let account = record
+            .hashed_state
+            .accounts
+            .get(&hashed_address)
+            .expect("the witness does not target the system config account");
+        assert!(
+            account.is_none(),
+            "the account should be absent in this fixture"
+        );
+        // The multiproof is taken over the hashed-state targets, so targeting the account is
+        // what makes its absence provable.
+    }
+
+    /// `finish()` is where the rule runs, and it needs the overhead pre-execution read. A
+    /// caller that skips pre-execution gets an error rather than an unchecked block.
+    #[test]
+    fn finishing_without_pre_execution_is_rejected() {
+        let executor = ScrollBlockExecutor::new(
+            empty_state_evm(),
+            test_ctx(),
+            DOGEOS_MAINNET.clone(),
+            ScrollRethReceiptBuilder,
+        );
+        let Err(err) = BlockExecutor::finish(executor) else {
+            panic!("finishing without pre-execution should fail")
+        };
+        assert_eq!(
+            err.to_string(),
+            "base-fee overhead was not read before execution"
+        );
+        assert!(matches!(err, BlockExecutionError::Internal(_)));
     }
 
     #[test]

@@ -99,11 +99,22 @@ where
             .chain_spec()
             .is_tsuki_active_at_timestamp(block.timestamp());
 
+        // Re-execution runs the same consensus rules as import, and the Feynman+ base-fee rule
+        // needs the parent header, so resolve it before handing the block to the executor.
+        let parent = self
+            .inner
+            .provider()
+            .sealed_header_by_hash(block.parent_hash())
+            .map_err(EthApiError::from)?
+            .ok_or_else(|| EthApiError::HeaderNotFound(block.parent_hash().into()))?;
+
         let (mut witness, lowest_block_number) = self
             .inner
             .eth_api()
             .spawn_with_state_at_block(block.parent_hash(), move |eth_api, mut db| {
-                let mut executor = eth_api.evm_config().executor(&mut db);
+                let mut executor = eth_api
+                    .evm_config()
+                    .executor_with_parent(&mut db, Some(parent));
                 executor
                     .execute_one(&block)
                     .map_err(|error| EthApiError::Internal(error.into()))?;

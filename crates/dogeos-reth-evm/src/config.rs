@@ -1,7 +1,8 @@
 use crate::{
-    ScrollBaseFeeParent, ScrollBlockAssembler, ScrollBlockExecutionCtx, ScrollBlockExecutorFactory,
-    ScrollDefaultPrecompilesFactory, ScrollPrecompilesFactory, ScrollReceiptBuilder,
-    ScrollRethReceiptBuilder, ScrollTransactionIntoTxEnv, spec_id_at_timestamp_and_number,
+    ScrollBaseFeeParent, ScrollBaseFeeRule, ScrollBlockAssembler, ScrollBlockExecutionCtx,
+    ScrollBlockExecutorFactory, ScrollDefaultPrecompilesFactory, ScrollPrecompilesFactory,
+    ScrollReceiptBuilder, ScrollRethReceiptBuilder, ScrollTransactionIntoTxEnv,
+    spec_id_at_timestamp_and_number,
 };
 use alloc::sync::Arc;
 use alloy_consensus::{Block, BlockBody, BlockHeader, Header};
@@ -95,7 +96,7 @@ where
     ) -> Result<ScrollBlockExecutionCtx, Self::Error> {
         Ok(ScrollBlockExecutionCtx {
             parent_hash: payload.parent_hash(),
-            base_fee_parent: None,
+            base_fee: ScrollBaseFeeRule::MissingParent,
         })
     }
 
@@ -106,7 +107,7 @@ where
     ) -> Result<ScrollBlockExecutionCtx, Self::Error> {
         Ok(ScrollBlockExecutionCtx {
             parent_hash: payload.parent_hash(),
-            base_fee_parent: base_fee_parent_of(payload.parent_hash(), parent),
+            base_fee: base_fee_rule_for(payload.parent_hash(), parent),
         })
     }
 
@@ -277,7 +278,7 @@ where
     ) -> Result<ScrollBlockExecutionCtx, Self::Error> {
         Ok(ScrollBlockExecutionCtx {
             parent_hash: block.header().parent_hash(),
-            base_fee_parent: None,
+            base_fee: ScrollBaseFeeRule::MissingParent,
         })
     }
 
@@ -288,7 +289,7 @@ where
     ) -> Result<ScrollBlockExecutionCtx, Self::Error> {
         Ok(ScrollBlockExecutionCtx {
             parent_hash: block.header().parent_hash(),
-            base_fee_parent: base_fee_parent_of(block.header().parent_hash(), parent),
+            base_fee: base_fee_rule_for(block.header().parent_hash(), parent),
         })
     }
 
@@ -297,24 +298,25 @@ where
         parent: &SealedHeader<Header>,
         _attributes: Self::NextBlockEnvCtx,
     ) -> Result<ScrollBlockExecutionCtx, Self::Error> {
+        // Building, not validating: there is no header whose base fee could be wrong. The
+        // caller's attributes carry the fee, and the builder derived it from this very parent.
         Ok(ScrollBlockExecutionCtx {
             parent_hash: parent.hash(),
-            base_fee_parent: ScrollBaseFeeParent::from_header(parent.header()),
+            base_fee: ScrollBaseFeeRule::NoHeaderToCheck,
         })
     }
 }
 
-/// Extracts the base-fee rule's parent inputs, but only from the real parent.
+/// Builds the base-fee rule from a caller-supplied parent, but only from the real parent.
 ///
-/// The hash check keeps a caller that offers the wrong header from silently validating the
-/// base fee against it; the executor then fails closed on the missing inputs.
-fn base_fee_parent_of(
-    parent_hash: B256,
-    parent: &SealedHeader<Header>,
-) -> Option<ScrollBaseFeeParent> {
-    (parent.hash() == parent_hash)
-        .then(|| ScrollBaseFeeParent::from_header(parent.header()))
-        .flatten()
+/// The hash check keeps a caller that offers the wrong header from silently validating the base
+/// fee against it; the executor then fails closed on the missing parent.
+fn base_fee_rule_for(parent_hash: B256, parent: &SealedHeader<Header>) -> ScrollBaseFeeRule {
+    if parent.hash() != parent_hash {
+        return ScrollBaseFeeRule::MissingParent;
+    }
+    ScrollBaseFeeParent::from_header(parent.header())
+        .map_or(ScrollBaseFeeRule::MissingParent, ScrollBaseFeeRule::Check)
 }
 
 #[cfg(test)]
@@ -366,16 +368,16 @@ mod tests {
 
         // Without the parent there are no inputs, and block execution fails closed.
         assert_eq!(
-            config.context_for_block(&block).unwrap().base_fee_parent,
-            None
+            config.context_for_block(&block).unwrap().base_fee,
+            ScrollBaseFeeRule::MissingParent
         );
 
         let ctx = config
             .context_for_block_with_parent(&block, &parent)
             .unwrap();
         assert_eq!(
-            ctx.base_fee_parent,
-            Some(ScrollBaseFeeParent {
+            ctx.base_fee,
+            ScrollBaseFeeRule::Check(ScrollBaseFeeParent {
                 base_fee_per_gas: 15_680_000,
                 gas_used: 3_000_000,
                 gas_limit: 30_000_000,
@@ -394,31 +396,30 @@ mod tests {
             config
                 .context_for_block_with_parent(&block, &impostor)
                 .unwrap()
-                .base_fee_parent,
-            None
+                .base_fee,
+            ScrollBaseFeeRule::MissingParent
         );
     }
 
+    /// Building a block is not validating one, so the rule does not run: the payload builder,
+    /// the RPC pending block and `eth_simulateV1` all set the base fee themselves, and
+    /// simulation is free to zero it or override it. No import path reaches this constructor —
+    /// importers start from a block or a payload.
     #[test]
-    fn a_next_block_context_carries_the_parent_fee_inputs() {
+    fn a_next_block_context_has_no_header_to_check() {
         let config = ScrollEvmConfig::dogeos(DOGEOS_MAINNET.clone());
-        let parent = feynman_parent();
         let attributes = ScrollNextBlockEnvAttributes {
             timestamp: 1,
             suggested_fee_recipient: Address::ZERO,
             gas_limit: 30_000_000,
-            base_fee: 15_680_000,
+            base_fee: 0,
         };
         assert_eq!(
             config
-                .context_for_next_block(&parent, attributes)
+                .context_for_next_block(&feynman_parent(), attributes)
                 .unwrap()
-                .base_fee_parent,
-            Some(ScrollBaseFeeParent {
-                base_fee_per_gas: 15_680_000,
-                gas_used: 3_000_000,
-                gas_limit: 30_000_000,
-            })
+                .base_fee,
+            ScrollBaseFeeRule::NoHeaderToCheck
         );
     }
 
@@ -503,6 +504,74 @@ mod tests {
         let mut executor = config.batch_executor(EmptyDB::default());
         assert_eq!(
             executor.execute_one(&first).unwrap_err().to_string(),
+            "cannot check the base fee: the caller supplied no parent header"
+        );
+    }
+
+    /// The state-hook variant tracks the parent the same way; the engine tree's prewarming and
+    /// state-root work go through it, so a divergence here would check a different block.
+    #[test]
+    fn the_state_hook_variant_tracks_the_parent_too() {
+        use reth_evm::execute::Executor;
+        use reth_primitives_traits::RecoveredBlock;
+        use revm::database::EmptyDB;
+
+        const GAS_LIMIT: u64 = 30_000_000;
+        const OVERHEAD: u64 = 15_680_000;
+
+        let config = ScrollEvmConfig::dogeos(DOGEOS_MAINNET.clone());
+        let genesis = SealedHeader::seal_slow(Header {
+            number: 0,
+            gas_limit: GAS_LIMIT,
+            gas_used: GAS_LIMIT,
+            base_fee_per_gas: Some(OVERHEAD + 1_000_000_000),
+            ..Default::default()
+        });
+        let base_fee = crate::next_block_base_fee_with_overhead(
+            &**DOGEOS_MAINNET,
+            &ScrollBaseFeeParent::from_header(genesis.header()).unwrap(),
+            OVERHEAD,
+            genesis.timestamp() + 1,
+        );
+        let block = |base_fee| {
+            RecoveredBlock::new_sealed(
+                SealedBlock::seal_slow(Block::new(
+                    Header {
+                        number: 1,
+                        parent_hash: genesis.hash(),
+                        gas_limit: GAS_LIMIT,
+                        timestamp: genesis.timestamp() + 1,
+                        base_fee_per_gas: Some(base_fee),
+                        ..Default::default()
+                    },
+                    Default::default(),
+                )),
+                Vec::new(),
+            )
+        };
+        let no_hook = |_: alloy_evm::block::StateChangeSource, _: &revm::state::EvmState| {};
+
+        let mut executor = config.executor_with_parent(EmptyDB::default(), Some(genesis.clone()));
+        executor
+            .execute_one_with_state_hook(&block(base_fee), no_hook)
+            .expect("seeded with the parent");
+
+        let mut executor = config.executor_with_parent(EmptyDB::default(), Some(genesis.clone()));
+        let err = executor
+            .execute_one_with_state_hook(&block(base_fee + 1), no_hook)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.starts_with("invalid base fee: got "),
+            "unexpected error: {err}"
+        );
+
+        let mut executor = config.batch_executor(EmptyDB::default());
+        assert_eq!(
+            executor
+                .execute_one_with_state_hook(&block(base_fee), no_hook)
+                .unwrap_err()
+                .to_string(),
             "cannot check the base fee: the caller supplied no parent header"
         );
     }

@@ -45,6 +45,30 @@ impl ScrollBaseFeeParent {
     }
 }
 
+/// What the Feynman+ base-fee rule should do for the block an executor is about to run.
+///
+/// Fails closed by default: a context nobody filled in cannot quietly skip the rule.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ScrollBaseFeeRule {
+    /// The block has a header, and its base fee is checked against these parent inputs.
+    ///
+    /// Produced by `ConfigureEvm::context_for_block_with_parent` and
+    /// `ConfigureEngineEvm::context_for_payload_with_parent`, the two entry points every import
+    /// path goes through.
+    Check(ScrollBaseFeeParent),
+    /// The block has a header but the caller offered no usable parent, so the rule cannot run.
+    /// Executing a Feynman+ block to completion in this state is an error.
+    #[default]
+    MissingParent,
+    /// There is no header to check: the block is being built or simulated and its base fee is
+    /// the caller's own, from the payload attributes.
+    ///
+    /// Produced only by `ConfigureEvm::context_for_next_block`, which by construction has no
+    /// block to validate — it is handed a parent and attributes, not a block. No import path can
+    /// reach it: importers build their context from a block or a payload.
+    NoHeaderToCheck,
+}
+
 /// State-aware Feynman+ L2 base-fee calculator.
 #[derive(Clone, Debug, Default)]
 pub struct ScrollBaseFeeProvider<ChainSpec>(ChainSpec);
@@ -269,6 +293,31 @@ mod tests {
                 "{label}"
             );
         }
+        Ok(())
+    }
+
+    /// Slot 101 is 32 bytes and the overhead is a `u64`, so an overhead the system config
+    /// cannot represent saturates rather than wrapping. A guest that wrapped here would
+    /// compute a different base fee and split the chain, so this is a parity vector too.
+    #[test]
+    fn an_oversized_overhead_saturates_to_u64_max() -> eyre::Result<()> {
+        let provider = ScrollBaseFeeProvider::new(DOGEOS_MAINNET.clone());
+        let mut state = State::builder()
+            .with_database(EmptyDB::default())
+            .with_bundle_update()
+            .build();
+        state.insert_account_with_storage(
+            DOGEOS_MAINNET.config.l1_config.l2_system_config_address,
+            Default::default(),
+            PlainStorage::from_iter([(L2_BASE_FEE_OVERHEAD_SLOT, U256::MAX)]),
+        );
+        assert_eq!(provider.base_fee_overhead(&mut state)?, u64::MAX);
+
+        // Everything above the overhead saturates away, and the cap then applies.
+        assert_eq!(
+            provider.next_block_base_fee(&mut state, &parent(1_000_000_000, GAS_LIMIT), 2)?,
+            MAX_L2_BASE_FEE
+        );
         Ok(())
     }
 
