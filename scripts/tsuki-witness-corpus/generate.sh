@@ -5,12 +5,13 @@
 # The chain runs the Tsuki EIP-1559 parameters (denominator 48, elasticity 10) from genesis and
 # covers what the base-fee rule needs to be exercised end to end:
 #
-#   block 1  ordinary transfers
-#   block 2  a block filled past the gas target, so the base fee moves
-#   block 3  an L1 message alongside ordinary transactions
-#   block 4  a transaction that changes the L2 base-fee overhead at system config slot 101
-#   block 5  the first block judged by the new overhead
-#   block 6  one more ordinary block on the new overhead
+#   blocks 1-3  the system config contract does not exist yet, so the rule runs on the default
+#               overhead and its witnesses have to prove the account's absence: ordinary
+#               transfers, a block filled past the gas target so the base fee moves, and an L1
+#               message alongside ordinary transactions
+#   block 4     deploys the system config contract at the chain's configured address
+#   block 5     a transaction that sets the L2 base-fee overhead at slot 101
+#   blocks 6-7  the first blocks judged by the new overhead
 #
 # Blocks are driven through the Engine API exactly as the rollup node drives a sequencer, so the
 # witnesses come from the same `newPayload` path the base-fee rule is enforced on.
@@ -60,7 +61,8 @@ openssl rand -hex 32 > "$jwt"
   --datadir "$work_dir/data" \
   --http --http.addr 127.0.0.1 --http.port 18545 --http.api eth,debug,net,web3 \
   --authrpc.addr 127.0.0.1 --authrpc.port 18551 --authrpc.jwtsecret "$jwt" \
-  --disable-discovery --port 18303 \
+  --disable-discovery --port 18303 --network.scroll-wire=false \
+  --rpc.eth-proof-window 1024 \
   --log.file.directory "$work_dir/logs" \
   > "$work_dir/node.log" 2>&1 &
 node_pid=$!
@@ -149,32 +151,119 @@ txs="$(jq -c --arg tx "$(sign_tx "$recipient" 1000000000000 21000)" '. + [$tx]' 
 nonce=$(( nonce + 1 ))
 build_block "L1 message" "$txs"
 
-# 4: change the overhead at system config slot 101.
+# 4: deploy the system config contract at the chain's configured address. Its runtime code is
+# `SSTORE(101, calldataload(4)); STOP`, a stand-in for the real overhead setter; the deploy
+# address is the sender's CREATE address at this nonce, which genesis.json is pinned to.
+[[ "$nonce" == "7" ]] || { echo "the deploy nonce moved; repin l2SystemConfigAddress" >&2; exit 1; }
+deployed="$(cast compute-address "$sender" --nonce "$nonce" | awk '{print $NF}')"
+[[ "${deployed,,}" == "${system_config,,}" ]] \
+  || { echo "deploy address $deployed is not the configured $system_config" >&2; exit 1; }
+txs="$(jq -nc --arg tx "$(cast mktx --rpc-url "$rpc" --private-key "$sender_key" \
+  --legacy --gas-price 2000000000 --gas-limit 200000 --nonce "$nonce" \
+  --create 0x666004356065550060005260076019f3)" '[$tx]')"
+nonce=$(( nonce + 1 ))
+build_block "system config deployed" "$txs"
+[[ "$(cast code "$system_config" --rpc-url "$rpc")" == "0x60043560655500" ]] \
+  || { echo "the system config contract was not deployed" >&2; exit 1; }
+
+# 5: set the overhead at system config slot 101.
 txs="$(jq -nc --arg tx "$(sign_tx "$system_config" 0 200000 \
   'setL2BaseFeeOverhead(uint256)' "$new_overhead")" '[$tx]')"
 nonce=$(( nonce + 1 ))
 build_block "overhead change" "$txs"
+[[ "$(cast storage "$system_config" 101 --rpc-url "$rpc" | cast to-dec)" == "$new_overhead" ]] \
+  || { echo "the overhead was not set" >&2; exit 1; }
 
-# 5 and 6: the new overhead applies from here.
+# 6 and 7: the new overhead applies from here.
 for label in "first block on the new overhead" "second block on the new overhead"; do
   txs="$(jq -nc --arg tx "$(sign_tx "$recipient" 1000000000000 21000)" '[$tx]')"
   nonce=$(( nonce + 1 ))
   build_block "$label" "$txs"
 done
 
+# The import rules the witnesses depend on, checked against the running node.
+#
+# A block whose base fee does not follow the rule must be answered INVALID rather than taken, and
+# the node must still be there afterwards. The parent here has been `newPayload`-ed but not yet
+# made canonical by a forkchoice update, so this also covers an in-memory parent.
+echo "checking that a wrong base fee is rejected at newPayload"
+timestamp=$(( timestamp + 1 ))
+fcs="{\"headBlockHash\":\"$head_hash\",\"safeBlockHash\":\"$head_hash\",\"finalizedBlockHash\":\"$head_hash\"}"
+attrs="$(jq -nc --arg ts "$(cast to-hex "$timestamp")" '{
+    payloadAttributes: {
+      timestamp: $ts,
+      prevRandao: "0x0000000000000000000000000000000000000000000000000000000000000000",
+      suggestedFeeRecipient: "0x0000000000000000000000000000000000000000"
+    },
+    transactions: [], noTxPool: true, blockDataHint: {}, gasLimit: null
+  }')"
+payload_id="$(engine engine_forkchoiceUpdatedV1 "$fcs" "$attrs" | jq -r .payloadId)"
+good="$(engine engine_getPayloadV1 "$payload_id")"
+
+# Same payload, one wei off the rule's output. The block hash is recomputed so the payload is
+# well formed and only the fee is wrong.
+bad="$(jq -c --arg h "$(cast to-hex "$(( $(jq -r .baseFeePerGas <<<"$good" | cast to-dec) + 1 ))")" \
+  '.baseFeePerGas = $h' <<<"$good")"
+status="$(engine engine_newPayloadV1 "$bad" | jq -r .status)"
+[[ "$status" == "INVALID" ]] || { echo "a wrong base fee was answered $status, expected INVALID" >&2; exit 1; }
+
+# ... and the node is still alive and still takes the correct payload.
+status="$(engine engine_newPayloadV1 "$good" | jq -r .status)"
+[[ "$status" == "VALID" ]] || { echo "the correct payload was answered $status after the rejection" >&2; exit 1; }
+head_hash="$(jq -r .blockHash <<<"$good")"
+engine engine_forkchoiceUpdatedV1 \
+  "{\"headBlockHash\":\"$head_hash\",\"safeBlockHash\":\"$head_hash\",\"finalizedBlockHash\":\"$head_hash\"}" \
+  null > /dev/null
+
+# Building a block is not validating one: the pending block and a simulation with the fee rule
+# turned off must both still work.
+echo "checking that the pending block and eth_simulateV1 still build"
+cast block pending --rpc-url "$rpc" --json | jq -e '.number != null' > /dev/null \
+  || { echo "the pending block does not build" >&2; exit 1; }
+cast rpc --rpc-url "$rpc" eth_simulateV1 \
+  "$(jq -nc --arg from "$sender" --arg to "$recipient" '{
+        blockStateCalls: [ { calls: [ { from: $from, to: $to, value: "0x1" } ] } ],
+        validation: false
+      }')" latest | jq -e 'length > 0' > /dev/null \
+  || { echo "eth_simulateV1 with validation:false does not run" >&2; exit 1; }
+
 head_number="$(cast block-number --rpc-url "$rpc")"
+# Genesis has no parent, so it has no witness; the corpus starts at block 1, which is itself in
+# the segment where the system config account does not exist yet.
 echo "dumping witnesses for blocks 1..$head_number"
 for n in $(seq 1 "$head_number"); do
   cast rpc --rpc-url "$rpc" debug_executionWitness "$(cast to-hex "$n")" \
     | jq . > "$out_dir/$n.json"
 done
 
+# The guest reads the overhead from slot 101 of the system config account in each block's
+# pre-state, and must be able to tell an authenticated absence from a missing witness node. So
+# every witness has to carry the account's path in the state trie, whether or not the account is
+# there. Check it against the node's own proof for the parent state.
+check_witness_covers_system_config() { # block
+  local block="$1" parent proof missing=0 node
+  parent="$(cast to-hex "$(( block - 1 ))")"
+  proof="$(cast rpc --rpc-url "$rpc" eth_getProof "$system_config" \
+    '["0x65"]' "$parent")"
+  while read -r node; do
+    jq -e --arg n "$node" 'any(.state[]; ascii_downcase == ($n | ascii_downcase))' \
+      "$out_dir/$block.json" > /dev/null || { echo "  missing trie node $node"; missing=1; }
+  done < <(jq -r '(.accountProof + ((.storageProof // [])[].proof // []))[]' <<<"$proof")
+  [[ "$missing" == "0" ]] \
+    || { echo "witness for block $block does not cover the system config path" >&2; exit 1; }
+  echo "  block $block: witness covers the system config account path"
+}
+echo "checking that every witness carries the system config path"
+# Before the contract exists (an authenticated absence) and after it carries an overhead.
+check_witness_covers_system_config 2
+check_witness_covers_system_config 7
+
 jq -n \
   --arg commit "$node_commit" \
   --arg chain_id "$(cast chain-id --rpc-url "$rpc")" \
   --arg system_config "$system_config" \
   --arg head "$head_number" \
-  --argjson overhead_before 100000000 \
+  --argjson overhead_before 15680000 \
   --argjson overhead_after "$new_overhead" \
   '{
      generator: "scripts/tsuki-witness-corpus/generate.sh",
@@ -184,9 +273,11 @@ jq -n \
      l2_system_config_address: $system_config,
      base_fee_params: { max_change_denominator: 48, elasticity_multiplier: 10 },
      overhead_slot: 101,
+     note: "blocks 1-3 run before the system config account exists, on the default overhead",
      overhead_before_change: $overhead_before,
      overhead_after_change: $overhead_after,
-     overhead_changed_in_block: 4,
+     system_config_deployed_in_block: 4,
+     overhead_changed_in_block: 5,
      blocks: $head
    }' > "$out_dir/provenance.json"
 
