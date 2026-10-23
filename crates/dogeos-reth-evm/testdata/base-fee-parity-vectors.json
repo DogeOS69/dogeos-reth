@@ -1,0 +1,267 @@
+{
+  "chains": {
+    "chikyu": {
+      "description": "DOGEOS_CHIKYU, Feynman only",
+      "fee_params": [
+        8,
+        2
+      ]
+    },
+    "delayed-fee-params": {
+      "description": "mainnet genesis with tsukiTime 0 and tsukiFeeParamsTime 100",
+      "fee_params": [
+        [
+          8,
+          2
+        ],
+        [
+          48,
+          10
+        ]
+      ]
+    },
+    "mainnet": {
+      "description": "DOGEOS_MAINNET, Tsuki from genesis",
+      "fee_params": [
+        48,
+        10
+      ]
+    }
+  },
+  "default_overhead": 15680000,
+  "max_base_fee": 420000000000000,
+  "note": "Base-fee parity vectors for the Feynman+ rule: header.base_fee == next_block_base_fee(parent, overhead at L2SystemConfig slot 101 of the pre-state). Shared with the guest (stateless-block-verifier) so both sides compute the same number; a divergence on any row is a chain split. slot_101 of 0x0 means the slot is unset, so the default overhead applies.",
+  "vectors": [
+    {
+      "chain": "mainnet",
+      "expected_base_fee": 15680000,
+      "note": "unset slot, idle block",
+      "overhead": 15680000,
+      "parent_base_fee": 15680000,
+      "parent_gas_limit": 30000000,
+      "parent_gas_used": 0,
+      "slot_101": "0x0",
+      "timestamp": 2
+    },
+    {
+      "chain": "mainnet",
+      "expected_base_fee": 15680000,
+      "note": "unset slot, at the gas target",
+      "overhead": 15680000,
+      "parent_base_fee": 15680000,
+      "parent_gas_limit": 30000000,
+      "parent_gas_used": 3000000,
+      "slot_101": "0x0",
+      "timestamp": 2
+    },
+    {
+      "chain": "mainnet",
+      "expected_base_fee": 1015680000,
+      "note": "default overhead, at the gas target",
+      "overhead": 15680000,
+      "parent_base_fee": 1015680000,
+      "parent_gas_limit": 30000000,
+      "parent_gas_used": 3000000,
+      "slot_101": "0x0",
+      "timestamp": 2
+    },
+    {
+      "chain": "mainnet",
+      "expected_base_fee": 1203180000,
+      "note": "default overhead, full block",
+      "overhead": 15680000,
+      "parent_base_fee": 1015680000,
+      "parent_gas_limit": 30000000,
+      "parent_gas_used": 30000000,
+      "slot_101": "0x0",
+      "timestamp": 2
+    },
+    {
+      "chain": "mainnet",
+      "expected_base_fee": 994846667,
+      "note": "default overhead, empty block",
+      "overhead": 15680000,
+      "parent_base_fee": 1015680000,
+      "parent_gas_limit": 30000000,
+      "parent_gas_used": 0,
+      "slot_101": "0x0",
+      "timestamp": 2
+    },
+    {
+      "chain": "mainnet",
+      "expected_base_fee": 1000000000,
+      "note": "a one wei overhead replaces the default",
+      "overhead": 1,
+      "parent_base_fee": 1000000000,
+      "parent_gas_limit": 30000000,
+      "parent_gas_used": 3000000,
+      "slot_101": "0x1",
+      "timestamp": 2
+    },
+    {
+      "chain": "mainnet",
+      "expected_base_fee": 421020833333,
+      "note": "configured overhead, twice the target",
+      "overhead": 420000000000,
+      "parent_base_fee": 421000000000,
+      "parent_gas_limit": 30000000,
+      "parent_gas_used": 6000000,
+      "slot_101": "0x61c9f36800",
+      "timestamp": 2
+    },
+    {
+      "chain": "mainnet",
+      "expected_base_fee": 420000000001,
+      "note": "nothing above the overhead, full block: the one wei EIP-1559 floor",
+      "overhead": 420000000000,
+      "parent_base_fee": 420000000000,
+      "parent_gas_limit": 30000000,
+      "parent_gas_used": 30000000,
+      "slot_101": "0x61c9f36800",
+      "timestamp": 2
+    },
+    {
+      "chain": "mainnet",
+      "expected_base_fee": 420000000000,
+      "note": "nothing above the overhead, empty block",
+      "overhead": 420000000000,
+      "parent_base_fee": 420000000000,
+      "parent_gas_limit": 30000000,
+      "parent_gas_used": 0,
+      "slot_101": "0x61c9f36800",
+      "timestamp": 2
+    },
+    {
+      "chain": "mainnet",
+      "expected_base_fee": 420000000001,
+      "note": "parent below its own overhead saturates to zero",
+      "overhead": 420000000000,
+      "parent_base_fee": 419999999999,
+      "parent_gas_limit": 30000000,
+      "parent_gas_used": 30000000,
+      "slot_101": "0x61c9f36800",
+      "timestamp": 2
+    },
+    {
+      "chain": "mainnet",
+      "expected_base_fee": 420000000001,
+      "note": "parent base fee zero",
+      "overhead": 420000000000,
+      "parent_base_fee": 0,
+      "parent_gas_limit": 30000000,
+      "parent_gas_used": 30000000,
+      "slot_101": "0x61c9f36800",
+      "timestamp": 2
+    },
+    {
+      "chain": "mainnet",
+      "expected_base_fee": 420000000000000,
+      "note": "at the cap, full block",
+      "overhead": 420000000000,
+      "parent_base_fee": 420000000000000,
+      "parent_gas_limit": 30000000,
+      "parent_gas_used": 30000000,
+      "slot_101": "0x61c9f36800",
+      "timestamp": 2
+    },
+    {
+      "chain": "mainnet",
+      "expected_base_fee": 420000000000000,
+      "note": "one wei below the cap, full block",
+      "overhead": 420000000000,
+      "parent_base_fee": 419999999999999,
+      "parent_gas_limit": 30000000,
+      "parent_gas_used": 30000000,
+      "slot_101": "0x61c9f36800",
+      "timestamp": 2
+    },
+    {
+      "chain": "mainnet",
+      "expected_base_fee": 420000000000000,
+      "note": "at the cap, at the gas target",
+      "overhead": 15680000,
+      "parent_base_fee": 420000000000000,
+      "parent_gas_limit": 30000000,
+      "parent_gas_used": 3000000,
+      "slot_101": "0x0",
+      "timestamp": 2
+    },
+    {
+      "chain": "chikyu",
+      "expected_base_fee": 15680000,
+      "note": "unset slot, at the gas target",
+      "overhead": 15680000,
+      "parent_base_fee": 15680000,
+      "parent_gas_limit": 30000000,
+      "parent_gas_used": 15000000,
+      "slot_101": "0x0",
+      "timestamp": 2
+    },
+    {
+      "chain": "chikyu",
+      "expected_base_fee": 1140680000,
+      "note": "default overhead, full block",
+      "overhead": 15680000,
+      "parent_base_fee": 1015680000,
+      "parent_gas_limit": 30000000,
+      "parent_gas_used": 30000000,
+      "slot_101": "0x0",
+      "timestamp": 2
+    },
+    {
+      "chain": "chikyu",
+      "expected_base_fee": 890680000,
+      "note": "default overhead, empty block",
+      "overhead": 15680000,
+      "parent_base_fee": 1015680000,
+      "parent_gas_limit": 30000000,
+      "parent_gas_used": 0,
+      "slot_101": "0x0",
+      "timestamp": 2
+    },
+    {
+      "chain": "chikyu",
+      "expected_base_fee": 421125000000,
+      "note": "configured overhead, full block",
+      "overhead": 420000000000,
+      "parent_base_fee": 421000000000,
+      "parent_gas_limit": 30000000,
+      "parent_gas_used": 30000000,
+      "slot_101": "0x61c9f36800",
+      "timestamp": 2
+    },
+    {
+      "chain": "delayed-fee-params",
+      "expected_base_fee": 1225000000,
+      "note": "one second before the fee parameters change: still (8, 2)",
+      "overhead": 100000000,
+      "parent_base_fee": 1100000000,
+      "parent_gas_limit": 30000000,
+      "parent_gas_used": 30000000,
+      "slot_101": "0x5f5e100",
+      "timestamp": 99
+    },
+    {
+      "chain": "delayed-fee-params",
+      "expected_base_fee": 1287500000,
+      "note": "at the fee parameter activation: (48, 10)",
+      "overhead": 100000000,
+      "parent_base_fee": 1100000000,
+      "parent_gas_limit": 30000000,
+      "parent_gas_used": 30000000,
+      "slot_101": "0x5f5e100",
+      "timestamp": 100
+    },
+    {
+      "chain": "delayed-fee-params",
+      "expected_base_fee": 1287500000,
+      "note": "after the fee parameter activation: (48, 10)",
+      "overhead": 100000000,
+      "parent_base_fee": 1100000000,
+      "parent_gas_limit": 30000000,
+      "parent_gas_used": 30000000,
+      "slot_101": "0x5f5e100",
+      "timestamp": 101
+    }
+  ]
+}

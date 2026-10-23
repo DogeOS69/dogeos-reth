@@ -18,6 +18,32 @@ pub const DEFAULT_BASE_FEE_OVERHEAD: U256 = U256::from_limbs([15_680_000, 0, 0, 
 /// Precision retained for external callers that share the inherited Scroll fee constants.
 pub const L1_BASE_FEE_PRECISION: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 
+/// The parent-header inputs of the Feynman+ base-fee rule.
+///
+/// Carries only the inputs needed by the executor, without cloning the header.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScrollBaseFeeParent {
+    /// Parent base fee per gas.
+    pub base_fee_per_gas: u64,
+    /// Parent gas used.
+    pub gas_used: u64,
+    /// Parent gas limit.
+    pub gas_limit: u64,
+}
+
+impl ScrollBaseFeeParent {
+    /// Extracts the rule's inputs from a parent header.
+    ///
+    /// Returns `None` for a header without a base fee, which no Feynman+ header may be.
+    pub fn from_header<H: BlockHeader>(header: &H) -> Option<Self> {
+        Some(Self {
+            base_fee_per_gas: header.base_fee_per_gas()?,
+            gas_used: header.gas_used(),
+            gas_limit: header.gas_limit(),
+        })
+    }
+}
+
 /// State-aware Feynman+ L2 base-fee calculator.
 #[derive(Clone, Debug, Default)]
 pub struct ScrollBaseFeeProvider<ChainSpec>(ChainSpec);
@@ -43,36 +69,80 @@ where
         DB: Database,
         H: BlockHeader,
     {
-        let system_config = self.0.chain_config().l1_config.l2_system_config_address;
-        let configured_overhead = db.storage(system_config, L2_BASE_FEE_OVERHEAD_SLOT)?;
-        let overhead = if configured_overhead == U256::ZERO {
-            DEFAULT_BASE_FEE_OVERHEAD
-        } else {
-            configured_overhead
-        }
-        .saturating_to::<u64>();
-
-        let parent_base_fee = parent
-            .base_fee_per_gas()
+        let parent = ScrollBaseFeeParent::from_header(parent)
             .expect("Feynman+ parent headers carry a base fee");
-        let parent_eip1559_base_fee = parent_base_fee.saturating_sub(overhead);
-        let next_eip1559_base_fee = calc_next_block_base_fee(
-            parent.gas_used(),
-            parent.gas_limit(),
-            parent_eip1559_base_fee,
-            self.0.base_fee_params_at_timestamp(timestamp),
-        );
-
-        Ok(next_eip1559_base_fee
-            .saturating_add(overhead)
-            .min(MAX_L2_BASE_FEE))
+        self.next_block_base_fee_for_parent(db, &parent, timestamp)
     }
+
+    /// Reads the L2 base-fee overhead from the system config contract in `db`.
+    pub fn base_fee_overhead<DB: Database>(&self, db: &mut DB) -> Result<u64, DB::Error> {
+        base_fee_overhead(&self.0, db)
+    }
+
+    /// Calculates the next block's base fee from the parent's already-extracted inputs.
+    pub fn next_block_base_fee_for_parent<DB: Database>(
+        &self,
+        db: &mut DB,
+        parent: &ScrollBaseFeeParent,
+        timestamp: u64,
+    ) -> Result<u64, DB::Error> {
+        let overhead = self.base_fee_overhead(db)?;
+        Ok(next_block_base_fee_with_overhead(
+            &self.0, parent, overhead, timestamp,
+        ))
+    }
+}
+
+/// Reads the L2 base-fee overhead from the system config contract in `db`.
+///
+/// A zero (or unset) slot means the default overhead. This is a pure read: it loads the system
+/// config account and its slot 101 into the state it is given and changes nothing, which is
+/// what puts the slot into an execution witness.
+pub fn base_fee_overhead<ChainSpec, DB>(
+    chain_spec: &ChainSpec,
+    db: &mut DB,
+) -> Result<u64, DB::Error>
+where
+    ChainSpec: ChainConfig<Config = ScrollChainConfig>,
+    DB: Database,
+{
+    let system_config = chain_spec.chain_config().l1_config.l2_system_config_address;
+    let configured_overhead = db.storage(system_config, L2_BASE_FEE_OVERHEAD_SLOT)?;
+    Ok(if configured_overhead == U256::ZERO {
+        DEFAULT_BASE_FEE_OVERHEAD
+    } else {
+        configured_overhead
+    }
+    .saturating_to::<u64>())
+}
+
+/// Calculates the next block's base fee from the parent's inputs and a known overhead.
+///
+/// The one place the formula lives; every other entry point reads the overhead and defers to
+/// this.
+pub fn next_block_base_fee_with_overhead<ChainSpec: EthChainSpec>(
+    chain_spec: &ChainSpec,
+    parent: &ScrollBaseFeeParent,
+    overhead: u64,
+    timestamp: u64,
+) -> u64 {
+    let parent_eip1559_base_fee = parent.base_fee_per_gas.saturating_sub(overhead);
+    let next_eip1559_base_fee = calc_next_block_base_fee(
+        parent.gas_used,
+        parent.gas_limit,
+        parent_eip1559_base_fee,
+        chain_spec.base_fee_params_at_timestamp(timestamp),
+    );
+
+    next_eip1559_base_fee
+        .saturating_add(overhead)
+        .min(MAX_L2_BASE_FEE)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dogeos_chainspec::DOGEOS_MAINNET;
+    use dogeos_chainspec::{DOGEOS_CHIKYU, DOGEOS_MAINNET};
     use revm::database::{EmptyDB, State, states::plain_account::PlainStorage};
 
     /// Mainnet-scale block gas limit; with elasticity 10 the target is 3M gas.
@@ -111,6 +181,133 @@ mod tests {
             &parent(parent_base_fee, gas_used),
             2,
         )?)
+    }
+
+    /// Shared with SBV; both calculator entry points must match these expectations.
+    /// Set `UPDATE_PARITY_VECTORS=1` to regenerate them for review.
+    const PARITY_VECTORS_PATH: &str = "testdata/base-fee-parity-vectors.json";
+
+    fn parity_spec(chain: &str) -> dogeos_chainspec::DogeosChainSpec {
+        match chain {
+            // Tsuki from genesis: denominator 48, elasticity 10.
+            "mainnet" => (**DOGEOS_MAINNET).clone(),
+            // Before Chikyu's Tsuki activation: denominator 8, elasticity 2.
+            "chikyu" => (**DOGEOS_CHIKYU).clone(),
+            // Mainnet with the fee parameters delayed past the Tsuki execution transition, so
+            // rows on either side of `tsuki_fee_params_time` cross the boundary.
+            "delayed-fee-params" => {
+                let mut genesis = DOGEOS_MAINNET.genesis().clone();
+                genesis
+                    .config
+                    .extra_fields
+                    .insert("tsukiTime".into(), 0.into());
+                genesis
+                    .config
+                    .extra_fields
+                    .insert("tsukiFeeParamsTime".into(), 100.into());
+                dogeos_chainspec::DogeosChainSpec::from_custom_genesis(genesis)
+            }
+            other => panic!("unknown parity chain {other}"),
+        }
+    }
+
+    #[test]
+    fn parity_vectors_hold_for_both_entry_points() -> eyre::Result<()> {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(PARITY_VECTORS_PATH);
+        let mut document: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+        let update = std::env::var_os("UPDATE_PARITY_VECTORS").is_some();
+
+        for row in document["vectors"]
+            .as_array_mut()
+            .expect("vectors is an array")
+        {
+            let chain = row["chain"].as_str().expect("chain").to_owned();
+            let spec = parity_spec(&chain);
+            let timestamp = row["timestamp"].as_u64().expect("timestamp");
+            let slot_101 = U256::from_str_radix(
+                row["slot_101"]
+                    .as_str()
+                    .expect("slot_101")
+                    .trim_start_matches("0x"),
+                16,
+            )?;
+            let inputs = ScrollBaseFeeParent {
+                base_fee_per_gas: row["parent_base_fee"].as_u64().expect("parent_base_fee"),
+                gas_used: row["parent_gas_used"].as_u64().expect("parent_gas_used"),
+                gas_limit: row["parent_gas_limit"].as_u64().expect("parent_gas_limit"),
+            };
+            let label = format!("{chain} {}", row["note"].as_str().unwrap_or_default());
+
+            // Through the state, exactly as the payload builder calls it.
+            let provider = ScrollBaseFeeProvider::new(spec.clone());
+            let mut state = State::builder()
+                .with_database(EmptyDB::default())
+                .with_bundle_update()
+                .build();
+            if slot_101 != U256::ZERO {
+                state.insert_account_with_storage(
+                    spec.config.l1_config.l2_system_config_address,
+                    Default::default(),
+                    PlainStorage::from_iter([(L2_BASE_FEE_OVERHEAD_SLOT, slot_101)]),
+                );
+            }
+            let mut header = parent(inputs.base_fee_per_gas, inputs.gas_used);
+            header.gas_limit = inputs.gas_limit;
+            header.timestamp = timestamp.saturating_sub(1);
+            let from_state = provider.next_block_base_fee(&mut state, &header, timestamp)?;
+
+            // And from extracted inputs, as the block executor calls it.
+            let overhead = provider.base_fee_overhead(&mut state)?;
+            let from_parts = next_block_base_fee_with_overhead(&spec, &inputs, overhead, timestamp);
+            assert_eq!(from_state, from_parts, "{label}: entry points disagree");
+            assert_eq!(
+                overhead,
+                row["overhead"].as_u64().expect("overhead"),
+                "{label}: overhead"
+            );
+
+            if update {
+                row["expected_base_fee"] = from_state.into();
+            } else {
+                assert_eq!(
+                    from_state,
+                    row["expected_base_fee"]
+                        .as_u64()
+                        .expect("expected_base_fee"),
+                    "{label}"
+                );
+            }
+        }
+
+        if update {
+            std::fs::write(&path, serde_json::to_string_pretty(&document)? + "\n")?;
+        }
+        Ok(())
+    }
+
+    /// Slot 101 is 32 bytes and the overhead is a `u64`, so an overhead the system config
+    /// cannot represent saturates rather than wrapping. A guest that wrapped here would
+    /// compute a different base fee and split the chain, so this is a parity vector too.
+    #[test]
+    fn an_oversized_overhead_saturates_to_u64_max() -> eyre::Result<()> {
+        let provider = ScrollBaseFeeProvider::new(DOGEOS_MAINNET.clone());
+        let mut state = State::builder()
+            .with_database(EmptyDB::default())
+            .with_bundle_update()
+            .build();
+        state.insert_account_with_storage(
+            DOGEOS_MAINNET.config.l1_config.l2_system_config_address,
+            Default::default(),
+            PlainStorage::from_iter([(L2_BASE_FEE_OVERHEAD_SLOT, U256::MAX)]),
+        );
+        assert_eq!(provider.base_fee_overhead(&mut state)?, u64::MAX);
+
+        // Everything above the overhead saturates away, and the cap then applies.
+        assert_eq!(
+            provider.next_block_base_fee(&mut state, &parent(1_000_000_000, GAS_LIMIT), 2)?,
+            MAX_L2_BASE_FEE
+        );
+        Ok(())
     }
 
     #[test]

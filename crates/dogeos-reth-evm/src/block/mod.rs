@@ -178,6 +178,12 @@ where
     type Result = ScrollTxResult<<E as Evm>::HaltReason>;
 
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
+        // Witness replay must include the system-config account and slot 101, even when
+        // transactions do not touch them. Read before any fork transition changes state.
+        crate::base_fee_overhead(&self.spec, self.evm.db_mut()).map_err(|err| {
+            BlockExecutionError::msg(format!("failed to read the base-fee overhead: {err}"))
+        })?;
+
         // apply gas oracle predeploy upgrade at Feynman transition block.
         #[allow(clippy::collapsible_if)]
         if self
@@ -455,6 +461,7 @@ mod tests {
     use alloy_evm::{EvmEnv, block::StateChangePreBlockSource};
     use alloy_primitives::{Address, Bytes};
     use dogeos_chainspec::DOGEOS_MAINNET;
+    use reth_revm::witness::ExecutionWitnessRecord;
     use revm::{
         context::{
             BlockEnv, CfgEnv, TxEnv,
@@ -663,5 +670,85 @@ mod tests {
         executor.set_state_hook(None);
 
         assert_eq!(drops.load(Ordering::Relaxed), 1);
+    }
+    fn set_overhead(db: &mut State<EmptyDB>, overhead: u64) {
+        db.insert_account_with_storage(
+            DOGEOS_MAINNET.config.l1_config.l2_system_config_address,
+            Default::default(),
+            revm::database::states::plain_account::PlainStorage::from_iter([(
+                U256::from(101),
+                U256::from(overhead),
+            )]),
+        );
+    }
+
+    /// The slot-101 read has to reach the state an execution witness is recorded from, or
+    /// `debug_executionWitness` will not carry the proof the guest needs.
+    ///
+    /// Returns the recorded witness for the block's pre-execution state.
+    fn witness_after_pre_execution(overhead: Option<u64>) -> ExecutionWitnessRecord {
+        let mut evm = empty_state_evm();
+        if let Some(overhead) = overhead {
+            set_overhead(evm.db_mut(), overhead);
+        }
+        let mut executor = ScrollBlockExecutor::new(
+            evm,
+            ScrollBlockExecutionCtx::default(),
+            DOGEOS_MAINNET.clone(),
+            ScrollRethReceiptBuilder,
+        );
+        executor.apply_pre_execution_changes().unwrap();
+        ExecutionWitnessRecord::from_executed_state(executor.evm_mut().db_mut())
+    }
+
+    #[test]
+    fn the_witness_carries_the_system_config_slot() {
+        let system_config = DOGEOS_MAINNET.config.l1_config.l2_system_config_address;
+        let hashed_address = alloy_primitives::keccak256(system_config);
+        let hashed_slot = alloy_primitives::keccak256(B256::from(U256::from(101)));
+
+        let record = witness_after_pre_execution(Some(15_680_001));
+        assert!(
+            record
+                .hashed_state
+                .accounts
+                .get(&hashed_address)
+                .is_some_and(Option::is_some),
+            "the witness does not carry the system config account"
+        );
+        assert!(
+            record
+                .hashed_state
+                .storages
+                .get(&hashed_address)
+                .is_some_and(|storage| storage.storage.contains_key(&hashed_slot)),
+            "the witness does not carry slot 101"
+        );
+        // The preimages a stateless verifier needs to re-derive both hashed keys.
+        assert!(record.keys.contains(&system_config.to_vec().into()));
+        assert!(record.keys.contains(&B256::from(U256::from(101)).into()));
+    }
+
+    /// Mainnet genesis does not allocate the system config contract, so the common case is an
+    /// account that is not there. An absence still has to be proven, not assumed: the witness
+    /// must target the account's path in the state trie so a stateless verifier can check that
+    /// nothing is there and fall back to the default overhead.
+    #[test]
+    fn the_witness_proves_an_absent_system_config_account() {
+        let system_config = DOGEOS_MAINNET.config.l1_config.l2_system_config_address;
+        let hashed_address = alloy_primitives::keccak256(system_config);
+
+        let record = witness_after_pre_execution(None);
+        let account = record
+            .hashed_state
+            .accounts
+            .get(&hashed_address)
+            .expect("the witness does not target the system config account");
+        assert!(
+            account.is_none(),
+            "the account should be absent in this fixture"
+        );
+        // The multiproof is taken over the hashed-state targets, so targeting the account is
+        // what makes its absence provable.
     }
 }
