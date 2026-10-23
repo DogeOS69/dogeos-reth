@@ -1,6 +1,6 @@
 {
   "schema": "dogeos/chikyu-hardfork-schedule/v1",
-  "provenance": "Public Chikyu RPC https://rpc.testnet.dogeos.com observed 2026-08-04; genesis allocation frozen in crates/dogeos-chainspec/res/genesis/chikyu_dogeos.json",
+  "provenance": "Checkpoint and genesis hash: public Chikyu RPC https://rpc.testnet.dogeos.com observed 2026-08-04. Schedule: network genesis supplied by Akase on 2026-10-20, preserved in crates/dogeos-chainspec/res/genesis/chikyu_dogeos.json.",
   "chainId": "0x5fdaf3",
   "genesis": {
     "hash": "0xf9f7c524dce38b51a4d28ec2f18680773e5ba9d3f5f430d0e05f92cfeb65b1bc",
@@ -18,9 +18,9 @@
   },
   "schedule": {
     "feynman": { "condition": "timestamp", "value": 0 },
-    "galileo": { "condition": "never" },
-    "galileoV2": { "condition": "never" },
-    "tsuki": { "condition": "never" }
+    "galileo": { "condition": "timestamp", "value": 1790030800 },
+    "galileoV2": { "condition": "timestamp", "value": 1790030800 },
+    "tsuki": { "condition": "timestamp", "value": 1790030900 }
   },
   "stateEvidence": {
     "l1GasPriceOracle": "0x5300000000000000000000000000000000000002",
