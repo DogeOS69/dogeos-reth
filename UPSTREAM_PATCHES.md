@@ -21,7 +21,7 @@ production dependency.
 - Upstream source commit: `3a136fc8c38221e060cbc31ef5c5fa345cf0e17a`
 - DogeOS backport commit: `90e08ba40` in `DogeOS69/reth`
 - Stack base revision: `5235056be94c584edce6ba7900f163aaa9b8cda0`
-- Selected stack revision: `972366a0bfc11cf6a0d5dc79d5e779cd81e32232`
+- Selected stack tag: `v2.0.0-dogeos-20261023.1` (`42b56304227691327c44415262d23ff680a44ffb`)
 - Generic rationale: successful RocksDB transactions and batch commits must enable WAL sync so
   acknowledged writes survive a host crash. The patch contains no DogeOS protocol behavior and
   does not change storage encodings.
@@ -62,7 +62,7 @@ scripts/audit-rocksdb-durability.sh
 - Upstream merge commit: `62808bd060e4c7398e3fb6df93881950b1433b18`
 - DogeOS patch PR: `DogeOS69/reth#5`
 - DogeOS behavior commit: `04e5c6ff415a3e8d1e299d6419b3b31ac88f3a8e`
-- Selected stack revision: `972366a0bfc11cf6a0d5dc79d5e779cd81e32232`
+- Selected stack tag: `v2.0.0-dogeos-20261023.1` (`42b56304227691327c44415262d23ff680a44ffb`)
 - Generic rationale: EIP-3607 rejects a sender only when the account contains nonempty code.
   Native Storage V2 represents an explicitly empty genesis `code` value as
   `Some(KECCAK_EMPTY)`, which must remain eligible to send transactions. The change preserves
@@ -89,7 +89,7 @@ The standalone node retains the DogeOS-owned EVM dependency used by the
 oracle:
 
 ```toml
-revm-scroll = { git = "https://github.com/DogeOS69/dogeos-revm.git", rev = "d4ac4dac66e5648099a0277eb63f606fc04caff7", default-features = false }
+revm-scroll = { git = "https://github.com/DogeOS69/dogeos-revm.git", tag = "tsuki-v0.9", default-features = false }
 ```
 
 `revm-scroll` is a required DogeOS dependency, not an upstream Reth patch. Its
