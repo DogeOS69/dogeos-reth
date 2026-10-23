@@ -94,13 +94,7 @@ impl DogeosChainSpecBuilder {
 
     pub fn build(self, config: ScrollChainConfig) -> DogeosChainSpec {
         let inner = self.inner.build();
-        build_spec_with_hardforks(
-            inner.genesis,
-            config,
-            inner.hardforks,
-            None,
-            Some(inner.chain),
-        )
+        build_spec_with_hardforks(inner.genesis, config, inner.hardforks, Some(inner.chain))
     }
 }
 
@@ -132,12 +126,12 @@ pub struct DogeosChainSpec {
 impl DogeosChainSpec {
     /// Builds a supported Feynman+ custom chain from its genesis document.
     pub fn from_custom_genesis(genesis: Genesis) -> Self {
-        let config = ScrollChainConfig::extract_from(&genesis.config.extra_fields)
-            .expect("custom DogeOS genesis must contain the inherited scroll config");
+        let config = ScrollChainConfig::try_from(&genesis.config.extra_fields)
+            .expect("custom DogeOS genesis must contain a valid inherited scroll config");
         let dogeos_forks = DogeosHardforkInfo::try_from(&genesis.config.extra_fields)
             .expect("custom DogeOS genesis hardfork timestamps must be valid")
             .activation_schedule();
-        build_spec(genesis, config, dogeos_forks, None, None)
+        build_spec(genesis, config, dogeos_forks, None)
     }
 
     /// Preserve legacy peer compatibility through Tsuki; only later timestamp forks contribute.
@@ -259,14 +253,12 @@ pub(crate) fn build_spec(
     genesis: Genesis,
     config: ScrollChainConfig,
     dogeos_forks: [(DogeosHardfork, ForkCondition); 4],
-    known_hash: Option<B256>,
     chain_override: Option<Chain>,
 ) -> DogeosChainSpec {
     build_spec_with_hardforks(
         genesis,
         config,
         feynman_hardforks(dogeos_forks),
-        known_hash,
         chain_override,
     )
 }
@@ -277,7 +269,6 @@ fn build_spec_with_hardforks(
     genesis: Genesis,
     config: ScrollChainConfig,
     mut hardforks: ChainHardforks,
-    known_hash: Option<B256>,
     chain_override: Option<Chain>,
 ) -> DogeosChainSpec {
     let fee_params_time = DogeosHardforkInfo::try_from(&genesis.config.extra_fields)
@@ -290,10 +281,7 @@ fn build_spec_with_hardforks(
 
     let chain = chain_override.unwrap_or_else(|| Chain::from_id(genesis.config.chain_id));
     let header = make_genesis_header(&genesis);
-    let genesis_header = match known_hash {
-        Some(hash) => SealedHeader::new(header, hash),
-        None => SealedHeader::new_unhashed(header),
-    };
+    let genesis_header = SealedHeader::new_unhashed(header);
 
     DogeosChainSpec {
         inner: ChainSpec {
@@ -401,7 +389,32 @@ mod tests {
         assert!(DOGEOS_MAINNET.is_tsuki_active_at_timestamp(0));
         assert!(DOGEOS_DEV.is_tsuki_active_at_timestamp(0));
         assert!(!DOGEOS_CHIKYU.is_tsuki_active_at_timestamp(0));
-        assert!(!DOGEOS_CHIKYU.is_tsuki_active_at_timestamp(u64::MAX));
+        assert!(DOGEOS_CHIKYU.is_tsuki_active_at_timestamp(u64::MAX));
+    }
+
+    #[test]
+    fn custom_genesis_rejects_unknown_scroll_fields() {
+        for document in [
+            include_str!("../res/genesis/dogeos.json"),
+            include_str!("../res/genesis/chikyu_dogeos.json"),
+        ] {
+            let genesis: Genesis = serde_json::from_str(document).unwrap();
+            DogeosChainSpec::from_custom_genesis(genesis.clone());
+
+            for (key, value) in [
+                ("l1DataFeeBufferCheck", serde_json::json!(false)),
+                ("l1DataFeeBufferCheck", serde_json::json!(true)),
+                ("unknownPolicy", serde_json::json!(true)),
+            ] {
+                let mut invalid = genesis.clone();
+                invalid.config.extra_fields.get_mut("scroll").unwrap()[key] = value;
+                assert!(
+                    std::panic::catch_unwind(|| DogeosChainSpec::from_custom_genesis(invalid))
+                        .is_err(),
+                    "custom genesis must reject unknown Scroll field {key}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -614,8 +627,51 @@ mod tests {
     }
 
     #[test]
-    fn chikyu_preserves_published_genesis_hash() {
-        assert_eq!(DOGEOS_CHIKYU.genesis_hash(), DOGEOS_CHIKYU_GENESIS_HASH);
+    fn chikyu_genesis_hash_and_config_match_the_network_document() {
+        let genesis: Genesis =
+            serde_json::from_str(include_str!("../res/genesis/chikyu_dogeos.json")).unwrap();
+        let expected = alloy_primitives::b256!(
+            "f9f7c524dce38b51a4d28ec2f18680773e5ba9d3f5f430d0e05f92cfeb65b1bc"
+        );
+        assert_eq!(make_genesis_header(&genesis).hash_slow(), expected);
+        assert_eq!(DOGEOS_CHIKYU_GENESIS_HASH, expected);
+        assert_eq!(DOGEOS_CHIKYU.genesis_hash(), expected);
+        assert_eq!(DOGEOS_CHIKYU.genesis_header().hash_slow(), expected);
+        assert_eq!(DOGEOS_CHIKYU.config.l1_config.l1_chain_id, 111_111);
+        assert_eq!(ScrollChainConfig::dogeos_chikyu(), DOGEOS_CHIKYU.config);
+        assert_eq!(
+            DogeosChainSpec::from_custom_genesis(genesis),
+            **DOGEOS_CHIKYU,
+            "Chikyu JSON and built-in specs must be identical"
+        );
+        assert_eq!(
+            DogeosChainSpecBuilder::dogeos_chikyu().build(DOGEOS_CHIKYU.config),
+            **DOGEOS_CHIKYU,
+            "rebuilding Chikyu must preserve its computed hash and configuration"
+        );
+    }
+
+    #[test]
+    fn chikyu_hardforks_match_the_network_document() {
+        for (fork, timestamp) in [
+            (DogeosHardfork::Feynman, 0),
+            (DogeosHardfork::Galileo, 1_790_030_800),
+            (DogeosHardfork::GalileoV2, 1_790_030_800),
+            (DogeosHardfork::Tsuki, 1_790_030_900),
+        ] {
+            assert_eq!(
+                DOGEOS_CHIKYU.fork(fork),
+                ForkCondition::Timestamp(timestamp)
+            );
+            if timestamp > 0 {
+                assert!(!DOGEOS_CHIKYU.fork(fork).active_at_timestamp(timestamp - 1));
+            }
+            assert!(DOGEOS_CHIKYU.fork(fork).active_at_timestamp(timestamp));
+        }
+        let parsed = DogeosHardforkInfo::try_from(&DOGEOS_CHIKYU.genesis().config.extra_fields)
+            .unwrap()
+            .activation_schedule();
+        assert_eq!(DogeosHardfork::chikyu(), parsed);
     }
 
     #[test]
@@ -748,7 +804,7 @@ mod tests {
                 &*DOGEOS_MAINNET,
                 ForkHash::from(DOGEOS_MAINNET_GENESIS_HASH),
             ),
-            (&*DOGEOS_CHIKYU, ForkHash([0x6c, 0x55, 0x6e, 0x50])),
+            (&*DOGEOS_CHIKYU, ForkHash::from(DOGEOS_CHIKYU_GENESIS_HASH)),
             (&*DOGEOS_DEV, ForkHash::from(DOGEOS_DEV.genesis_hash())),
         ] {
             let expected = ForkId { hash, next: 0 };
@@ -766,7 +822,7 @@ mod tests {
                 assert_eq!(spec.fork_id(&head), expected);
                 assert_eq!(spec.fork_filter(head).current(), expected);
             }
-            // Chikyu ends in Tsuki = Never; this must still return the legacy ID.
+            // Timestamp forks through Tsuki preserve the genesis-derived fork ID.
             assert_eq!(spec.latest_fork_id(), expected);
         }
     }
@@ -838,6 +894,12 @@ mod tests {
     #[test]
     fn unscheduled_tsuki_and_empty_schedules_preserve_genesis_fork_id() {
         let mut spec = (**DOGEOS_CHIKYU).clone();
+        spec.inner
+            .hardforks
+            .insert(DogeosHardfork::Tsuki, ForkCondition::Never);
+        spec.inner
+            .hardforks
+            .insert(TsukiFeeParams, ForkCondition::Never);
         spec.inner.hardforks.insert(
             DogeosHardfork::GalileoV2,
             ForkCondition::Timestamp(u64::MAX),

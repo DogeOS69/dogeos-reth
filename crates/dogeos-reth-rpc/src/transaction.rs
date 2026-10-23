@@ -226,8 +226,8 @@ mod tests {
         let callee = Address::repeat_byte(0x11);
         let calldata = Bytes::from_static(&[0xab, 0xcd, 0xef, 0x01]);
 
-        // Chikyu is Feynman-only (compression-ratio branch); mainnet activates Tsuki
-        // at genesis, which runs the Galileo+ compressed-size branch. A zero base fee
+        // Chikyu's historical checkpoint uses Feynman (compression-ratio branch).
+        // Mainnet activates Tsuki at genesis, using the Galileo+ compressed-size branch. A zero base fee
         // keeps gas cost at zero, so a zero-balance caller can only reach `Success`
         // when the Scroll L1 fee handler consumes the simulation metadata and computes
         // a zero L1 cost -- a missing field would instead error or panic there. This is

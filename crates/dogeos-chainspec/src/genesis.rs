@@ -4,7 +4,7 @@ use crate::{
     DOGEOS_CHIKYU_L1_CONFIG, DOGEOS_DEV_L1_CONFIG, DOGEOS_MAINNET_L1_CONFIG,
     MAX_TX_PAYLOAD_BYTES_PER_BLOCK, SCROLL_FEE_VAULT_ADDRESS,
 };
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use alloy_serde::OtherFields;
 use serde::{Deserialize, Deserializer, de::Error};
 
@@ -114,13 +114,41 @@ impl TryFrom<&OtherFields> for DogeosHardforkInfo {
 
 /// DogeOS sequencer configuration encoded under the inherited `scroll` genesis key.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", from = "ScrollChainConfigJson")]
 pub struct ScrollChainConfig {
     pub fee_vault_address: Option<Address>,
     pub max_tx_payload_bytes_per_block: usize,
     pub l1_config: L1Config,
-    #[serde(default)]
-    pub l1_data_fee_buffer_check: bool,
+}
+
+/// Strict input schema including recognized metadata from published l2geth genesis documents.
+///
+/// The four legacy metadata fields do not configure Reth execution and are not emitted when
+/// serializing the runtime configuration. All other unrecognized fields are rejected.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ScrollChainConfigJson {
+    fee_vault_address: Option<Address>,
+    max_tx_payload_bytes_per_block: usize,
+    l1_config: L1Config,
+    #[serde(rename = "useZktrie")]
+    _use_zktrie: Option<bool>,
+    #[serde(rename = "maxTxPerBlock")]
+    _max_tx_per_block: Option<u64>,
+    #[serde(rename = "genesisStateRoot")]
+    _genesis_state_root: Option<B256>,
+    #[serde(rename = "missingHeaderFieldsSHA256")]
+    _missing_header_fields_sha256: Option<B256>,
+}
+
+impl From<ScrollChainConfigJson> for ScrollChainConfig {
+    fn from(config: ScrollChainConfigJson) -> Self {
+        Self {
+            fee_vault_address: config.fee_vault_address,
+            max_tx_payload_bytes_per_block: config.max_tx_payload_bytes_per_block,
+            l1_config: config.l1_config,
+        }
+    }
 }
 
 impl ScrollChainConfig {
@@ -141,7 +169,6 @@ impl ScrollChainConfig {
             fee_vault_address: Some(SCROLL_FEE_VAULT_ADDRESS),
             max_tx_payload_bytes_per_block: MAX_TX_PAYLOAD_BYTES_PER_BLOCK,
             l1_config,
-            l1_data_fee_buffer_check: false,
         }
     }
 
@@ -155,8 +182,8 @@ impl TryFrom<&OtherFields> for ScrollChainConfig {
 
     fn try_from(others: &OtherFields) -> Result<Self, Self::Error> {
         match others.get_deserialized::<Self>("scroll") {
-            Some(Ok(config)) => Ok(config),
-            _ => Err(serde_json::Error::missing_field("scroll")),
+            Some(config) => config,
+            None => Err(serde_json::Error::missing_field("scroll")),
         }
     }
 }
@@ -203,6 +230,51 @@ mod tests {
         ] {
             let fields: OtherFields = serde_json::from_str(json).unwrap();
             assert!(DogeosHardforkInfo::try_from(&fields).is_err(), "{json}");
+        }
+    }
+
+    #[test]
+    fn scroll_config_round_trips_without_retired_fields() {
+        let config = ScrollChainConfig::dev();
+        let value = serde_json::to_value(config).unwrap();
+        assert!(value.get("l1DataFeeBufferCheck").is_none());
+        let fields: OtherFields =
+            serde_json::from_value(serde_json::json!({ "scroll": value })).unwrap();
+        assert_eq!(ScrollChainConfig::try_from(&fields).unwrap(), config);
+    }
+
+    #[test]
+    fn legacy_genesis_metadata_does_not_change_runtime_config_or_serialization() {
+        let config = ScrollChainConfig::dev();
+        let serialized = serde_json::to_value(config).unwrap();
+        let mut with_metadata = serialized.clone();
+        with_metadata["useZktrie"] = serde_json::json!(false);
+        with_metadata["maxTxPerBlock"] = serde_json::json!(100);
+        with_metadata["genesisStateRoot"] = serde_json::json!(B256::repeat_byte(0x11));
+        with_metadata["missingHeaderFieldsSHA256"] = serde_json::json!(B256::repeat_byte(0x22));
+
+        let parsed: ScrollChainConfig = serde_json::from_value(with_metadata).unwrap();
+        assert_eq!(parsed, config);
+        assert_eq!(serde_json::to_value(parsed).unwrap(), serialized);
+    }
+
+    #[test]
+    fn scroll_config_rejects_unknown_fields() {
+        for (key, value) in [
+            ("l1DataFeeBufferCheck", serde_json::json!(false)),
+            ("l1DataFeeBufferCheck", serde_json::json!(true)),
+            ("unknownPolicy", serde_json::json!(true)),
+        ] {
+            let mut config = serde_json::to_value(ScrollChainConfig::dev()).unwrap();
+            config[key] = value;
+            let fields: OtherFields =
+                serde_json::from_value(serde_json::json!({ "scroll": config })).unwrap();
+            let error = ScrollChainConfig::try_from(&fields).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("unknown field `{key}`"))
+            );
         }
     }
 

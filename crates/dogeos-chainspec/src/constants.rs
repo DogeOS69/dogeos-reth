@@ -47,9 +47,9 @@ pub const DOGEOS_CHIKYU_L1_PROXY_ADDRESS: Address =
 pub const DOGEOS_CHIKYU_L2_SYSTEM_CONFIG_CONTRACT_ADDRESS: Address =
     address!("2669B071E88e272CBDA1e12182D8C754CB737400");
 
-/// DogeOS Chikyu L1 configuration.
+/// DogeOS Chikyu L1 configuration from `res/genesis/chikyu_dogeos.json`.
 pub const DOGEOS_CHIKYU_L1_CONFIG: L1Config = L1Config {
-    l1_chain_id: alloy_chains::NamedChain::Goerli as u64,
+    l1_chain_id: 111_111,
     l1_message_queue_address: DOGEOS_CHIKYU_L1_MESSAGE_QUEUE_ADDRESS,
     l1_message_queue_v2_address: DOGEOS_CHIKYU_L1_MESSAGE_QUEUE_V2_ADDRESS,
     scroll_chain_address: DOGEOS_CHIKYU_L1_PROXY_ADDRESS,
@@ -57,6 +57,6 @@ pub const DOGEOS_CHIKYU_L1_CONFIG: L1Config = L1Config {
     num_l1_messages_per_block: 10,
 };
 
-/// Published DogeOS Chikyu genesis hash.
+/// Canonical header hash computed from the DogeOS Chikyu genesis document.
 pub const DOGEOS_CHIKYU_GENESIS_HASH: B256 =
-    b256!("931467859726d2ca9b4401919bb54e3fffb41e24a0a3ec9ba9141e2d38a6357e");
+    b256!("f9f7c524dce38b51a4d28ec2f18680773e5ba9d3f5f430d0e05f92cfeb65b1bc");

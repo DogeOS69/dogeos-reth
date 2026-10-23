@@ -339,12 +339,21 @@ mod tests {
     }
 
     #[test]
-    fn chikyu_checkpoint_selects_feynman_without_later_forks() {
+    fn chikyu_selects_the_network_fork_at_each_boundary() {
         let config = ScrollEvmConfig::dogeos(DOGEOS_CHIKYU.clone());
-        assert_eq!(
-            config.spec_id_at_timestamp_and_number(1_785_892_970, 6_777_906),
-            ScrollSpecId::FEYNMAN
-        );
+        for (timestamp, expected) in [
+            (1_785_892_970, ScrollSpecId::FEYNMAN),
+            (1_790_030_799, ScrollSpecId::FEYNMAN),
+            (1_790_030_800, ScrollSpecId::GALILEO),
+            (1_790_030_899, ScrollSpecId::GALILEO),
+            (1_790_030_900, ScrollSpecId::TSUKI),
+            (1_790_030_901, ScrollSpecId::TSUKI),
+        ] {
+            assert_eq!(
+                config.spec_id_at_timestamp_and_number(timestamp, 6_777_906),
+                expected
+            );
+        }
     }
 
     fn feynman_parent() -> SealedHeader<Header> {
