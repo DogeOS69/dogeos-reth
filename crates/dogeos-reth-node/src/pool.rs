@@ -206,7 +206,6 @@ where
         let blob_store = DiskFileBlobStore::open(data_dir.blobstore(), Default::default())?;
         let pool_config = self.pool_config_overrides.clone().apply(ctx.pool_config());
         let require_l1_data_gas_fee = !ctx.config().dev.dev;
-        let require_l1_data_fee_buffer = ctx.chain_spec().config.l1_data_fee_buffer_check;
         let additional_validation_tasks = self
             .pool_config_overrides
             .additional_validation_tasks
@@ -233,10 +232,8 @@ where
                 .with_max_tx_input_bytes(ctx.chain_spec().config.max_tx_payload_bytes_per_block)
                 .build(blob_store.clone());
         let validator = match l1_fee_snapshot {
-            Some(snapshot) => {
-                DogeosTransactionValidator::new(inner, snapshot, require_l1_data_fee_buffer)
-            }
-            None => DogeosTransactionValidator::disabled(inner, require_l1_data_fee_buffer),
+            Some(snapshot) => DogeosTransactionValidator::new(inner, snapshot),
+            None => DogeosTransactionValidator::disabled(inner),
         };
         let simulation_client = ctx.provider().clone();
         let simulation_evm = dogeos_reth_evm::ScrollEvmConfig::dogeos(ctx.chain_spec());
@@ -420,7 +417,7 @@ mod tests {
             EthTransactionValidatorBuilder::new(provider, ScrollEvmConfig::dogeos(chain_spec))
                 .no_eip4844()
                 .build(InMemoryBlobStore::default());
-        DogeosTransactionValidator::new(inner, snapshot, false)
+        DogeosTransactionValidator::new(inner, snapshot)
     }
 
     fn add_mock_head(
@@ -511,7 +508,7 @@ mod tests {
         )
         .no_eip4844()
         .build(InMemoryBlobStore::default());
-        let validator = DogeosTransactionValidator::new(inner, snapshot, false);
+        let validator = DogeosTransactionValidator::new(inner, snapshot);
 
         assert!(
             validator
@@ -1012,7 +1009,7 @@ mod tests {
         )
         .no_eip4844()
         .build(InMemoryBlobStore::default());
-        let validator = DogeosTransactionValidator::new(inner, snapshot, false);
+        let validator = DogeosTransactionValidator::new(inner, snapshot);
 
         assert!(
             validator
@@ -1069,8 +1066,7 @@ mod tests {
         )
         .no_eip4844()
         .build(InMemoryBlobStore::default());
-        let genesis_validator =
-            DogeosTransactionValidator::new(genesis_inner, genesis_snapshot, false);
+        let genesis_validator = DogeosTransactionValidator::new(genesis_inner, genesis_snapshot);
         assert!(
             genesis_validator
                 .validate_one(
@@ -1172,7 +1168,7 @@ mod tests {
         )
         .no_eip4844()
         .build(InMemoryBlobStore::default());
-        let validator = DogeosTransactionValidator::new(inner, snapshot, false);
+        let validator = DogeosTransactionValidator::new(inner, snapshot);
         assert!(matches!(
             validator
                 .validate_one(

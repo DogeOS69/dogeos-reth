@@ -25,7 +25,7 @@ use dogeos_hardforks::{DogeosHardfork, DogeosHardforks};
 use dogeos_protocol_types::L1_MESSAGE_TRANSACTION_TYPE;
 use revm::{
     Inspector,
-    context::{Block, ContextTr, TxEnv, result::InvalidTransaction},
+    context::{Block, TxEnv, result::InvalidTransaction},
     handler::PrecompileProvider,
     interpreter::InterpreterResult,
 };
@@ -230,7 +230,6 @@ where
     ) -> Result<Self::Result, BlockExecutionError> {
         let (tx_env, recovered) = tx.into_parts();
         let tx = recovered.tx();
-        let chain_spec = &self.spec;
         let is_l1_message = tx.ty() == L1_MESSAGE_TRANSACTION_TYPE;
 
         // The sum of the transaction’s gas limit and the gas utilized in this block prior,
@@ -263,8 +262,6 @@ where
         // disable the base fee and nonce checks for l1 messages.
         self.evm.with_base_fee_check(!is_l1_message);
         self.evm.with_nonce_check(!is_l1_message);
-        self.evm
-            .with_l1_data_fee_buffer_check(chain_spec.chain_config().l1_data_fee_buffer_check);
 
         // execute the transaction.
         let result = self
@@ -347,8 +344,6 @@ pub trait EvmExt: Evm {
     fn with_base_fee_check(&mut self, enabled: bool);
     /// Sets whether the evm should enable or disable the nonce checks.
     fn with_nonce_check(&mut self, enabled: bool);
-    /// Sets whether the evm should enable or disable the l1 data fee buffer checks.
-    fn with_l1_data_fee_buffer_check(&mut self, enabled: bool);
     /// Returns the l1 fee for the transaction.
     fn l1_fee(&self) -> Option<U256>;
 }
@@ -365,10 +360,6 @@ where
 
     fn with_nonce_check(&mut self, enabled: bool) {
         self.ctx_mut().cfg.disable_nonce_check = !enabled;
-    }
-
-    fn with_l1_data_fee_buffer_check(&mut self, enabled: bool) {
-        self.chain_mut().policy.require_l1_data_fee_buffer = enabled;
     }
 
     fn l1_fee(&self) -> Option<U256> {

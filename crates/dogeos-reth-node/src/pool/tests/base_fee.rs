@@ -47,9 +47,8 @@ fn fixture() -> (NativeProvider, TestPool, tokio::task::JoinHandle<()>) {
             .no_eip4844()
             .build(InMemoryBlobStore::default());
     // L1 fee validation has its own tests; this fixture isolates the L2 pending base fee.
-    let (validator, task) = TransactionValidationTaskExecutor::new(
-        DogeosTransactionValidator::disabled(validator, false),
-    );
+    let (validator, task) =
+        TransactionValidationTaskExecutor::new(DogeosTransactionValidator::disabled(validator));
     let task = tokio::spawn(task.run());
     let pool = Pool::new(
         validator,
