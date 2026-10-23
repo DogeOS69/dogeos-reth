@@ -199,6 +199,16 @@ mod tests {
         rx.recv().await.unwrap();
         release.add_permits(1);
         third.await.unwrap();
+        // The cancelled first request's blocking task is detached. It can release its worker
+        // before its inflight permit, so joining the third request does not join that cleanup.
+        let inflight = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            executor.inflight.acquire_many(2),
+        )
+        .await
+        .expect("all blocking validations should release their inflight permits")
+        .unwrap();
+        drop(inflight);
         assert_eq!(executor.inflight.available_permits(), 2);
         assert_eq!(executor.workers.available_permits(), 1);
     }
