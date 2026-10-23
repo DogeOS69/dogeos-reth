@@ -4,7 +4,7 @@ use crate::{
     DOGEOS_CHIKYU_L1_CONFIG, DOGEOS_DEV_L1_CONFIG, DOGEOS_MAINNET_L1_CONFIG,
     MAX_TX_PAYLOAD_BYTES_PER_BLOCK, SCROLL_FEE_VAULT_ADDRESS,
 };
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use alloy_serde::OtherFields;
 use serde::{Deserialize, Deserializer, de::Error};
 
@@ -20,6 +20,10 @@ pub struct L1Config {
     pub l1_message_queue_v2_address: Address,
     pub scroll_chain_address: Address,
     pub l2_system_config_address: Address,
+    /// Default maximum number of L1 messages per L2 block for the rollup-node sequencer.
+    /// Overridden by `--sequencer.max-l1-messages`; this is local sequencer policy, not a
+    /// consensus or proof-enforced per-block count limit.
+    /// The JSON field remains `numL1MessagesPerBlock` for configuration compatibility.
     #[serde(deserialize_with = "deserialize_u64_flexible")]
     pub num_l1_messages_per_block: u64,
 }
@@ -63,7 +67,7 @@ where
         .transpose()
 }
 
-/// DogeOS hardfork timestamps encoded in a custom genesis config.
+/// DogeOS hardfork and fee-parameter timestamps encoded in a genesis config.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DogeosHardforkInfo {
@@ -75,10 +79,14 @@ pub struct DogeosHardforkInfo {
     pub galileo_v2_time: Option<u64>,
     #[serde(default, deserialize_with = "deserialize_optional_u64_flexible")]
     pub tsuki_time: Option<u64>,
+    /// Optional D48/E10 activation time, independent of the Tsuki execution transition.
+    /// Missing or null uses the chain spec's Tsuki activation condition.
+    #[serde(default, deserialize_with = "deserialize_optional_u64_flexible")]
+    pub tsuki_fee_params_time: Option<u64>,
 }
 
 impl DogeosHardforkInfo {
-    /// Converts genesis timestamps into an explicit, fail-closed activation schedule.
+    /// Converts execution-fork timestamps into an explicit, fail-closed activation schedule.
     pub const fn activation_schedule(self) -> [(DogeosHardfork, ForkCondition); 4] {
         const fn condition(timestamp: Option<u64>) -> ForkCondition {
             match timestamp {
@@ -106,13 +114,41 @@ impl TryFrom<&OtherFields> for DogeosHardforkInfo {
 
 /// DogeOS sequencer configuration encoded under the inherited `scroll` genesis key.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", from = "ScrollChainConfigJson")]
 pub struct ScrollChainConfig {
     pub fee_vault_address: Option<Address>,
     pub max_tx_payload_bytes_per_block: usize,
     pub l1_config: L1Config,
-    #[serde(default)]
-    pub l1_data_fee_buffer_check: bool,
+}
+
+/// Strict input schema including recognized metadata from published l2geth genesis documents.
+///
+/// The four legacy metadata fields do not configure Reth execution and are not emitted when
+/// serializing the runtime configuration. All other unrecognized fields are rejected.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ScrollChainConfigJson {
+    fee_vault_address: Option<Address>,
+    max_tx_payload_bytes_per_block: usize,
+    l1_config: L1Config,
+    #[serde(rename = "useZktrie")]
+    _use_zktrie: Option<bool>,
+    #[serde(rename = "maxTxPerBlock")]
+    _max_tx_per_block: Option<u64>,
+    #[serde(rename = "genesisStateRoot")]
+    _genesis_state_root: Option<B256>,
+    #[serde(rename = "missingHeaderFieldsSHA256")]
+    _missing_header_fields_sha256: Option<B256>,
+}
+
+impl From<ScrollChainConfigJson> for ScrollChainConfig {
+    fn from(config: ScrollChainConfigJson) -> Self {
+        Self {
+            fee_vault_address: config.fee_vault_address,
+            max_tx_payload_bytes_per_block: config.max_tx_payload_bytes_per_block,
+            l1_config: config.l1_config,
+        }
+    }
 }
 
 impl ScrollChainConfig {
@@ -133,7 +169,6 @@ impl ScrollChainConfig {
             fee_vault_address: Some(SCROLL_FEE_VAULT_ADDRESS),
             max_tx_payload_bytes_per_block: MAX_TX_PAYLOAD_BYTES_PER_BLOCK,
             l1_config,
-            l1_data_fee_buffer_check: false,
         }
     }
 
@@ -147,8 +182,8 @@ impl TryFrom<&OtherFields> for ScrollChainConfig {
 
     fn try_from(others: &OtherFields) -> Result<Self, Self::Error> {
         match others.get_deserialized::<Self>("scroll") {
-            Some(Ok(config)) => Ok(config),
-            _ => Err(serde_json::Error::missing_field("scroll")),
+            Some(config) => config,
+            None => Err(serde_json::Error::missing_field("scroll")),
         }
     }
 }
@@ -156,6 +191,92 @@ impl TryFrom<&OtherFields> for ScrollChainConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fee_params_time_accepts_missing_null_and_flexible_unsigned_timestamps() {
+        for (json, expected) in [
+            (r#"{}"#, None),
+            (r#"{"tsukiFeeParamsTime":null}"#, None),
+            (r#"{"tsukiFeeParamsTime":0}"#, Some(0)),
+            (r#"{"tsukiFeeParamsTime":100}"#, Some(100)),
+            (r#"{"tsukiFeeParamsTime":"100"}"#, Some(100)),
+            (r#"{"tsukiFeeParamsTime":"0x64"}"#, Some(100)),
+            (
+                r#"{"tsukiFeeParamsTime":"18446744073709551615"}"#,
+                Some(u64::MAX),
+            ),
+        ] {
+            let fields: OtherFields = serde_json::from_str(json).unwrap();
+            assert_eq!(
+                DogeosHardforkInfo::try_from(&fields)
+                    .unwrap()
+                    .tsuki_fee_params_time,
+                expected,
+                "{json}"
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_fee_params_time_is_rejected_instead_of_defaulting_to_tsuki() {
+        for json in [
+            r#"{"tsukiFeeParamsTime":-1}"#,
+            r#"{"tsukiFeeParamsTime":1.5}"#,
+            r#"{"tsukiFeeParamsTime":true}"#,
+            r#"{"tsukiFeeParamsTime":""}"#,
+            r#"{"tsukiFeeParamsTime":"18446744073709551616"}"#,
+            r#"{"tsukiFeeParamsTime":[]}"#,
+            r#"{"tsukiFeeParamsTime":{}}"#,
+        ] {
+            let fields: OtherFields = serde_json::from_str(json).unwrap();
+            assert!(DogeosHardforkInfo::try_from(&fields).is_err(), "{json}");
+        }
+    }
+
+    #[test]
+    fn scroll_config_round_trips_without_retired_fields() {
+        let config = ScrollChainConfig::dev();
+        let value = serde_json::to_value(config).unwrap();
+        assert!(value.get("l1DataFeeBufferCheck").is_none());
+        let fields: OtherFields =
+            serde_json::from_value(serde_json::json!({ "scroll": value })).unwrap();
+        assert_eq!(ScrollChainConfig::try_from(&fields).unwrap(), config);
+    }
+
+    #[test]
+    fn legacy_genesis_metadata_does_not_change_runtime_config_or_serialization() {
+        let config = ScrollChainConfig::dev();
+        let serialized = serde_json::to_value(config).unwrap();
+        let mut with_metadata = serialized.clone();
+        with_metadata["useZktrie"] = serde_json::json!(false);
+        with_metadata["maxTxPerBlock"] = serde_json::json!(100);
+        with_metadata["genesisStateRoot"] = serde_json::json!(B256::repeat_byte(0x11));
+        with_metadata["missingHeaderFieldsSHA256"] = serde_json::json!(B256::repeat_byte(0x22));
+
+        let parsed: ScrollChainConfig = serde_json::from_value(with_metadata).unwrap();
+        assert_eq!(parsed, config);
+        assert_eq!(serde_json::to_value(parsed).unwrap(), serialized);
+    }
+
+    #[test]
+    fn scroll_config_rejects_unknown_fields() {
+        for (key, value) in [
+            ("l1DataFeeBufferCheck", serde_json::json!(false)),
+            ("l1DataFeeBufferCheck", serde_json::json!(true)),
+            ("unknownPolicy", serde_json::json!(true)),
+        ] {
+            let mut config = serde_json::to_value(ScrollChainConfig::dev()).unwrap();
+            config[key] = value;
+            let fields: OtherFields =
+                serde_json::from_value(serde_json::json!({ "scroll": config })).unwrap();
+            let error = ScrollChainConfig::try_from(&fields).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("unknown field `{key}`"))
+            );
+        }
+    }
 
     #[test]
     fn extracts_inherited_scroll_json_key() {

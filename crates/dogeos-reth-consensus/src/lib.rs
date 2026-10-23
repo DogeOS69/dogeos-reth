@@ -17,7 +17,7 @@ use reth_primitives_traits::{
     receipt::gas_spent_by_transactions,
 };
 
-pub const DOGEOS_MAXIMUM_BASE_FEE: u64 = 10_000_000_000;
+pub use dogeos_protocol_types::MAX_L2_BASE_FEE as DOGEOS_MAXIMUM_BASE_FEE;
 pub const DOGEOS_BLOCK_DIFFICULTY: U256 = U256::from_limbs([1, 0, 0, 0]);
 
 #[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
@@ -183,6 +183,9 @@ impl HeaderValidator<alloy_consensus::Header> for DogeosConsensus {
         {
             return Err(DogeosConsensusError::BlobFieldsPresent.into());
         }
+        // A proof guest has no wall clock. Future-block admission is a host check; all
+        // deterministic header rules below and above also apply inside the guest.
+        #[cfg(not(target_os = "zkvm"))]
         validate_header_timestamp(header)?;
         validate_header_gas(header)?;
         Ok(())
@@ -200,10 +203,11 @@ impl HeaderValidator<alloy_consensus::Header> for DogeosConsensus {
                 timestamp: header.timestamp(),
             });
         }
-        validate_parent_gas_limit(header.header(), parent.header())
+        validate_gas_limit_against_parent(header.gas_limit(), parent.gas_limit())
     }
 }
 
+#[cfg(not(target_os = "zkvm"))]
 fn validate_header_timestamp(header: &alloy_consensus::Header) -> Result<(), ConsensusError> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -242,28 +246,29 @@ pub fn validate_l1_messages<'a>(
     Ok(())
 }
 
-fn validate_parent_gas_limit(
-    header: &alloy_consensus::Header,
-    parent: &alloy_consensus::Header,
+/// Validate the gas-limit relationship using values authenticated by headers or proof inputs.
+pub fn validate_gas_limit_against_parent(
+    gas_limit: u64,
+    parent_gas_limit: u64,
 ) -> Result<(), ConsensusError> {
-    let diff = header.gas_limit().abs_diff(parent.gas_limit());
-    let limit = parent.gas_limit() / GAS_LIMIT_BOUND_DIVISOR;
+    let diff = gas_limit.abs_diff(parent_gas_limit);
+    let limit = parent_gas_limit / GAS_LIMIT_BOUND_DIVISOR;
     if diff > limit {
-        return if header.gas_limit() > parent.gas_limit() {
+        return if gas_limit > parent_gas_limit {
             Err(ConsensusError::GasLimitInvalidIncrease {
-                parent_gas_limit: parent.gas_limit(),
-                child_gas_limit: header.gas_limit(),
+                parent_gas_limit,
+                child_gas_limit: gas_limit,
             })
         } else {
             Err(ConsensusError::GasLimitInvalidDecrease {
-                parent_gas_limit: parent.gas_limit(),
-                child_gas_limit: header.gas_limit(),
+                parent_gas_limit,
+                child_gas_limit: gas_limit,
             })
         };
     }
-    if header.gas_limit() < MINIMUM_GAS_LIMIT {
+    if gas_limit < MINIMUM_GAS_LIMIT {
         return Err(ConsensusError::GasLimitInvalidMinimum {
-            child_gas_limit: header.gas_limit(),
+            child_gas_limit: gas_limit,
         });
     }
     Ok(())
@@ -376,6 +381,95 @@ mod tests {
             consensus.validate_header(&SealedHeader::seal_slow(header)),
             Err(ConsensusError::Other(message)) if message.contains("extra data must be empty")
         ));
+    }
+
+    #[test]
+    fn base_fee_over_the_420_000_gwei_cap_is_rejected() {
+        assert_eq!(DOGEOS_MAXIMUM_BASE_FEE, 420_000_000_000_000);
+
+        // Above the previous 10 gwei cap, e.g. the 420 gwei activation overhead.
+        for base_fee in [10_000_000_001, 420_000_000_000, DOGEOS_MAXIMUM_BASE_FEE] {
+            let mut header = valid_header();
+            header.base_fee_per_gas = Some(base_fee);
+            assert!(
+                DogeosConsensus
+                    .validate_header(&SealedHeader::seal_slow(header))
+                    .is_ok()
+            );
+        }
+
+        let mut header = valid_header();
+        header.base_fee_per_gas = Some(DOGEOS_MAXIMUM_BASE_FEE + 1);
+        assert!(matches!(
+            DogeosConsensus.validate_header(&SealedHeader::seal_slow(header)),
+            Err(ConsensusError::Other(message)) if message.contains("base fee exceeds")
+        ));
+    }
+
+    /// Every import path runs this check: the engine tree's payload validator after execution,
+    /// and the execution stage after each block of a range. A header that claims a different
+    /// gas_used from what executing it actually spent is rejected on both.
+    #[test]
+    fn header_gas_used_must_equal_executed_gas() {
+        use alloy_consensus::{Block, BlockBody, Receipt};
+        use dogeos_protocol_types::ScrollTransactionReceipt;
+        use dogeos_reth_primitives::ScrollReceipt;
+
+        const EXECUTED_GAS: u64 = 42_000;
+
+        let receipts = vec![ScrollReceipt::Eip1559(ScrollTransactionReceipt::new(
+            Receipt {
+                status: true.into(),
+                cumulative_gas_used: EXECUTED_GAS,
+                logs: Vec::new(),
+            },
+            U256::ZERO,
+        ))];
+        let logs_bloom = receipts
+            .iter()
+            .fold(Bloom::ZERO, |bloom, receipt| bloom | receipt.bloom());
+        let receipts_root = calculate_receipt_root(
+            &receipts
+                .iter()
+                .map(TxReceipt::with_bloom_ref)
+                .collect::<Vec<_>>(),
+        );
+
+        let block_with_gas_used = |gas_used| {
+            let header = alloy_consensus::Header {
+                gas_used,
+                receipts_root,
+                logs_bloom,
+                ..valid_header()
+            };
+            RecoveredBlock::new_unhashed(Block::new(header, BlockBody::<_>::default()), Vec::new())
+        };
+        let result = BlockExecutionResult {
+            receipts: receipts.clone(),
+            requests: Default::default(),
+            gas_used: EXECUTED_GAS,
+            blob_gas_used: 0,
+        };
+
+        assert!(
+            DogeosConsensus
+                .validate_block_post_execution(&block_with_gas_used(EXECUTED_GAS), &result, None)
+                .is_ok()
+        );
+        for claimed in [EXECUTED_GAS - 1, EXECUTED_GAS + 1, 0] {
+            assert!(
+                matches!(
+                    DogeosConsensus.validate_block_post_execution(
+                        &block_with_gas_used(claimed),
+                        &result,
+                        None,
+                    ),
+                    Err(ConsensusError::BlockGasUsed { gas, .. })
+                        if gas.got == EXECUTED_GAS && gas.expected == claimed
+                ),
+                "gas_used={claimed} was accepted"
+            );
+        }
     }
 
     #[test]

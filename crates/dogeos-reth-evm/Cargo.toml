@@ -31,6 +31,8 @@ serde = { workspace = true, optional = true }
 
 [dev-dependencies]
 eyre.workspace = true
+reth-revm = { workspace = true, features = ["witness"] }
+serde_json.workspace = true
 
 [features]
 default = ["std"]

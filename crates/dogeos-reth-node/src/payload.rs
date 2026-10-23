@@ -22,6 +22,8 @@ pub const DOGEOS_DEFAULT_PAYLOAD_BUILDING_DURATION: Duration = Duration::from_se
 pub struct DogeosPayloadBuilderBuilder {
     pub payload_building_time_limit: Duration,
     pub block_da_size_limit: Option<u64>,
+    /// Maximum distinct bytecode bytes in one candidate block.
+    pub max_code_witness_bytes: u64,
 }
 
 impl Default for DogeosPayloadBuilderBuilder {
@@ -29,7 +31,19 @@ impl Default for DogeosPayloadBuilderBuilder {
         Self {
             payload_building_time_limit: DOGEOS_DEFAULT_PAYLOAD_BUILDING_DURATION,
             block_da_size_limit: Some(DOGEOS_DEFAULT_PAYLOAD_SIZE_LIMIT),
+            max_code_witness_bytes: crate::CodeWitnessArgs::default().max_code_witness_bytes,
         }
+    }
+}
+
+impl DogeosPayloadBuilderBuilder {
+    fn builder_config(&self, gas_limit: u64) -> ScrollBuilderConfig {
+        ScrollBuilderConfig::new(
+            Some(gas_limit),
+            self.payload_building_time_limit,
+            self.block_da_size_limit,
+        )
+        .with_max_code_witness_bytes(self.max_code_witness_bytes)
     }
 }
 
@@ -70,11 +84,7 @@ where
             ctx.provider().clone(),
             pool,
             evm_config,
-            ScrollBuilderConfig::new(
-                Some(gas_limit),
-                self.payload_building_time_limit,
-                self.block_da_size_limit,
-            ),
+            self.builder_config(gas_limit),
         ))
     }
 }
@@ -82,6 +92,18 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn code_budget_reaches_payload_config() {
+        let builder = DogeosPayloadBuilderBuilder {
+            max_code_witness_bytes: 4096,
+            ..Default::default()
+        };
+        assert_eq!(
+            builder.builder_config(20_000_000).max_code_witness_bytes,
+            4096
+        );
+    }
 
     #[test]
     fn defaults_match_current_sequencer_policy() {

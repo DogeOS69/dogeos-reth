@@ -11,7 +11,7 @@ no copied upstream Reth crate and no production dependency on the legacy `scroll
 | --- | --- |
 | Reth | official `v2.0.0` plus the RocksDB durability, inbound/downloaded-header-only transform, and generic EIP-3607 empty-code sender layers / `972366a0bfc11cf6a0d5dc79d5e779cd81e32232` |
 | REVM | `36.0.0` |
-| `revm-scroll` | `dcf087684f255131c96c0d20f3291eef9198e990` (`dogeos`) |
+| `revm-scroll` | `d4ac4dac66e5648099a0277eb63f606fc04caff7` (`tsuki-v0.9` on `dogeos`) |
 | Alloy API family | `alloy-consensus 1.8.2` |
 | alloy-evm | `0.30.0` |
 | Alloy primitives / Solidity types | `1.5.7` |
@@ -20,10 +20,11 @@ The first `feat/drop-scroll-patch` candidate resolved REVM 34 and
 `alloy-evm 0.27.3`, so it was rejected. The evaluation branch
 `chore/upgrade-revm-v36` (revision `1b87ecf...`) was merged into the canonical
 `dogeos` branch on 2026-08-12 (PRs #16/#17: drop the Scroll REVM fork, upgrade
-to REVM 36); the workspace now selects `dogeos`, which resolves the same single
-REVM 36 and single alloy-evm 0.30.0 instance. The audit requires both the
-encoded branch source and the exact `dcf08768...` commit resolved in
-`Cargo.lock`.
+to REVM 36). The workspace now pins the `tsuki-v0.9` commit on `dogeos`,
+which includes the Veridise 10098 upfront-balance fix and removes the optional
+L1 fee buffer. It resolves the same single REVM 36 and single alloy-evm 0.30.0
+instance. The audit requires both the encoded revision source and the exact
+`d4ac4dac66e5648099a0277eb63f606fc04caff7` commit resolved in `Cargo.lock`.
 
 The Reth source manifest uses compatible semver ranges for a subset of the
 Alloy 1.5 components. Cargo otherwise selected a newer incompatible parser

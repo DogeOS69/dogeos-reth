@@ -11,7 +11,6 @@ pub static DOGEOS_DEV: LazyLock<Arc<DogeosChainSpec>> = LazyLock::new(|| {
         genesis,
         ScrollChainConfig::dev(),
         DogeosHardfork::dev(),
-        None,
         Some(Chain::dev()),
     )
     .into()

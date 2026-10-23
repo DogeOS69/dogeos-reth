@@ -24,16 +24,13 @@ hardfork!(
 );
 
 impl DogeosHardfork {
-    /// DogeOS Chikyu activation schedule.
+    /// DogeOS Chikyu activation schedule from the operator-provided genesis document.
     pub const fn chikyu() -> [(Self, ForkCondition); 4] {
         [
             (Self::Feynman, ForkCondition::Timestamp(0)),
-            // Chikyu remains on the Feynman rules at the frozen public checkpoint. Keep later
-            // forks fail-closed until authoritative activation timestamps are published and
-            // historical replay has qualified them.
-            (Self::Galileo, ForkCondition::Never),
-            (Self::GalileoV2, ForkCondition::Never),
-            (Self::Tsuki, ForkCondition::Never),
+            (Self::Galileo, ForkCondition::Timestamp(1_790_030_800)),
+            (Self::GalileoV2, ForkCondition::Timestamp(1_790_030_800)),
+            (Self::Tsuki, ForkCondition::Timestamp(1_790_030_900)),
         ]
     }
 
@@ -109,10 +106,20 @@ impl DogeosChainHardforks {
 
 impl EthereumHardforks for DogeosChainHardforks {
     fn ethereum_fork_activation(&self, fork: EthereumHardfork) -> ForkCondition {
-        if fork <= EthereumHardfork::Shanghai {
-            self.dogeos_fork_activation(DogeosHardfork::Feynman)
-        } else {
-            ForkCondition::Never
+        // Match the Ethereum baseline in dogeos-chainspec's feynman_hardforks.
+        match fork {
+            EthereumHardfork::Frontier
+            | EthereumHardfork::Homestead
+            | EthereumHardfork::Tangerine
+            | EthereumHardfork::SpuriousDragon
+            | EthereumHardfork::Byzantium
+            | EthereumHardfork::Constantinople
+            | EthereumHardfork::Petersburg
+            | EthereumHardfork::Istanbul
+            | EthereumHardfork::Berlin
+            | EthereumHardfork::London => ForkCondition::Block(0),
+            EthereumHardfork::Shanghai => ForkCondition::Timestamp(0),
+            _ => ForkCondition::Never,
         }
     }
 }
@@ -139,23 +146,26 @@ mod tests {
     }
 
     #[test]
-    fn chikyu_does_not_activate_tsuki_without_an_authoritative_timestamp() {
+    fn chikyu_preserves_the_checkpoint_and_activates_at_network_timestamps() {
         let hardforks = DogeosChainHardforks::chikyu();
         assert!(hardforks.is_feynman_active_at_timestamp(0));
         assert_eq!(
             hardforks.dogeos_fork_activation(DogeosHardfork::Galileo),
-            ForkCondition::Never
+            ForkCondition::Timestamp(1_790_030_800)
         );
         assert_eq!(
             hardforks.dogeos_fork_activation(DogeosHardfork::GalileoV2),
-            ForkCondition::Never
+            ForkCondition::Timestamp(1_790_030_800)
         );
         assert_eq!(
             hardforks.dogeos_fork_activation(DogeosHardfork::Tsuki),
-            ForkCondition::Never
+            ForkCondition::Timestamp(1_790_030_900)
         );
         assert!(!hardforks.is_tsuki_active_at_timestamp(0));
-        assert!(!hardforks.is_tsuki_active_at_timestamp(u64::MAX));
+        assert!(!hardforks.is_tsuki_active_at_timestamp(1_785_892_970));
+        assert!(!hardforks.is_tsuki_active_at_timestamp(1_790_030_899));
+        assert!(hardforks.is_tsuki_active_at_timestamp(1_790_030_900));
+        assert!(hardforks.is_tsuki_active_at_timestamp(u64::MAX));
     }
 
     #[test]

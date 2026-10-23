@@ -15,12 +15,15 @@ use alloy_primitives::{Address, B256, BlockNumber, BlockTimestamp, U256};
 use alloy_rpc_types_engine::ExecutionData;
 use core::convert::Infallible;
 use dogeos_chainspec::{ChainConfig, DogeosChainSpec, ScrollChainConfig};
-use dogeos_hardforks::DogeosHardforks;
+use dogeos_hardforks::{DogeosHardfork, DogeosHardforks};
 use dogeos_reth_primitives::{DogeosPrimitives, ScrollReceipt};
 use reth_chainspec::EthChainSpec;
 #[cfg(feature = "std")]
 use reth_evm::{ConfigureEngineEvm, EvmEnvFor, ExecutableTxIterator};
-use reth_evm::{ConfigureEvm, EvmEnv};
+use reth_evm::{
+    ConfigureEvm, EvmEnv,
+    execute::{BlockExecutionError, BlockValidationError},
+};
 #[cfg(feature = "std")]
 use reth_primitives_traits::TxTy;
 use reth_primitives_traits::{NodePrimitives, SealedBlock, SealedHeader, SignedTransaction};
@@ -206,6 +209,41 @@ where
         &self.block_assembler
     }
 
+    fn validate_block_pre_execution<DB: revm::Database>(
+        &self,
+        db: &mut DB,
+        env: &EvmEnv<ScrollSpecId>,
+        parent_hash: B256,
+        parent: &SealedHeader<Header>,
+    ) -> Result<(), BlockExecutionError> {
+        let timestamp = env.block_env.timestamp.to();
+        if !self
+            .chain_spec()
+            .dogeos_fork_activation(DogeosHardfork::Feynman)
+            .active_at_timestamp_or_number(timestamp, env.block_env.number.to())
+        {
+            return Ok(());
+        }
+        let parent_inputs = crate::ScrollBaseFeeParent::from_header(parent.header())
+            .filter(|_| parent.hash() == parent_hash)
+            .ok_or_else(|| {
+                BlockExecutionError::msg("cannot check the base fee: invalid parent header")
+            })?;
+        let expected = crate::ScrollBaseFeeProvider::new(self.chain_spec().clone())
+            .next_block_base_fee_for_parent(db, &parent_inputs, timestamp)
+            .map_err(|err| {
+                BlockExecutionError::msg(format!("failed to read the base-fee overhead: {err}"))
+            })?;
+        let got = env.block_env.basefee;
+        if got != expected {
+            return Err(BlockValidationError::msg(format!(
+                "invalid base fee: got {got}, expected {expected}"
+            ))
+            .into());
+        }
+        Ok(())
+    }
+
     fn evm_env(&self, header: &Header) -> Result<EvmEnv<ScrollSpecId>, Self::Error> {
         let spec_id = self.spec_id_at_timestamp_and_number(header.timestamp(), header.number());
         let cfg_env = CfgEnv::new_scroll(spec_id).with_chain_id(self.chain_spec().chain().id());
@@ -295,12 +333,181 @@ mod tests {
     }
 
     #[test]
-    fn chikyu_checkpoint_selects_feynman_without_later_forks() {
+    fn chikyu_selects_the_network_fork_at_each_boundary() {
         let config = ScrollEvmConfig::dogeos(DOGEOS_CHIKYU.clone());
-        assert_eq!(
-            config.spec_id_at_timestamp_and_number(1_785_892_970, 6_777_906),
-            ScrollSpecId::FEYNMAN
+        for (timestamp, expected) in [
+            (1_785_892_970, ScrollSpecId::FEYNMAN),
+            (1_790_030_799, ScrollSpecId::FEYNMAN),
+            (1_790_030_800, ScrollSpecId::GALILEO),
+            (1_790_030_899, ScrollSpecId::GALILEO),
+            (1_790_030_900, ScrollSpecId::TSUKI),
+            (1_790_030_901, ScrollSpecId::TSUKI),
+        ] {
+            assert_eq!(
+                config.spec_id_at_timestamp_and_number(timestamp, 6_777_906),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn import_hook_checks_the_fee_and_parent() {
+        use revm::database::EmptyDB;
+
+        let config = ScrollEvmConfig::dogeos(DOGEOS_MAINNET.clone());
+        let parent = SealedHeader::seal_slow(Header {
+            gas_limit: 30_000_000,
+            gas_used: 3_000_000,
+            base_fee_per_gas: Some(1_015_680_000),
+            ..Default::default()
+        });
+        let child = Header {
+            number: 1,
+            timestamp: 1,
+            parent_hash: parent.hash(),
+            base_fee_per_gas: parent.base_fee_per_gas,
+            ..Default::default()
+        };
+        let mut env = config.evm_env(&child).unwrap();
+        let mut db = EmptyDB::default();
+        config
+            .validate_block_pre_execution(&mut db, &env, parent.hash(), &parent)
+            .unwrap();
+        for fee in [1_015_679_999, 1_015_680_001] {
+            env.block_env.basefee = fee;
+            assert!(matches!(
+                config.validate_block_pre_execution(&mut db, &env, parent.hash(), &parent),
+                Err(BlockExecutionError::Validation(_))
+            ));
+        }
+        assert!(matches!(
+            config.validate_block_pre_execution(&mut db, &env, B256::ZERO, &parent),
+            Err(BlockExecutionError::Internal(_))
+        ));
+        let no_fee = SealedHeader::seal_slow(Header::default());
+        assert!(matches!(
+            config.validate_block_pre_execution(&mut db, &env, no_fee.hash(), &no_fee),
+            Err(BlockExecutionError::Internal(_))
+        ));
+    }
+
+    #[test]
+    fn import_validation_uses_the_batch_pre_state() {
+        use alloy_consensus::{Signed, TxLegacy};
+        use alloy_primitives::{Signature, TxKind};
+        use dogeos_reth_primitives::ScrollTransactionSigned;
+        use reth_evm::execute::Executor;
+        use reth_primitives_traits::RecoveredBlock;
+        use revm::{
+            database::{EmptyDB, State, states::plain_account::PlainStorage},
+            state::AccountInfo,
+        };
+
+        const GAS_LIMIT: u64 = 30_000_000;
+        const OLD: u64 = 100_000_000;
+        const NEW: u64 = 200_000_000;
+        let sender = Address::repeat_byte(0x55);
+        let system_config = DOGEOS_MAINNET.config.l1_config.l2_system_config_address;
+        let config = ScrollEvmConfig::dogeos(DOGEOS_MAINNET.clone());
+        let mut db = State::builder().with_database(EmptyDB::default()).build();
+        db.insert_account(
+            sender,
+            AccountInfo {
+                balance: U256::from(10u64).pow(U256::from(18u64)),
+                ..Default::default()
+            },
         );
+        // SSTORE(101, calldata[0:32]); STOP.
+        db.insert_account_with_storage(
+            system_config,
+            AccountInfo::from_bytecode(revm::bytecode::Bytecode::new_raw(
+                [0x60, 0x00, 0x35, 0x60, 0x65, 0x55, 0x00].into(),
+            )),
+            PlainStorage::from_iter([(U256::from(101), U256::from(OLD))]),
+        );
+        let genesis = SealedHeader::seal_slow(Header {
+            gas_limit: GAS_LIMIT,
+            gas_used: GAS_LIMIT,
+            base_fee_per_gas: Some(OLD + 1_000_000_000),
+            ..Default::default()
+        });
+        let fee_after = |parent: &SealedHeader<Header>, overhead| {
+            crate::next_block_base_fee_with_overhead(
+                &**DOGEOS_MAINNET,
+                &crate::ScrollBaseFeeParent::from_header(parent.header()).unwrap(),
+                overhead,
+                parent.timestamp + 1,
+            )
+        };
+        let first_fee = fee_after(&genesis, OLD);
+        let tx = ScrollTransactionSigned::from(Signed::new_unchecked(
+            TxLegacy {
+                gas_price: first_fee.into(),
+                gas_limit: 100_000,
+                to: TxKind::Call(system_config),
+                input: U256::from(NEW).to_be_bytes::<32>().into(),
+                ..Default::default()
+            },
+            Signature::test_signature(),
+            B256::ZERO,
+        ));
+        let first = RecoveredBlock::new_sealed(
+            SealedBlock::seal_slow(Block::new(
+                Header {
+                    number: 1,
+                    timestamp: 1,
+                    parent_hash: genesis.hash(),
+                    gas_limit: GAS_LIMIT,
+                    base_fee_per_gas: Some(first_fee),
+                    ..Default::default()
+                },
+                BlockBody {
+                    transactions: vec![tx],
+                    ..Default::default()
+                },
+            )),
+            vec![sender],
+        );
+        let mut executor = config.batch_executor(db);
+        executor
+            .validate_block_pre_execution(&first, &genesis)
+            .unwrap();
+        let result = executor.execute_one(&first).unwrap();
+        let parent = SealedHeader::seal_slow(Header {
+            gas_used: result.gas_used,
+            ..first.header().clone()
+        });
+        let fresh = fee_after(&parent, NEW);
+        let stale = fee_after(&parent, OLD);
+        assert_ne!(fresh, stale);
+        let child = |fee| {
+            RecoveredBlock::new_sealed(
+                SealedBlock::seal_slow(Block::new(
+                    Header {
+                        number: 2,
+                        timestamp: 2,
+                        parent_hash: parent.hash(),
+                        gas_limit: GAS_LIMIT,
+                        base_fee_per_gas: Some(fee),
+                        ..Default::default()
+                    },
+                    BlockBody::default(),
+                )),
+                Vec::new(),
+            )
+        };
+        let wrong = child(stale);
+        assert!(matches!(
+            executor.validate_block_pre_execution(&wrong, &parent),
+            Err(BlockExecutionError::Validation(_))
+        ));
+        let correct = child(fresh);
+        executor
+            .validate_block_pre_execution(&correct, &parent)
+            .unwrap();
+        executor.execute_one(&correct).unwrap();
+        // Ordinary replay remains available without import validation or parent inputs.
+        executor.execute_one(&wrong).unwrap();
     }
 
     #[test]

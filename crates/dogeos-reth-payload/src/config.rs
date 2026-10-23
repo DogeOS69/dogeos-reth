@@ -1,4 +1,5 @@
 use core::time::Duration;
+use dogeos_reth_evm::DEFAULT_MAX_CODE_WITNESS_BYTES;
 use reth_chainspec::MIN_TRANSACTION_GAS;
 use std::time::Instant;
 
@@ -11,6 +12,8 @@ pub struct ScrollBuilderConfig {
     pub gas_limit: Option<u64>,
     pub time_limit: Duration,
     pub max_da_block_size: Option<u64>,
+    /// Maximum distinct contract code bytes required by the accepted block transactions.
+    pub max_code_witness_bytes: u64,
 }
 
 impl ScrollBuilderConfig {
@@ -23,7 +26,14 @@ impl ScrollBuilderConfig {
             gas_limit,
             time_limit,
             max_da_block_size,
+            max_code_witness_bytes: DEFAULT_MAX_CODE_WITNESS_BYTES,
         }
+    }
+
+    /// Applies the same code budget used for transaction-pool admission.
+    pub const fn with_max_code_witness_bytes(mut self, limit: u64) -> Self {
+        self.max_code_witness_bytes = limit;
+        self
     }
 
     pub fn breaker(&self) -> PayloadBuildingBreaker {
