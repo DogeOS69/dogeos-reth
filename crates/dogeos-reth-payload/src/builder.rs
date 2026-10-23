@@ -508,9 +508,6 @@ mod code_witness_tests {
     use revm::{Database, bytecode::Bytecode, database::EmptyDB, state::AccountInfo};
 
     const SENDER: Address = Address::repeat_byte(0x11);
-    /// The default L2 base-fee overhead: a parent at exactly that fee, having burned exactly
-    /// the gas target, hands its child the same base fee.
-    const TEST_BASE_FEE: u64 = 15_680_000;
     const FIRST: Address = Address::repeat_byte(0x22);
     const SECOND: Address = Address::repeat_byte(0x33);
 
@@ -519,7 +516,7 @@ mod code_witness_tests {
             TxLegacy {
                 chain_id: Some(DOGEOS_MAINNET.chain().id()),
                 nonce,
-                gas_price: TEST_BASE_FEE.into(),
+                gas_price: 1,
                 gas_limit: 100_000,
                 to: TxKind::Call(to),
                 ..Default::default()
@@ -538,7 +535,7 @@ mod code_witness_tests {
         state.insert_account(
             SENDER,
             AccountInfo {
-                balance: U256::from(10u64).pow(U256::from(18u64)),
+                balance: U256::from(1_000_000_000u64),
                 ..Default::default()
             },
         );
@@ -568,15 +565,13 @@ mod code_witness_tests {
         let parent = SealedHeader::seal_slow(Header {
             number: 1,
             gas_limit: 30_000_000,
-            gas_used: 3_000_000,
-            base_fee_per_gas: Some(TEST_BASE_FEE),
             ..Default::default()
         });
         let attributes = ScrollNextBlockEnvAttributes {
             timestamp: 1,
             suggested_fee_recipient: Address::ZERO,
             gas_limit: 30_000_000,
-            base_fee: TEST_BASE_FEE,
+            base_fee: 0,
         };
         (config, parent, attributes)
     }
@@ -590,7 +585,6 @@ mod code_witness_tests {
         let ctx = config.context_for_next_block(&parent, attributes).unwrap();
         let evm = config.evm_with_env_and_inspector(&mut state, env, meter.inspector());
         let mut builder = config.create_block_builder(evm, &parent, ctx);
-        builder.apply_pre_execution_changes().unwrap();
 
         assert!(
             execute_with_code_budget(&mut builder, transaction(FIRST, 0), &meter)
@@ -665,7 +659,6 @@ mod code_witness_tests {
         let ctx = config.context_for_next_block(&parent, attributes).unwrap();
         let evm = config.evm_with_env_and_inspector(&mut state, env, meter.inspector());
         let mut builder = config.create_block_builder(evm, &parent, ctx);
-        builder.apply_pre_execution_changes().unwrap();
 
         assert!(
             execute_with_code_budget(&mut builder, transaction(FIRST, 0), &meter)
@@ -690,7 +683,6 @@ mod code_witness_tests {
         let ctx = config.context_for_next_block(&parent, attributes).unwrap();
         let evm = config.evm_with_env_and_inspector(&mut state, env, meter.inspector());
         let mut builder = config.create_block_builder(evm, &parent, ctx);
-        builder.apply_pre_execution_changes().unwrap();
         let forced = ScrollTxEnvelope::L1Message(
             TxL1Message {
                 gas_limit: 100_000,

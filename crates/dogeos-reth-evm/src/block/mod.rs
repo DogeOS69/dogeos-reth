@@ -65,10 +65,7 @@ pub type ScrollTxCompressionInfos = Vec<ScrollTxCompressionInfo>;
 
 /// Context for Scroll Block Execution.
 ///
-/// Built through [`ScrollBlockExecutionCtx::new`] and read through its accessors. The fields
-/// are crate-private so that a rule cannot be lifted out of one context and dropped into
-/// another: the context `context_for_next_block` returns carries a rule that skips the
-/// base-fee check, and that rule is only sound for the block that context was made for.
+/// Private fields prevent callers from extracting a builder's skipping rule for import.
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct ScrollBlockExecutionCtx {
@@ -91,11 +88,6 @@ impl ScrollBlockExecutionCtx {
     }
 
     /// The parent block hash this context was built for.
-    ///
-    /// There is deliberately no accessor for the rule. Handing it back out, with
-    /// [`ScrollBlockExecutionCtx::new`] to take it in again, would be a two-step way to move
-    /// the skipping rule that `context_for_next_block` carries onto an imported block. A hash
-    /// cannot carry a rule, so reading this one launders nothing.
     pub const fn parent_hash(&self) -> B256 {
         self.parent_hash
     }
@@ -215,16 +207,11 @@ where
     /// overhead comes from slot 101 of the system config contract in this block's pre-state
     /// (read in [`BlockExecutor::apply_pre_execution_changes`]).
     ///
-    /// It runs at the end of execution rather than at the start. A block cannot be imported
-    /// without reaching this point, so no import path can skip the rule, while the paths that
-    /// stop after pre-execution — transaction tracing, `eth_callMany` — replay an
-    /// already-validated block and have no parent to offer.
+    /// Runs at completion so import enforces it, while tracing and `eth_callMany`, which
+    /// stop after replaying transactions, need no parent inputs.
     ///
-    /// A mismatch is a [`BlockValidationError`], so `newPayload` answers `INVALID` and the node
-    /// keeps running. The two remaining failures cannot be provoked by a peer: whether the
-    /// context carries a parent is decided by which `ConfigureEvm` entry point the node's own
-    /// code called, never by block content, and the overhead is always read in pre-execution.
-    /// They stay internal errors because they are caller bugs.
+    /// A mismatch returns [`BlockValidationError`] (`newPayload: INVALID`). Missing execution
+    /// inputs are internal errors because the caller is responsible for supplying them.
     fn validate_base_fee(&self) -> Result<(), BlockExecutionError> {
         let timestamp = self.evm.block().timestamp().to();
         let number = self.evm.block().number().to();

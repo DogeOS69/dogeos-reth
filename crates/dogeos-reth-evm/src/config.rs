@@ -297,13 +297,8 @@ where
         parent: &SealedHeader<Header>,
         _attributes: Self::NextBlockEnvCtx,
     ) -> Result<ScrollBlockExecutionCtx, Self::Error> {
-        // Building, not validating: there is no header whose base fee could be wrong. The
-        // caller's attributes carry the fee, and the builder derived it from this very parent.
-        //
-        // The context this returns is for a block being built here and must never be used to
-        // execute an imported one: its rule skips the base-fee check, which is only sound
-        // because there is no header to check. Importers go through `context_for_block` or
-        // `context_for_payload` and their `_with_parent` forms.
+        // Local building and simulation choose their own fee. Imported blocks must use
+        // context_for_block_with_parent or context_for_payload_with_parent instead.
         Ok(ScrollBlockExecutionCtx::new(
             parent.hash(),
             ScrollBaseFeeRule::no_header_to_check(),
@@ -311,10 +306,7 @@ where
     }
 }
 
-/// Builds the base-fee rule from a caller-supplied parent, but only from the real parent.
-///
-/// The hash check keeps a caller that offers the wrong header from silently validating the base
-/// fee against it; the executor then fails closed on the missing parent.
+/// Rejects a supplied header whose hash does not match the block's parent.
 fn base_fee_rule_for(parent_hash: B256, parent: &SealedHeader<Header>) -> ScrollBaseFeeRule {
     if parent.hash() != parent_hash {
         return ScrollBaseFeeRule::wrong_parent();

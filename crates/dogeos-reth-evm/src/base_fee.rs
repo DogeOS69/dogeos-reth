@@ -20,8 +20,7 @@ pub const L1_BASE_FEE_PRECISION: U256 = U256::from_limbs([1_000_000_000_000_000_
 
 /// The parent-header inputs of the Feynman+ base-fee rule.
 ///
-/// Carried separately from the header itself so that a block executor, which is handed the
-/// parent by its caller, can run the rule without cloning a whole header.
+/// Carries only the inputs needed by the executor, without cloning the header.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ScrollBaseFeeParent {
     /// Parent base fee per gas.
@@ -47,13 +46,8 @@ impl ScrollBaseFeeParent {
 
 /// What the Feynman+ base-fee rule should do for the block an executor is about to run.
 ///
-/// Opaque on purpose. Only [`ScrollBaseFeeRule::check`] and
-/// [`ScrollBaseFeeRule::for_parent_header`] can be called from outside this crate, so a caller
-/// elsewhere — the stateless block verifier, for instance — can ask for the rule to run or get
-/// a context that fails closed, but can never build one that skips it. The variant that skips
-/// the rule belongs to block building, which lives here.
-///
-/// The default fails closed: a context nobody filled in cannot quietly skip the rule.
+/// Public constructors either enforce the rule or fail closed. Only local block building
+/// can construct a skipping rule; the default reports a missing parent.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ScrollBaseFeeRule(pub(crate) BaseFeeRuleKind);
 
@@ -65,9 +59,7 @@ pub(crate) enum BaseFeeRuleKind {
     /// Executing a Feynman+ block to completion in this state is an error.
     #[default]
     MissingParent,
-    /// The caller offered a header that is not this block's parent, or one with no base fee.
-    /// Also an error, reported separately because it means something different: the caller had
-    /// a header and it was the wrong one.
+    /// The supplied header is not this block's parent, or has no base fee.
     WrongParent,
     /// There is no header to check: the block is being built or simulated and its base fee is
     /// the caller's own, from the payload attributes.
@@ -76,8 +68,6 @@ pub(crate) enum BaseFeeRuleKind {
 
 impl ScrollBaseFeeRule {
     /// Check the block's base fee against these parent inputs.
-    ///
-    /// What every import path asks for.
     pub const fn check(parent: ScrollBaseFeeParent) -> Self {
         Self(BaseFeeRuleKind::Check(parent))
     }
@@ -162,9 +152,6 @@ where
 /// A zero (or unset) slot means the default overhead. This is a pure read: it loads the system
 /// config account and its slot 101 into the state it is given and changes nothing, which is
 /// what puts the slot into an execution witness.
-///
-/// Takes the chain spec by reference so that a block executor, which only borrows its spec, can
-/// call it.
 pub fn base_fee_overhead<ChainSpec, DB>(
     chain_spec: &ChainSpec,
     db: &mut DB,
@@ -250,24 +237,15 @@ mod tests {
         )?)
     }
 
-    /// The parity vectors, shared with the guest's base-fee rule (sbv) and the payload builder,
-    /// live in a committed file so sbv can read the same rows instead of copying them:
-    /// `crates/dogeos-reth-evm/testdata/base-fee-parity-vectors.json`.
-    ///
-    /// Each row is one `(chain, timestamp, slot 101, parent)` input and the base fee the rule
-    /// must produce. A divergence between this crate and the guest on any row is a chain split,
-    /// so the test checks both of this crate's entry points — the one that reads the overhead
-    /// from state and the one handed already-extracted inputs — against every row.
-    ///
-    /// Run with `UPDATE_PARITY_VECTORS=1` to rewrite the expectations from this implementation;
-    /// a reviewer then reads the diff.
+    /// Shared with SBV; both calculator entry points must match these expectations.
+    /// Set `UPDATE_PARITY_VECTORS=1` to regenerate them for review.
     const PARITY_VECTORS_PATH: &str = "testdata/base-fee-parity-vectors.json";
 
     fn parity_spec(chain: &str) -> dogeos_chainspec::DogeosChainSpec {
         match chain {
             // Tsuki from genesis: denominator 48, elasticity 10.
             "mainnet" => (**DOGEOS_MAINNET).clone(),
-            // Never Tsuki: the Feynman parameters, denominator 8, elasticity 2.
+            // Before Chikyu's Tsuki activation: denominator 8, elasticity 2.
             "chikyu" => (**DOGEOS_CHIKYU).clone(),
             // Mainnet with the fee parameters delayed past the Tsuki execution transition, so
             // rows on either side of `tsuki_fee_params_time` cross the boundary.
@@ -384,40 +362,6 @@ mod tests {
             MAX_L2_BASE_FEE
         );
         Ok(())
-    }
-
-    /// Every context a crate outside this one can build runs the rule or fails closed. It can
-    /// reach [`ScrollBlockExecutionCtx::new`], but the only rules it can put in are the ones
-    /// below, and it cannot read the skipping rule back out of a context that carries one —
-    /// there is no accessor for the rule, so `new(hash, building_ctx.base_fee())` is not
-    /// available to it.
-    ///
-    /// What is still possible, and accepted: passing a whole `context_for_next_block` context
-    /// to the executor for an imported block. No import path does — every one of them builds
-    /// its context through `context_for_block_with_parent` or `context_for_payload_with_parent`
-    /// — and splitting building and import contexts by type is more machinery than the risk
-    /// warrants.
-    #[test]
-    fn every_context_reachable_from_outside_the_crate_runs_the_rule() {
-        let header = parent(1_000_000_000, GAS_TARGET);
-        let mut no_base_fee = header.clone();
-        no_base_fee.base_fee_per_gas = None;
-
-        for rule in [
-            ScrollBaseFeeRule::check(ScrollBaseFeeParent::from_header(&header).unwrap()),
-            ScrollBaseFeeRule::for_parent_header(&header),
-            ScrollBaseFeeRule::for_parent_header(&no_base_fee),
-            ScrollBaseFeeRule::missing_parent(),
-            ScrollBaseFeeRule::default(),
-        ] {
-            let ctx = crate::ScrollBlockExecutionCtx::new(alloy_primitives::B256::ZERO, rule);
-            assert_ne!(
-                ctx.base_fee,
-                ScrollBaseFeeRule::no_header_to_check(),
-                "a publicly reachable context skipped the rule"
-            );
-            assert_eq!(ctx.parent_hash(), alloy_primitives::B256::ZERO);
-        }
     }
 
     /// Everything a caller outside this crate can build either runs the rule or fails closed.

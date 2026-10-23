@@ -1,27 +1,9 @@
 #!/usr/bin/env bash
-# Produces a multi-block Tsuki chain on a throwaway DogeOS chain and dumps one
-# `debug_executionWitness` per block, for regenerating the guest's Tsuki fixtures.
-#
-# The chain runs the Tsuki EIP-1559 parameters (denominator 48, elasticity 10) from genesis and
-# covers what the base-fee rule needs to be exercised end to end:
-#
-#   blocks 1-3  slot 101 is unset, so the rule runs on the default overhead and the witnesses
-#               have to prove that authenticated absence: ordinary transfers, a block filled
-#               past the gas target so the base fee moves, and an L1 message
-#   block 4     a transaction that sets the L2 base-fee overhead at slot 101
-#   blocks 5-6  the first blocks judged by the new overhead
-#
-# This is this repo's own end-to-end check of the node. The guest's fixture corpus is generated
-# from a copy of this recipe that lives with the fixtures, in stateless-block-verifier at
-# `testdata/dogeos/base-fee-rule/`; that copy covers the other shapes the L2SystemConfig account
-# can be in (absent entirely, created mid-chain, the registered development chain) and dumps SBV
-# `BlockWitness` documents. Keep the two in step.
-#
-# Blocks are driven through the Engine API exactly as the rollup node drives a sequencer, so the
-# witnesses come from the same `newPayload` path the base-fee rule is enforced on.
-#
+# Checks base-fee import validation and execution witnesses on a local Tsuki chain.
+# Blocks 1-3 use the default overhead; block 4 updates slot 101; blocks 5-6 use the new value.
+# A seventh, empty block tests rejection of a wrong fee followed by acceptance of the correct one.
 # Usage: scripts/tsuki-witness-corpus/generate.sh [OUT_DIR]
-# Requires: cast (foundry), jq, and a dogeos-reth binary (built here if absent).
+# Requires: cargo, cast (foundry), jq, and python3.
 
 set -euo pipefail
 
@@ -45,21 +27,13 @@ gas_burner=0x00000000000000000000000000000000000B0121
 system_config="$(jq -r '.config.scroll.l1Config.l2SystemConfigAddress' "$genesis")"
 new_overhead=200000000
 
-for tool in cast jq; do
+for tool in cargo cast jq python3; do
   command -v "$tool" >/dev/null || { echo "missing required tool: $tool" >&2; exit 1; }
 done
 
-# Builds take a lock, so this does not start a second heavy cargo job beside one already
-# running. The default is repo-local; on a machine shared with other builds, set BUILD_LOCK to
-# whatever lock those builds use.
-BUILD_LOCK="${BUILD_LOCK:-$repo_root/target/dogeos-reth-build.lock}"
-mkdir -p "$(dirname "$BUILD_LOCK")"
-touch "$BUILD_LOCK"
-binary="$repo_root/target/debug/dogeos-reth"
-if [[ ! -x "$binary" ]]; then
-  echo "building dogeos-reth"
-  (cd "$repo_root" && flock "$BUILD_LOCK" cargo build -p dogeos-reth --jobs 8)
-fi
+# Always build the current source; Cargo serializes builds sharing the target directory.
+binary="$(cd "$repo_root" && cargo metadata --no-deps --format-version 1 --locked | jq -r .target_directory)/debug/dogeos-reth"
+(cd "$repo_root" && cargo build --locked -p dogeos-reth --jobs 8)
 node_commit="$(git -C "$repo_root" rev-parse HEAD)"
 
 rm -rf "$out_dir"
@@ -241,8 +215,7 @@ cast rpc --rpc-url "$rpc" eth_simulateV1 \
   || { echo "eth_simulateV1 with validation:false does not run" >&2; exit 1; }
 
 head_number="$(cast block-number --rpc-url "$rpc")"
-# Genesis has no parent, so it has no witness; the corpus starts at block 1, which is itself in
-# the segment where the system config account does not exist yet.
+# Genesis has no parent, so witnesses start at block 1 with slot 101 unset.
 echo "dumping witnesses for blocks 1..$head_number"
 for n in $(seq 1 "$head_number"); do
   cast rpc --rpc-url "$rpc" debug_executionWitness "$(cast to-hex "$n")" \
