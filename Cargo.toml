@@ -122,6 +122,5 @@ dogeos-reth-node = { path = "crates/dogeos-reth-node", default-features = false 
 dogeos-rpc-types = { path = "crates/dogeos-rpc-types", default-features = false }
 dogeos-scroll-wire = { path = "crates/dogeos-scroll-wire", default-features = false }
 
-# DogeOS-owned EVM behavior is retained outside upstream Reth. This revision
-# comes from the REVM 36 upgrade branch.
-revm-scroll = { git = "https://github.com/DogeOS69/dogeos-revm.git", rev = "acab500c0cb1a13a6c52b55f79e84493c2c8e533", default-features = false }
+# DogeOS-owned EVM behavior is retained outside upstream Reth, pinned to tsuki-v0.9.
+revm-scroll = { git = "https://github.com/DogeOS69/dogeos-revm.git", rev = "d4ac4dac66e5648099a0277eb63f606fc04caff7", default-features = false }
