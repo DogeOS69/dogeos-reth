@@ -40,24 +40,32 @@ rm -rf "$out_dir"
 mkdir -p "$work_dir"
 openssl rand -hex 32 > "$jwt"
 
-"$binary" node \
-  --chain "$genesis" \
-  --datadir "$work_dir/data" \
-  --http --http.addr 127.0.0.1 --http.port 18545 --http.api eth,debug,net,web3 \
-  --authrpc.addr 127.0.0.1 --authrpc.port 18551 --authrpc.jwtsecret "$jwt" \
-  --disable-discovery --port 18303 --network.scroll-wire=false \
-  --rpc.eth-proof-window 1024 \
-  --log.file.directory "$work_dir/logs" \
-  > "$work_dir/node.log" 2>&1 &
-node_pid=$!
-trap 'kill "$node_pid" 2>/dev/null || true; wait "$node_pid" 2>/dev/null || true' EXIT
-echo "node pid $node_pid, log $work_dir/node.log"
-
-for _ in $(seq 60); do
-  if cast chain-id --rpc-url "$rpc" >/dev/null 2>&1; then break; fi
-  sleep 1
-done
-cast chain-id --rpc-url "$rpc" >/dev/null || { echo "node did not come up" >&2; exit 1; }
+start_node() {
+  local dir="$1"
+  mkdir -p "$dir"
+  "$binary" node \
+    --chain "$genesis" --datadir "$dir/data" \
+    --http --http.addr 127.0.0.1 --http.port 18545 --http.api eth,debug,net,web3 \
+    --authrpc.addr 127.0.0.1 --authrpc.port 18551 --authrpc.jwtsecret "$jwt" \
+    --disable-discovery --port 18303 --network.scroll-wire=false \
+    --rpc.eth-proof-window 1024 --log.file.directory "$dir/logs" \
+    > "$dir/node.log" 2>&1 &
+  node_pid=$!
+  echo "node pid $node_pid, log $dir/node.log"
+  for _ in $(seq 60); do
+    if cast chain-id --rpc-url "$rpc" >/dev/null 2>&1; then return; fi
+    sleep 1
+  done
+  echo "node did not come up" >&2
+  exit 1
+}
+stop_node() {
+  kill "$node_pid" 2>/dev/null || true
+  wait "$node_pid" 2>/dev/null || true
+}
+trap stop_node EXIT
+start_node "$work_dir"
+mkdir -p "$work_dir/payloads"
 
 engine() { cast rpc --rpc-url "$authrpc" --jwt-secret "$(cat "$jwt")" "$@"; }
 
@@ -101,6 +109,7 @@ build_block() { # label forced_txs_json
   payload_id="$(jq -r .payloadId <<<"$response")"
   [[ "$payload_id" != "null" ]] || { echo "no payload id for $label: $response" >&2; exit 1; }
   payload="$(engine engine_getPayloadV1 "$payload_id")"
+  jq . <<<"$payload" > "$work_dir/payloads/$(jq -r .blockNumber <<<"$payload" | cast to-dec).json"
   status="$(engine engine_newPayloadV1 "$payload" | jq -r .status)"
   [[ "$status" == "VALID" ]] || { echo "$label rejected at newPayload: $status" >&2; exit 1; }
   head_hash="$(jq -r .blockHash <<<"$payload")"
@@ -157,12 +166,7 @@ for label in "first block on the new overhead" "second block on the new overhead
   build_block "$label" "$txs"
 done
 
-# The import rules the witnesses depend on, checked against the running node.
-#
-# A block whose base fee does not follow the rule must be answered INVALID rather than taken, and
-# the node must still be there afterwards. (A parent that the engine tree holds but has not made
-# canonical is covered by `a_payload_context_carries_the_parent_fee_inputs` in dogeos-reth-evm;
-# the parent here is the canonical head.)
+# Reject a rehashed wrong fee, then import the correct payload.
 echo "checking that a wrong base fee is rejected at newPayload"
 timestamp=$(( timestamp + 1 ))
 fcs="{\"headBlockHash\":\"$head_hash\",\"safeBlockHash\":\"$head_hash\",\"finalizedBlockHash\":\"$head_hash\"}"
@@ -176,6 +180,7 @@ attrs="$(jq -nc --arg ts "$(cast to-hex "$timestamp")" '{
   }')"
 payload_id="$(engine engine_forkchoiceUpdatedV1 "$fcs" "$attrs" | jq -r .payloadId)"
 good="$(engine engine_getPayloadV1 "$payload_id")"
+jq . <<<"$good" > "$work_dir/payloads/7.json"
 
 # The payload is empty, so its header can be re-encoded here. Check that against the hash the
 # node computed first: if the two agree, a payload rebuilt with a different fee and a matching
@@ -268,4 +273,24 @@ jq -n \
    }' > "$out_dir/provenance.json"
 
 ( cd "$out_dir" && sha256sum ./*.json > SHA256SUMS )
+# Replay into a fresh node without FCU: every successor must use its in-memory parent's
+# state, including the overhead set in block 4. Reuse the same wrong-fee probe for block 7.
+stop_node
+start_node "$work_dir/import"
+echo "checking import against non-canonical parents"
+for n in $(seq 1 6); do
+  response="$(engine engine_newPayloadV1 "$(cat "$work_dir/payloads/$n.json")")"
+  [[ "$(jq -r .status <<<"$response")" == "VALID" ]] \
+    || { echo "non-canonical import $n failed: $response" >&2; exit 1; }
+done
+[[ "$(cast block-number --rpc-url "$rpc")" == "0" ]] \
+  || { echo "parents unexpectedly became canonical" >&2; exit 1; }
+response="$(engine engine_newPayloadV1 "$bad")"
+jq -e '.status == "INVALID" and (.validationError | contains("invalid base fee"))' \
+  <<<"$response" > /dev/null
+engine engine_newPayloadV1 "$good" | jq -e '.status == "VALID"' > /dev/null
+engine engine_forkchoiceUpdatedV1 \
+  "{\"headBlockHash\":\"$head_hash\",\"safeBlockHash\":\"$head_hash\",\"finalizedBlockHash\":\"$head_hash\"}" \
+  null | jq -e '.payloadStatus.status == "VALID"' > /dev/null
+[[ "$(cast storage "$system_config" 101 --rpc-url "$rpc" | cast to-dec)" == "$new_overhead" ]]
 echo "witnesses and provenance in $out_dir"

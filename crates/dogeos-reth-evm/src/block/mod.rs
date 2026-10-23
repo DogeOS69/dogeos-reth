@@ -2,10 +2,8 @@ pub use receipt_builder::{ReceiptBuilderCtx, ScrollReceiptBuilder};
 mod receipt_builder;
 
 use crate::{
-    FromTxWithCompressionInfo, ScrollBaseFeeRule, ScrollDefaultPrecompilesFactory, ScrollEvm,
-    ScrollEvmFactory, ScrollPrecompilesFactory, ScrollTransactionIntoTxEnv,
-    ToTxWithCompressionInfo,
-    base_fee::BaseFeeRuleKind,
+    FromTxWithCompressionInfo, ScrollDefaultPrecompilesFactory, ScrollEvm, ScrollEvmFactory,
+    ScrollPrecompilesFactory, ScrollTransactionIntoTxEnv, ToTxWithCompressionInfo,
     system_caller::ScrollSystemCaller,
     transitions::{apply_feynman_hard_fork, apply_galileo_v2_hard_fork, apply_tsuki_hard_fork},
 };
@@ -25,7 +23,6 @@ use alloy_primitives::{B256, U256};
 use dogeos_chainspec::{ChainConfig, ScrollChainConfig};
 use dogeos_hardforks::{DogeosHardfork, DogeosHardforks};
 use dogeos_protocol_types::L1_MESSAGE_TRANSACTION_TYPE;
-use reth_chainspec::EthChainSpec;
 use revm::{
     Inspector,
     context::{Block, TxEnv, result::InvalidTransaction},
@@ -64,33 +61,10 @@ impl<H> TxResult for ScrollTxResult<H> {
 pub type ScrollTxCompressionInfos = Vec<ScrollTxCompressionInfo>;
 
 /// Context for Scroll Block Execution.
-///
-/// Private fields prevent callers from extracting a builder's skipping rule for import.
 #[derive(Debug, Default, Clone)]
-#[non_exhaustive]
 pub struct ScrollBlockExecutionCtx {
     /// Parent block hash.
-    pub(crate) parent_hash: B256,
-    /// What the Feynman+ base-fee rule should do for this block.
-    ///
-    /// Defaults to [`ScrollBaseFeeRule::missing_parent`], so a context nobody filled in fails
-    /// closed rather than skipping the rule.
-    pub(crate) base_fee: ScrollBaseFeeRule,
-}
-
-impl ScrollBlockExecutionCtx {
-    /// Builds a context for executing the child of `parent_hash` under `base_fee`.
-    pub const fn new(parent_hash: B256, base_fee: ScrollBaseFeeRule) -> Self {
-        Self {
-            parent_hash,
-            base_fee,
-        }
-    }
-
-    /// The parent block hash this context was built for.
-    pub const fn parent_hash(&self) -> B256 {
-        self.parent_hash
-    }
+    pub parent_hash: B256,
 }
 
 /// Block executor for Scroll.
@@ -110,8 +84,6 @@ pub struct ScrollBlockExecutor<Evm, R: ScrollReceiptBuilder, Spec> {
     gas_used: u64,
     /// Utility to call system smart contracts.
     system_caller: ScrollSystemCaller<Spec>,
-    /// L2 base-fee overhead read from the block's pre-state, set in pre-execution.
-    base_fee_overhead: Option<u64>,
 }
 
 impl<E, R: ScrollReceiptBuilder, Spec> ScrollBlockExecutor<E, R, Spec> {
@@ -137,7 +109,6 @@ where
             receipt_builder,
             receipts: Vec::new(),
             gas_used: 0,
-            base_fee_overhead: None,
         }
     }
 }
@@ -152,7 +123,7 @@ where
                     + FromTxWithCompressionInfo<R::Transaction>,
         >,
     R: ScrollReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
-    Spec: EthChainSpec + DogeosHardforks + ChainConfig<Config = ScrollChainConfig>,
+    Spec: DogeosHardforks + ChainConfig<Config = ScrollChainConfig>,
 {
     /// Executes all transactions in a block, applying pre and post execution changes. The provided
     /// transaction compression infos are expected to be in the same order as the
@@ -194,76 +165,12 @@ where
     }
 }
 
-impl<DB, E, R, Spec> ScrollBlockExecutor<E, R, Spec>
-where
-    DB: StateDB,
-    E: EvmExt<DB = DB>,
-    R: ScrollReceiptBuilder,
-    Spec: EthChainSpec + DogeosHardforks + ChainConfig<Config = ScrollChainConfig>,
-{
-    /// Checks the Feynman+ base-fee rule for the block that was just executed.
-    ///
-    /// The rule is `header.base_fee == next_block_base_fee(parent, overhead)`, where the
-    /// overhead comes from slot 101 of the system config contract in this block's pre-state
-    /// (read in [`BlockExecutor::apply_pre_execution_changes`]).
-    ///
-    /// Runs at completion so import enforces it, while tracing and `eth_callMany`, which
-    /// stop after replaying transactions, need no parent inputs.
-    ///
-    /// A mismatch returns [`BlockValidationError`] (`newPayload: INVALID`). Missing execution
-    /// inputs are internal errors because the caller is responsible for supplying them.
-    fn validate_base_fee(&self) -> Result<(), BlockExecutionError> {
-        let timestamp = self.evm.block().timestamp().to();
-        let number = self.evm.block().number().to();
-        // Matched to the EVM's own spec selection, which takes both.
-        if !self
-            .spec
-            .dogeos_fork_activation(DogeosHardfork::Feynman)
-            .active_at_timestamp_or_number(timestamp, number)
-        {
-            return Ok(());
-        }
-
-        let parent = match self.ctx.base_fee.0 {
-            BaseFeeRuleKind::NoHeaderToCheck => return Ok(()),
-            BaseFeeRuleKind::MissingParent => {
-                return Err(BlockExecutionError::msg(
-                    "cannot check the base fee: the caller supplied no parent header",
-                ));
-            }
-            BaseFeeRuleKind::WrongParent => {
-                return Err(BlockExecutionError::msg(
-                    "cannot check the base fee: the header the caller supplied is not this \
-                     block's parent, or carries no base fee",
-                ));
-            }
-            BaseFeeRuleKind::Check(parent) => parent,
-        };
-        let Some(overhead) = self.base_fee_overhead else {
-            return Err(BlockExecutionError::msg(
-                "base-fee overhead was not read before execution",
-            ));
-        };
-
-        let expected =
-            crate::next_block_base_fee_with_overhead(&self.spec, &parent, overhead, timestamp);
-        let got = self.evm.block().basefee();
-        if got != expected {
-            return Err(BlockValidationError::msg(format!(
-                "invalid base fee: got {got}, expected {expected}"
-            ))
-            .into());
-        }
-        Ok(())
-    }
-}
-
 impl<DB, E, R, Spec> BlockExecutor for ScrollBlockExecutor<E, R, Spec>
 where
     DB: StateDB,
     E: EvmExt<DB = DB, Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction>>,
     R: ScrollReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
-    Spec: EthChainSpec + DogeosHardforks + ChainConfig<Config = ScrollChainConfig>,
+    Spec: DogeosHardforks + ChainConfig<Config = ScrollChainConfig>,
 {
     type Transaction = R::Transaction;
     type Receipt = R::Receipt;
@@ -271,15 +178,11 @@ where
     type Result = ScrollTxResult<<E as Evm>::HaltReason>;
 
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
-        // Read the L2 base-fee overhead from the block's pre-state, before any transition can
-        // touch it. The read is pure, and it happens here so that an execution witness taken
-        // for this block carries the system config account and its slot 101 — the base-fee
-        // rule is checked again, against the same value, in post-execution.
-        let Self { spec, evm, .. } = self;
-        let overhead = crate::base_fee_overhead(spec, evm.db_mut()).map_err(|err| {
+        // Witness replay must include the system-config account and slot 101, even when
+        // transactions do not touch them. Read before any fork transition changes state.
+        crate::base_fee_overhead(&self.spec, self.evm.db_mut()).map_err(|err| {
             BlockExecutionError::msg(format!("failed to read the base-fee overhead: {err}"))
         })?;
-        self.base_fee_overhead = Some(overhead);
 
         // apply gas oracle predeploy upgrade at Feynman transition block.
         #[allow(clippy::collapsible_if)]
@@ -413,7 +316,6 @@ where
     }
 
     fn finish(self) -> Result<(Self::Evm, BlockExecutionResult<R::Receipt>), BlockExecutionError> {
-        self.validate_base_fee()?;
         Ok((
             self.evm,
             BlockExecutionResult {
@@ -521,7 +423,7 @@ impl<R, Spec, P> ScrollBlockExecutorFactory<R, Spec, P> {
 impl<R, Spec, P> BlockExecutorFactory for ScrollBlockExecutorFactory<R, Spec, P>
 where
     R: ScrollReceiptBuilder<Transaction: Transaction + Encodable2718, Receipt: TxReceipt>,
-    Spec: EthChainSpec + DogeosHardforks + ChainConfig<Config = ScrollChainConfig> + Clone,
+    Spec: DogeosHardforks + ChainConfig<Config = ScrollChainConfig> + Clone,
     P: ScrollPrecompilesFactory,
     ScrollTransactionIntoTxEnv<TxEnv>:
         FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction>,
@@ -552,7 +454,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ScrollBaseFeeParent, next_block_base_fee_with_overhead};
     use crate::{
         ScrollRethReceiptBuilder, ScrollTransactionIntoTxEnv, TX_L1_FEE_PRECISION_U256,
         gas_price_oracle::L1_GAS_PRICE_ORACLE_ADDRESS,
@@ -588,56 +489,18 @@ mod tests {
         (updates, hook)
     }
 
-    /// Mainnet at genesis runs the Tsuki fee params (denominator 48, elasticity 10), so a
-    /// parent that burned exactly the gas target keeps the part of its fee above the overhead
-    /// and the child's base fee equals the parent's.
-    const TEST_GAS_LIMIT: u64 = 30_000_000;
-    const TEST_BASE_FEE: u64 = 15_680_000 + 1_000_000_000;
-    const FIXTURE_SENDER: Address = Address::repeat_byte(0x55);
-
-    /// An execution context whose parent satisfies the base-fee rule for [`TEST_BASE_FEE`].
-    fn test_ctx() -> ScrollBlockExecutionCtx {
-        ScrollBlockExecutionCtx::new(
-            B256::ZERO,
-            ScrollBaseFeeRule::check(ScrollBaseFeeParent {
-                base_fee_per_gas: TEST_BASE_FEE,
-                gas_used: TEST_GAS_LIMIT / 10,
-                gas_limit: TEST_GAS_LIMIT,
-            }),
-        )
-    }
-
     fn empty_state_evm()
     -> impl EvmExt<DB = State<EmptyDB>, Tx = ScrollTransactionIntoTxEnv<TxEnv>, HaltReason = HaltReason>
     {
-        empty_state_evm_with_base_fee(TEST_BASE_FEE)
-    }
-
-    fn empty_state_evm_with_base_fee(
-        base_fee: u64,
-    ) -> impl EvmExt<DB = State<EmptyDB>, Tx = ScrollTransactionIntoTxEnv<TxEnv>, HaltReason = HaltReason>
-    {
-        let mut state = State::builder()
+        let state = State::builder()
             .with_database(EmptyDB::default())
             .with_bundle_update()
             .build();
-        // The fixture transactions pay the block's base fee, so their sender needs a balance.
-        state.insert_account(
-            FIXTURE_SENDER,
-            AccountInfo {
-                balance: U256::from(u128::from(TEST_BASE_FEE) * 1_000_000),
-                ..Default::default()
-            },
-        );
         ScrollEvmFactory::<ScrollDefaultPrecompilesFactory>::default().create_evm(
             state,
             EvmEnv::new(
                 CfgEnv::new_with_spec(ScrollSpecId::TSUKI),
-                BlockEnv {
-                    basefee: base_fee,
-                    gas_limit: TEST_GAS_LIMIT,
-                    ..Default::default()
-                },
+                BlockEnv::default(),
             ),
         )
     }
@@ -672,12 +535,11 @@ mod tests {
         use alloy_primitives::{Signature, TxKind};
         use dogeos_reth_primitives::ScrollTransactionSigned;
 
-        let sender = FIXTURE_SENDER;
+        let sender = Address::repeat_byte(0x55);
         let transactions = (0..tx_count)
             .map(|nonce| {
                 let tx = TxLegacy {
                     nonce,
-                    gas_price: TEST_BASE_FEE.into(),
                     gas_limit: 21_000,
                     to: TxKind::Call(Address::repeat_byte(0x66)),
                     ..Default::default()
@@ -688,7 +550,7 @@ mod tests {
             .collect::<Vec<_>>();
         let executor = ScrollBlockExecutor::new(
             empty_state_evm(),
-            test_ctx(),
+            ScrollBlockExecutionCtx::default(),
             DOGEOS_MAINNET.clone(),
             ScrollRethReceiptBuilder,
         );
@@ -706,147 +568,109 @@ mod tests {
         assert_eq!(result.receipts.len(), 3);
     }
 
-    fn no_transactions() -> core::iter::Empty<
-        alloy_consensus::transaction::Recovered<
-            &'static dogeos_reth_primitives::ScrollTransactionSigned,
-        >,
-    > {
-        core::iter::empty()
-    }
-
-    /// Runs a transaction-free block with `ctx` and whatever slot-101 value `overhead` gives.
-    fn execute_empty_block(
-        ctx: ScrollBlockExecutionCtx,
-        overhead: Option<u64>,
-    ) -> Result<BlockExecutionResult<dogeos_reth_primitives::ScrollReceipt>, BlockExecutionError>
-    {
-        execute_with_overhead(ctx, TEST_BASE_FEE, overhead)
-    }
-
     #[test]
-    fn correct_base_fee_is_accepted() {
-        assert!(execute_empty_block(test_ctx(), None).is_ok());
-    }
-
-    #[test]
-    fn wrong_base_fee_is_rejected() {
-        // One wei off the rule's output on either side.
-        for delta in [-1i64, 1] {
-            let mut ctx = test_ctx();
-            let BaseFeeRuleKind::Check(parent) = &mut ctx.base_fee.0 else {
-                unreachable!("test_ctx carries a parent")
-            };
-            parent.base_fee_per_gas = parent.base_fee_per_gas.wrapping_add_signed(delta);
-            let err = execute_empty_block(ctx, None).unwrap_err().to_string();
-            assert!(
-                err.starts_with("invalid base fee: got "),
-                "unexpected error: {err}"
-            );
+    fn compression_cache_rejects_mismatched_counts() {
+        for (info_count, expected_error) in [
+            (2, "fewer compression infos than transactions"),
+            (4, "more compression infos than transactions"),
+        ] {
+            let err = execute_with_compression_infos(3, info_count).unwrap_err();
+            assert_eq!(err.to_string(), expected_error);
         }
     }
 
-    /// A wrong fee is the block's fault, so it has to be a validation error: the engine then
-    /// answers `newPayload` with `INVALID` and keeps running, instead of treating it as an
-    /// internal failure and exiting.
     #[test]
-    fn a_wrong_base_fee_is_a_validation_error() {
-        let mut ctx = test_ctx();
-        let BaseFeeRuleKind::Check(parent) = &mut ctx.base_fee.0 else {
-            unreachable!("test_ctx carries a parent")
-        };
-        parent.base_fee_per_gas += 1;
-        assert!(matches!(
-            execute_empty_block(ctx, None),
-            Err(BlockExecutionError::Validation(_))
-        ));
-    }
-
-    /// Building or simulating a block is not validating one, so the rule does not run and a
-    /// simulation is free to zero the base fee or override it.
-    #[test]
-    fn a_block_with_no_header_to_check_skips_the_rule() {
-        let ctx = ScrollBlockExecutionCtx::new(B256::ZERO, ScrollBaseFeeRule::no_header_to_check());
-        // A base fee that no parent could have produced, as `validation: false` would give.
-        assert!(execute_with_overhead(ctx, 0, None).is_ok());
-    }
-
-    #[test]
-    fn a_block_without_parent_inputs_is_rejected() {
-        let ctx = ScrollBlockExecutionCtx::new(B256::ZERO, ScrollBaseFeeRule::missing_parent());
-        let err = execute_empty_block(ctx, None).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "cannot check the base fee: the caller supplied no parent header"
-        );
-        // A caller bug, not something a peer can provoke, so it stays internal.
-        assert!(matches!(err, BlockExecutionError::Internal(_)));
-    }
-
-    /// A parent that burned a full block, so the part of its fee above the overhead grows and
-    /// the overhead actually matters to the result.
-    fn full_block_parent() -> ScrollBaseFeeParent {
-        ScrollBaseFeeParent {
-            base_fee_per_gas: DEFAULT_OVERHEAD + 1_000_000_000,
-            gas_used: TEST_GAS_LIMIT,
-            gas_limit: TEST_GAS_LIMIT,
-        }
-    }
-
-    const DEFAULT_OVERHEAD: u64 = 15_680_000;
-    /// 1 gwei above the default overhead, grown by 9/48 over a full block.
-    const FULL_BLOCK_CHILD_BASE_FEE: u64 = DEFAULT_OVERHEAD + 1_187_500_000;
-
-    #[test]
-    fn an_unset_slot_means_the_default_overhead() {
-        let ctx =
-            ScrollBlockExecutionCtx::new(B256::ZERO, ScrollBaseFeeRule::check(full_block_parent()));
-        let executor = ScrollBlockExecutor::new(
-            empty_state_evm_with_base_fee(FULL_BLOCK_CHILD_BASE_FEE),
-            ctx,
+    fn executor_forwards_transaction_state_hooks_with_receipt_indices() {
+        let mut executor = ScrollBlockExecutor::new(
+            empty_state_evm(),
+            ScrollBlockExecutionCtx::default(),
             DOGEOS_MAINNET.clone(),
             ScrollRethReceiptBuilder,
         );
-        assert!(executor.execute_block(no_transactions()).is_ok());
+        let (updates, hook) = recording_hook();
+        let first = Address::repeat_byte(0x11);
+        let second = Address::repeat_byte(0x22);
+        executor
+            .evm_mut()
+            .db_mut()
+            .load_cache_account(first)
+            .unwrap();
+        executor
+            .evm_mut()
+            .db_mut()
+            .load_cache_account(second)
+            .unwrap();
+        executor.set_state_hook(Some(hook));
+
+        executor
+            .commit_transaction(transaction_result(first))
+            .unwrap();
+        executor
+            .commit_transaction(transaction_result(second))
+            .unwrap();
+
+        let updates = updates.lock().unwrap();
+        assert_eq!(updates.len(), 2);
+        assert!(matches!(updates[0].0, StateChangeSource::Transaction(0)));
+        assert_eq!(updates[0].1, [first]);
+        assert!(matches!(updates[1].0, StateChangeSource::Transaction(1)));
+        assert_eq!(updates[1].1, [second]);
     }
 
     #[test]
-    fn a_configured_overhead_replaces_the_default() {
-        // One wei more overhead leaves one wei less below it to grow, so the child's base fee
-        // is one wei lower than under the default.
-        let configured = DEFAULT_OVERHEAD + 1;
-        let expected = FULL_BLOCK_CHILD_BASE_FEE - 1;
-
-        let ctx =
-            ScrollBlockExecutionCtx::new(B256::ZERO, ScrollBaseFeeRule::check(full_block_parent()));
-        assert!(
-            execute_with_overhead(ctx.clone(), expected, Some(configured)).is_ok(),
-            "the configured overhead was not used"
+    fn executor_forwards_pre_block_transition_state_hooks() {
+        let mut executor = ScrollBlockExecutor::new(
+            empty_state_evm(),
+            ScrollBlockExecutionCtx::default(),
+            DOGEOS_MAINNET.clone(),
+            ScrollRethReceiptBuilder,
         );
+        let (updates, hook) = recording_hook();
+        executor.set_state_hook(Some(hook));
 
-        // The header that the default overhead would have produced is now wrong.
-        let err = execute_with_overhead(ctx, FULL_BLOCK_CHILD_BASE_FEE, Some(configured))
-            .unwrap_err()
-            .to_string();
-        assert_eq!(
-            err,
-            format!("invalid base fee: got {FULL_BLOCK_CHILD_BASE_FEE}, expected {expected}")
-        );
+        executor.apply_pre_execution_changes().unwrap();
+
+        let updates = updates.lock().unwrap();
+        assert!(!updates.is_empty());
+        assert!(updates.iter().all(|(source, _)| matches!(
+            source,
+            StateChangeSource::PreBlock(StateChangePreBlockSource::BlockHashesContract)
+        )));
+        let keys = updates
+            .iter()
+            .flat_map(|(_, keys)| keys.iter().copied())
+            .collect::<Vec<_>>();
+        assert!(keys.contains(&L1_GAS_PRICE_ORACLE_ADDRESS));
+        assert!(keys.contains(&NATIVE_DOGE_TOKEN_ADDRESS));
     }
 
-    fn execute_with_overhead(
-        ctx: ScrollBlockExecutionCtx,
-        base_fee: u64,
-        overhead: Option<u64>,
-    ) -> Result<BlockExecutionResult<dogeos_reth_primitives::ScrollReceipt>, BlockExecutionError>
-    {
-        let mut evm = empty_state_evm_with_base_fee(base_fee);
-        if let Some(overhead) = overhead {
-            set_overhead(evm.db_mut(), overhead);
+    #[test]
+    fn clearing_executor_state_hook_drops_previous_hook_once() {
+        struct DropCounter(Arc<AtomicUsize>);
+
+        impl Drop for DropCounter {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
         }
-        ScrollBlockExecutor::new(evm, ctx, DOGEOS_MAINNET.clone(), ScrollRethReceiptBuilder)
-            .execute_block(no_transactions())
-    }
 
+        let mut executor = ScrollBlockExecutor::new(
+            empty_state_evm(),
+            ScrollBlockExecutionCtx::default(),
+            DOGEOS_MAINNET.clone(),
+            ScrollRethReceiptBuilder,
+        );
+        let drops = Arc::new(AtomicUsize::new(0));
+        let guard = DropCounter(Arc::clone(&drops));
+        executor.set_state_hook(Some(Box::new(move |_, _: &EvmState| {
+            let _ = &guard;
+        })));
+        assert_eq!(drops.load(Ordering::Relaxed), 0);
+
+        executor.set_state_hook(None);
+
+        assert_eq!(drops.load(Ordering::Relaxed), 1);
+    }
     fn set_overhead(db: &mut State<EmptyDB>, overhead: u64) {
         db.insert_account_with_storage(
             DOGEOS_MAINNET.config.l1_config.l2_system_config_address,
@@ -856,144 +680,6 @@ mod tests {
                 U256::from(overhead),
             )]),
         );
-    }
-
-    /// `SSTORE(101, calldata[0:32]); STOP` — stands in for the system config's overhead setter.
-    const OVERHEAD_SETTER_CODE: [u8; 7] = [0x60, 0x00, 0x35, 0x60, 0x65, 0x55, 0x00];
-
-    #[test]
-    fn an_overhead_change_applies_from_the_next_block() {
-        use alloy_consensus::{Signed, TxLegacy, transaction::Recovered};
-        use alloy_primitives::{Signature, TxKind};
-        use dogeos_reth_primitives::ScrollTransactionSigned;
-
-        const OLD_OVERHEAD: u64 = 100_000_000;
-        const NEW_OVERHEAD: u64 = 200_000_000;
-        // A full parent block one gwei above the old overhead: the excess grows by 9/48.
-        let parent = ScrollBaseFeeParent {
-            base_fee_per_gas: OLD_OVERHEAD + 1_000_000_000,
-            gas_used: TEST_GAS_LIMIT,
-            gas_limit: TEST_GAS_LIMIT,
-        };
-        let under_old = OLD_OVERHEAD + 1_187_500_000;
-        let under_new =
-            next_block_base_fee_with_overhead(&**DOGEOS_MAINNET, &parent, NEW_OVERHEAD, 0);
-        assert_ne!(under_old, under_new);
-
-        let system_config = DOGEOS_MAINNET.config.l1_config.l2_system_config_address;
-        let mut state = State::builder()
-            .with_database(EmptyDB::default())
-            .with_bundle_update()
-            .build();
-        state.insert_account(
-            FIXTURE_SENDER,
-            AccountInfo {
-                balance: U256::from(10u64).pow(U256::from(18u64)),
-                ..Default::default()
-            },
-        );
-        state.insert_account_with_storage(
-            system_config,
-            AccountInfo::from_bytecode(revm::bytecode::Bytecode::new_raw(
-                OVERHEAD_SETTER_CODE.into(),
-            )),
-            revm::database::states::plain_account::PlainStorage::from_iter([(
-                U256::from(101),
-                U256::from(OLD_OVERHEAD),
-            )]),
-        );
-
-        // Block n sets the new overhead, and is itself judged by the old one.
-        let set_new_overhead = {
-            let tx = TxLegacy {
-                nonce: 0,
-                gas_price: under_old.into(),
-                gas_limit: 100_000,
-                to: TxKind::Call(system_config),
-                input: U256::from(NEW_OVERHEAD).to_be_bytes::<32>().into(),
-                ..Default::default()
-            };
-            ScrollTransactionSigned::from(Signed::new_unchecked(
-                tx,
-                Signature::test_signature(),
-                B256::ZERO,
-            ))
-        };
-        let ctx = ScrollBlockExecutionCtx::new(B256::ZERO, ScrollBaseFeeRule::check(parent));
-        let result = ScrollBlockExecutor::new(
-            evm_over(&mut state, under_old),
-            ctx,
-            DOGEOS_MAINNET.clone(),
-            ScrollRethReceiptBuilder,
-        )
-        .execute_block(core::iter::once(Recovered::new_unchecked(
-            &set_new_overhead,
-            FIXTURE_SENDER,
-        )))
-        .expect("block n follows the overhead of its own pre-state");
-
-        assert_eq!(
-            crate::base_fee_overhead(&**DOGEOS_MAINNET, &mut state).expect("storage read"),
-            NEW_OVERHEAD,
-            "block n did not change the overhead"
-        );
-
-        // Block n + 1 is judged by the overhead block n left behind.
-        let parent_n = ScrollBaseFeeParent {
-            base_fee_per_gas: under_old,
-            gas_used: result.gas_used,
-            gas_limit: TEST_GAS_LIMIT,
-        };
-        let stale =
-            next_block_base_fee_with_overhead(&**DOGEOS_MAINNET, &parent_n, OLD_OVERHEAD, 0);
-        let fresh =
-            next_block_base_fee_with_overhead(&**DOGEOS_MAINNET, &parent_n, NEW_OVERHEAD, 0);
-        assert_ne!(stale, fresh);
-
-        let ctx = ScrollBlockExecutionCtx::new(B256::ZERO, ScrollBaseFeeRule::check(parent_n));
-        let err = ScrollBlockExecutor::new(
-            evm_over(&mut state, stale),
-            ctx.clone(),
-            DOGEOS_MAINNET.clone(),
-            ScrollRethReceiptBuilder,
-        )
-        .execute_block(no_transactions())
-        .unwrap_err()
-        .to_string();
-        assert_eq!(
-            err,
-            format!("invalid base fee: got {stale}, expected {fresh}")
-        );
-
-        ScrollBlockExecutor::new(
-            evm_over(&mut state, fresh),
-            ctx,
-            DOGEOS_MAINNET.clone(),
-            ScrollRethReceiptBuilder,
-        )
-        .execute_block(no_transactions())
-        .expect("block n + 1 follows the overhead block n set");
-    }
-
-    fn evm_over(
-        state: &mut State<EmptyDB>,
-        base_fee: u64,
-    ) -> impl EvmExt<
-        DB = &mut State<EmptyDB>,
-        Tx = ScrollTransactionIntoTxEnv<TxEnv>,
-        HaltReason = HaltReason,
-    > {
-        ScrollEvmFactory::<ScrollDefaultPrecompilesFactory>::default().create_evm(
-            state,
-            EvmEnv::new(
-                CfgEnv::new_with_spec(ScrollSpecId::TSUKI),
-                BlockEnv {
-                    basefee: base_fee,
-                    gas_limit: TEST_GAS_LIMIT,
-                    ..Default::default()
-                },
-            ),
-        )
     }
 
     /// The slot-101 read has to reach the state an execution witness is recorded from, or
@@ -1007,7 +693,7 @@ mod tests {
         }
         let mut executor = ScrollBlockExecutor::new(
             evm,
-            test_ctx(),
+            ScrollBlockExecutionCtx::default(),
             DOGEOS_MAINNET.clone(),
             ScrollRethReceiptBuilder,
         );
@@ -1064,129 +750,5 @@ mod tests {
         );
         // The multiproof is taken over the hashed-state targets, so targeting the account is
         // what makes its absence provable.
-    }
-
-    /// `finish()` is where the rule runs, and it needs the overhead pre-execution read. A
-    /// caller that skips pre-execution gets an error rather than an unchecked block.
-    #[test]
-    fn finishing_without_pre_execution_is_rejected() {
-        let executor = ScrollBlockExecutor::new(
-            empty_state_evm(),
-            test_ctx(),
-            DOGEOS_MAINNET.clone(),
-            ScrollRethReceiptBuilder,
-        );
-        let Err(err) = BlockExecutor::finish(executor) else {
-            panic!("finishing without pre-execution should fail")
-        };
-        assert_eq!(
-            err.to_string(),
-            "base-fee overhead was not read before execution"
-        );
-        assert!(matches!(err, BlockExecutionError::Internal(_)));
-    }
-
-    #[test]
-    fn compression_cache_rejects_mismatched_counts() {
-        for (info_count, expected_error) in [
-            (2, "fewer compression infos than transactions"),
-            (4, "more compression infos than transactions"),
-        ] {
-            let err = execute_with_compression_infos(3, info_count).unwrap_err();
-            assert_eq!(err.to_string(), expected_error);
-        }
-    }
-
-    #[test]
-    fn executor_forwards_transaction_state_hooks_with_receipt_indices() {
-        let mut executor = ScrollBlockExecutor::new(
-            empty_state_evm(),
-            test_ctx(),
-            DOGEOS_MAINNET.clone(),
-            ScrollRethReceiptBuilder,
-        );
-        let (updates, hook) = recording_hook();
-        let first = Address::repeat_byte(0x11);
-        let second = Address::repeat_byte(0x22);
-        executor
-            .evm_mut()
-            .db_mut()
-            .load_cache_account(first)
-            .unwrap();
-        executor
-            .evm_mut()
-            .db_mut()
-            .load_cache_account(second)
-            .unwrap();
-        executor.set_state_hook(Some(hook));
-
-        executor
-            .commit_transaction(transaction_result(first))
-            .unwrap();
-        executor
-            .commit_transaction(transaction_result(second))
-            .unwrap();
-
-        let updates = updates.lock().unwrap();
-        assert_eq!(updates.len(), 2);
-        assert!(matches!(updates[0].0, StateChangeSource::Transaction(0)));
-        assert_eq!(updates[0].1, [first]);
-        assert!(matches!(updates[1].0, StateChangeSource::Transaction(1)));
-        assert_eq!(updates[1].1, [second]);
-    }
-
-    #[test]
-    fn executor_forwards_pre_block_transition_state_hooks() {
-        let mut executor = ScrollBlockExecutor::new(
-            empty_state_evm(),
-            test_ctx(),
-            DOGEOS_MAINNET.clone(),
-            ScrollRethReceiptBuilder,
-        );
-        let (updates, hook) = recording_hook();
-        executor.set_state_hook(Some(hook));
-
-        executor.apply_pre_execution_changes().unwrap();
-
-        let updates = updates.lock().unwrap();
-        assert!(!updates.is_empty());
-        assert!(updates.iter().all(|(source, _)| matches!(
-            source,
-            StateChangeSource::PreBlock(StateChangePreBlockSource::BlockHashesContract)
-        )));
-        let keys = updates
-            .iter()
-            .flat_map(|(_, keys)| keys.iter().copied())
-            .collect::<Vec<_>>();
-        assert!(keys.contains(&L1_GAS_PRICE_ORACLE_ADDRESS));
-        assert!(keys.contains(&NATIVE_DOGE_TOKEN_ADDRESS));
-    }
-
-    #[test]
-    fn clearing_executor_state_hook_drops_previous_hook_once() {
-        struct DropCounter(Arc<AtomicUsize>);
-
-        impl Drop for DropCounter {
-            fn drop(&mut self) {
-                self.0.fetch_add(1, Ordering::Relaxed);
-            }
-        }
-
-        let mut executor = ScrollBlockExecutor::new(
-            empty_state_evm(),
-            test_ctx(),
-            DOGEOS_MAINNET.clone(),
-            ScrollRethReceiptBuilder,
-        );
-        let drops = Arc::new(AtomicUsize::new(0));
-        let guard = DropCounter(Arc::clone(&drops));
-        executor.set_state_hook(Some(Box::new(move |_, _: &EvmState| {
-            let _ = &guard;
-        })));
-        assert_eq!(drops.load(Ordering::Relaxed), 0);
-
-        executor.set_state_hook(None);
-
-        assert_eq!(drops.load(Ordering::Relaxed), 1);
     }
 }

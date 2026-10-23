@@ -44,60 +44,6 @@ impl ScrollBaseFeeParent {
     }
 }
 
-/// What the Feynman+ base-fee rule should do for the block an executor is about to run.
-///
-/// Public constructors either enforce the rule or fail closed. Only local block building
-/// can construct a skipping rule; the default reports a missing parent.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct ScrollBaseFeeRule(pub(crate) BaseFeeRuleKind);
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum BaseFeeRuleKind {
-    /// The block has a header, and its base fee is checked against these parent inputs.
-    Check(ScrollBaseFeeParent),
-    /// The block has a header but the caller offered no usable parent, so the rule cannot run.
-    /// Executing a Feynman+ block to completion in this state is an error.
-    #[default]
-    MissingParent,
-    /// The supplied header is not this block's parent, or has no base fee.
-    WrongParent,
-    /// There is no header to check: the block is being built or simulated and its base fee is
-    /// the caller's own, from the payload attributes.
-    NoHeaderToCheck,
-}
-
-impl ScrollBaseFeeRule {
-    /// Check the block's base fee against these parent inputs.
-    pub const fn check(parent: ScrollBaseFeeParent) -> Self {
-        Self(BaseFeeRuleKind::Check(parent))
-    }
-
-    /// Check the block's base fee against this parent header, or fail closed if the header
-    /// carries no base fee — which no Feynman+ header may be.
-    pub fn for_parent_header<H: BlockHeader>(header: &H) -> Self {
-        ScrollBaseFeeParent::from_header(header).map_or_else(Self::wrong_parent, Self::check)
-    }
-
-    /// Fail closed: there is a header to check but no parent to check it against.
-    pub const fn missing_parent() -> Self {
-        Self(BaseFeeRuleKind::MissingParent)
-    }
-
-    /// Fail closed: the caller had a header but it is not this block's parent.
-    pub(crate) const fn wrong_parent() -> Self {
-        Self(BaseFeeRuleKind::WrongParent)
-    }
-
-    /// Skip the rule: the block is being built or simulated, so there is no header whose base
-    /// fee could be wrong.
-    ///
-    /// Crate-visible, and produced only by `ConfigureEvm::context_for_next_block`. An importer
-    /// starts from a block or a payload and so cannot reach it.
-    pub(crate) const fn no_header_to_check() -> Self {
-        Self(BaseFeeRuleKind::NoHeaderToCheck)
-    }
-}
-
 /// State-aware Feynman+ L2 base-fee calculator.
 #[derive(Clone, Debug, Default)]
 pub struct ScrollBaseFeeProvider<ChainSpec>(ChainSpec);
@@ -362,37 +308,6 @@ mod tests {
             MAX_L2_BASE_FEE
         );
         Ok(())
-    }
-
-    /// Everything a caller outside this crate can build either runs the rule or fails closed.
-    /// The variant that skips it is crate-visible, so a downstream crate — the stateless block
-    /// verifier, say — cannot turn the rule off while fixing a compile error.
-    #[test]
-    fn only_enforcing_rules_are_reachable_from_outside_the_crate() {
-        let parent = parent(1_000_000_000, GAS_TARGET);
-        assert_eq!(
-            ScrollBaseFeeRule::for_parent_header(&parent),
-            ScrollBaseFeeRule::check(ScrollBaseFeeParent::from_header(&parent).unwrap())
-        );
-
-        // A header with no base fee is not a Feynman+ header; it fails closed, and says so
-        // differently from a caller that offered nothing at all.
-        let mut no_base_fee = parent;
-        no_base_fee.base_fee_per_gas = None;
-        assert_eq!(
-            ScrollBaseFeeRule::for_parent_header(&no_base_fee),
-            ScrollBaseFeeRule::wrong_parent()
-        );
-        assert_ne!(
-            ScrollBaseFeeRule::wrong_parent(),
-            ScrollBaseFeeRule::missing_parent()
-        );
-
-        // And so does a rule nobody set.
-        assert_eq!(
-            ScrollBaseFeeRule::default(),
-            ScrollBaseFeeRule::missing_parent()
-        );
     }
 
     #[test]

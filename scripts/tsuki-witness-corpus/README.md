@@ -5,13 +5,15 @@ scripts/tsuki-witness-corpus/generate.sh [OUT_DIR]
 ```
 
 Requires Cargo, Foundry (`cast`), `jq`, and Python 3. The script builds the current source,
-starts a local node, and stops it on exit. `CARGO_TARGET_DIR` selects the shared build cache;
+starts a local node, then replays the payloads into a fresh node. Both are stopped on exit. `CARGO_TARGET_DIR` selects the shared build cache;
 output defaults to `target/tsuki-witness-corpus`.
 
 The Engine API drives seven blocks and checks:
 
 - A rehashed payload with a base fee one wei too high returns `INVALID` for the fee rule;
   the correct payload is accepted afterwards.
+- Replaying the same payloads without forkchoice updates uses non-canonical parent state,
+  including the overhead change, and still rejects the wrong fee.
 - Pending block construction and `eth_simulateV1` with `validation: false` still work.
 - Every execution witness contains the L2SystemConfig account and storage proof nodes
   returned by `eth_getProof`, both before and after slot 101 is set in block 4.
