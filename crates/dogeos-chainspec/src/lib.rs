@@ -72,6 +72,9 @@ impl DogeosChainSpecBuilder {
         self
     }
 
+    /// Replaces the genesis document. Fork keys in the document (`tsukiTime`, `tsukiV2Time`,
+    /// ...) are not read: forks come from the base spec and [`Self::with_fork`]. Use
+    /// [`DogeosChainSpec::from_custom_genesis`] to take the schedule from the document.
     pub fn genesis(mut self, genesis: Genesis) -> Self {
         self.inner = self.inner.genesis(genesis);
         self

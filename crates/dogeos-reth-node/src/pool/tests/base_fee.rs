@@ -28,6 +28,12 @@ type TestPool = Pool<
 >;
 
 fn fixture() -> (NativeProvider, TestPool, tokio::task::JoinHandle<()>) {
+    fixture_with(DogeosChainSpecBuilder::dev())
+}
+
+fn fixture_with(
+    builder: DogeosChainSpecBuilder,
+) -> (NativeProvider, TestPool, tokio::task::JoinHandle<()>) {
     let mut genesis = DOGEOS_DEV.genesis().clone();
     genesis.alloc.insert(
         SENDER,
@@ -36,11 +42,7 @@ fn fixture() -> (NativeProvider, TestPool, tokio::task::JoinHandle<()>) {
             ..Default::default()
         },
     );
-    let chain_spec = Arc::new(
-        DogeosChainSpecBuilder::dev()
-            .genesis(genesis)
-            .build(DOGEOS_DEV.config),
-    );
+    let chain_spec = Arc::new(builder.genesis(genesis).build(DOGEOS_DEV.config));
     let provider = initialize_native_v2(chain_spec.clone());
     let validator =
         EthTransactionValidatorBuilder::new(provider.clone(), ScrollEvmConfig::dogeos(chain_spec))
@@ -134,7 +136,7 @@ fn builder_fee(provider: &NativeProvider, hash: B256) -> u64 {
     let header = provider.header(hash).unwrap().unwrap();
     let mut db = StateProviderDatabase::new(provider.state_by_block_hash(hash).unwrap());
     ScrollBaseFeeProvider::new(provider.chain_spec())
-        .next_block_base_fee(&mut db, &header, header.timestamp)
+        .predict_next_block_base_fee(&mut db, &header)
         .unwrap()
 }
 
@@ -381,6 +383,37 @@ async fn default_and_non_default_overhead_match_builder_at_target_and_full_gas()
             );
         }
     }
+    validator.abort();
+}
+
+#[tokio::test]
+async fn pending_fee_applies_tsuki_v2_when_the_next_block_activates_it() {
+    // Block 1 is one second before TsukiV2, so its child is the first TsukiV2 block.
+    let activation = DOGEOS_DEV.genesis().timestamp + 2;
+    let (provider, pool, validator) = fixture_with(DogeosChainSpecBuilder::dev().with_fork(
+        DogeosHardfork::TsukiV2,
+        ForkCondition::Timestamp(activation),
+    ));
+    let adapter = DogeosPoolMaintenance::new(pool.clone(), provider.clone());
+    let head = block(
+        &provider,
+        provider.chain_spec().genesis_hash(),
+        1,
+        9_500_000_000,
+        GAS_LIMIT,
+        100_000_000,
+    );
+    let hash = head.recovered_block.hash();
+    assert_eq!(head.recovered_block.timestamp(), activation - 1);
+    commit(&provider, vec![head]);
+    adapter.set_block_info(BlockInfo {
+        last_seen_block_hash: hash,
+        pending_basefee: u64::MAX,
+        ..Default::default()
+    });
+    // D48/E10 under the 420,000 gwei cap, not D8/E2 clamped at 10 gwei.
+    assert_eq!(pool.block_info().pending_basefee, 11_262_500_000);
+    assert_eq!(builder_fee(&provider, hash), 11_262_500_000);
     validator.abort();
 }
 

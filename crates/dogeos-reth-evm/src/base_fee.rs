@@ -76,6 +76,23 @@ where
         self.next_block_base_fee_for_parent(db, &parent, timestamp)
     }
 
+    /// Predicts the base fee of `parent`'s child before the child's timestamp is known.
+    ///
+    /// Uses the earliest timestamp a child can have, `parent.timestamp + 1`, so a fork that can
+    /// activate on the next block is already applied. Fee predictors (pool maintenance, fee
+    /// RPCs) use this; the payload builder and the import check use the real child timestamp.
+    pub fn predict_next_block_base_fee<DB, H>(
+        &self,
+        db: &mut DB,
+        parent: &H,
+    ) -> Result<u64, DB::Error>
+    where
+        DB: Database,
+        H: BlockHeader,
+    {
+        self.next_block_base_fee(db, parent, parent.timestamp().saturating_add(1))
+    }
+
     /// Reads the L2 base-fee overhead from the system config contract in `db`.
     pub fn base_fee_overhead<DB: Database>(&self, db: &mut DB) -> Result<u64, DB::Error> {
         base_fee_overhead(&self.0, db)
@@ -458,6 +475,40 @@ mod tests {
             assert_eq!(
                 provider.next_block_base_fee(&mut state, &parent, timestamp)?,
                 expected
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn prediction_applies_tsuki_v2_to_a_parent_one_second_before_activation() -> eyre::Result<()> {
+        let tsuki_v2 = dogeos_hardforks::CHIKYU_TSUKI_V2_TIMESTAMP;
+        let provider = ScrollBaseFeeProvider::new(DOGEOS_CHIKYU.clone());
+        let mut state = State::builder()
+            .with_database(EmptyDB::default())
+            .with_bundle_update()
+            .build();
+        state.insert_account_with_storage(
+            DOGEOS_CHIKYU.config.l1_config.l2_system_config_address,
+            Default::default(),
+            PlainStorage::from_iter([(L2_BASE_FEE_OVERHEAD_SLOT, U256::from(100_000_000))]),
+        );
+        // A full parent at 9.5 gwei with a 0.1 gwei overhead: D8/E2 clamps at 10 gwei, while
+        // D48/E10 under the 420,000 gwei cap gives 11.2625 gwei.
+        for (parent_timestamp, expected) in [
+            (tsuki_v2 - 2, PRE_TSUKI_V2_MAX_L2_BASE_FEE),
+            (tsuki_v2 - 1, 11_262_500_000),
+            (tsuki_v2, 11_262_500_000),
+        ] {
+            let mut parent = parent(9_500_000_000, GAS_LIMIT);
+            parent.timestamp = parent_timestamp;
+            assert_eq!(
+                provider.predict_next_block_base_fee(&mut state, &parent)?,
+                expected
+            );
+            assert_eq!(
+                provider.predict_next_block_base_fee(&mut state, &parent)?,
+                provider.next_block_base_fee(&mut state, &parent, parent_timestamp + 1)?
             );
         }
         Ok(())

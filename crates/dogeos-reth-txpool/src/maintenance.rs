@@ -68,11 +68,8 @@ where
             return Ok(0);
         }
         let state = self.client.state_by_block_hash(hash)?;
-        ScrollBaseFeeProvider::new(self.client.chain_spec()).next_block_base_fee(
-            &mut StateProviderDatabase::new(state),
-            &header,
-            header.timestamp(),
-        )
+        ScrollBaseFeeProvider::new(self.client.chain_spec())
+            .predict_next_block_base_fee(&mut StateProviderDatabase::new(state), &header)
     }
 
     fn pending_base_fee(&self, hash: B256) -> u64 {
