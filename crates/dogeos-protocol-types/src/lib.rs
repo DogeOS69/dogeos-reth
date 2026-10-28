@@ -11,8 +11,12 @@ extern crate alloc;
 #[cfg(not(feature = "std"))]
 extern crate alloc as std;
 
-/// Maximum L2 base fee (420,000 gwei): the sequencer clamp and the consensus header limit.
+/// Maximum L2 base fee (420,000 gwei): the consensus header limit, and the base-fee formula's
+/// clamp once the Tsuki fee parameters are active.
 pub const MAX_L2_BASE_FEE: u64 = 420_000_000_000_000;
+
+/// The base-fee formula's clamp before the Tsuki fee parameters (10 gwei).
+pub const LEGACY_MAX_L2_BASE_FEE: u64 = 10_000_000_000;
 
 mod transaction;
 pub use transaction::{

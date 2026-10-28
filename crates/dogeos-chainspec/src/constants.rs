@@ -11,7 +11,8 @@ pub const MAX_TX_PAYLOAD_BYTES_PER_BLOCK: usize = 120 * 1024;
 /// Feynman EIP-1559 parameters.
 pub const DOGEOS_BASE_FEE_PARAMS_FEYNMAN: BaseFeeParams = BaseFeeParams::new(8, 2);
 
-/// Tsuki EIP-1559 parameters: max change denominator 48, elasticity 10.
+/// Tsuki EIP-1559 parameters, active from [`crate::TsukiFeeParams`]: max change denominator 48,
+/// elasticity 10.
 pub const DOGEOS_BASE_FEE_PARAMS_TSUKI: BaseFeeParams = BaseFeeParams::new(48, 10);
 
 /// DogeOS development-network L1 configuration.
@@ -56,6 +57,10 @@ pub const DOGEOS_CHIKYU_L1_CONFIG: L1Config = L1Config {
     l2_system_config_address: DOGEOS_CHIKYU_L2_SYSTEM_CONFIG_CONTRACT_ADDRESS,
     num_l1_messages_per_block: 10,
 };
+
+/// Placeholder Chikyu `tsukiFeeParamsTime` (2027-01-01T00:00:00Z); ops sets the real time before
+/// rollout. It must match `tsukiFeeParamsTime` in `res/genesis/chikyu_dogeos.json`.
+pub const DOGEOS_CHIKYU_TSUKI_FEE_PARAMS_TIME: u64 = 1_798_761_600;
 
 /// Canonical header hash computed from the DogeOS Chikyu genesis document.
 pub const DOGEOS_CHIKYU_GENESIS_HASH: B256 =

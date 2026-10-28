@@ -28,7 +28,19 @@ type TestPool = Pool<
 >;
 
 fn fixture() -> (NativeProvider, TestPool, tokio::task::JoinHandle<()>) {
+    fixture_with_fee_params_time(None)
+}
+
+fn fixture_with_fee_params_time(
+    fee_params_time: Option<u64>,
+) -> (NativeProvider, TestPool, tokio::task::JoinHandle<()>) {
     let mut genesis = DOGEOS_DEV.genesis().clone();
+    if let Some(time) = fee_params_time {
+        genesis
+            .config
+            .extra_fields
+            .insert("tsukiFeeParamsTime".into(), time.into());
+    }
     genesis.alloc.insert(
         SENDER,
         GenesisAccount {
@@ -130,11 +142,11 @@ fn chain(block: &ExecutedBlock<DogeosPrimitives>) -> Arc<Chain<DogeosPrimitives>
     ))
 }
 
-fn builder_fee(provider: &NativeProvider, hash: B256) -> u64 {
+fn predicted_fee(provider: &NativeProvider, hash: B256) -> u64 {
     let header = provider.header(hash).unwrap().unwrap();
     let mut db = StateProviderDatabase::new(provider.state_by_block_hash(hash).unwrap());
     ScrollBaseFeeProvider::new(provider.chain_spec())
-        .next_block_base_fee(&mut db, &header, header.timestamp)
+        .predict_next_block_base_fee(&mut db, &header)
         .unwrap()
 }
 
@@ -237,7 +249,7 @@ async fn cap_priced_transaction_is_pending_and_announced_on_startup() {
     wait_for_head(&pool, hash).await;
     assert_eq!(
         pool.block_info().pending_basefee,
-        builder_fee(&provider, hash)
+        predicted_fee(&provider, hash)
     );
     assert_eq!(pool.block_info().pending_basefee, MAX_L2_BASE_FEE);
     assert_eq!(pool.pool_size().pending, 1);
@@ -272,8 +284,8 @@ async fn commit_uses_event_state_even_when_provider_is_ahead_and_reorg_changes_o
     let second_hash = second.recovered_block.hash();
     commit(&provider, vec![first.clone(), second.clone()]);
     assert_ne!(
-        builder_fee(&provider, first_hash),
-        builder_fee(&provider, second_hash)
+        predicted_fee(&provider, first_hash),
+        predicted_fee(&provider, second_hash)
     );
     events
         .unbounded_send(CanonStateNotification::Commit { new: chain(&first) })
@@ -282,7 +294,7 @@ async fn commit_uses_event_state_even_when_provider_is_ahead_and_reorg_changes_o
     assert_eq!(pool.block_info().pending_basefee, 1_168_750_000);
     assert_eq!(
         pool.block_info().pending_basefee,
-        builder_fee(&provider, first_hash)
+        predicted_fee(&provider, first_hash)
     );
     events
         .unbounded_send(CanonStateNotification::Commit {
@@ -293,7 +305,7 @@ async fn commit_uses_event_state_even_when_provider_is_ahead_and_reorg_changes_o
     assert_eq!(pool.block_info().pending_basefee, 1_037_500_000);
     assert_eq!(
         pool.block_info().pending_basefee,
-        builder_fee(&provider, second_hash)
+        predicted_fee(&provider, second_hash)
     );
 
     let sibling = block(
@@ -321,7 +333,7 @@ async fn commit_uses_event_state_even_when_provider_is_ahead_and_reorg_changes_o
     assert_eq!(pool.block_info().pending_basefee, 1_112_500_000);
     assert_eq!(
         pool.block_info().pending_basefee,
-        builder_fee(&provider, sibling_hash)
+        predicted_fee(&provider, sibling_hash)
     );
     maintenance.abort();
     validator.abort();
@@ -351,7 +363,7 @@ async fn deep_commit_replaces_stateless_fee_and_preserves_head_fields() {
         .unwrap();
     wait_for_head(&pool, hash).await;
     let info = pool.block_info();
-    assert_eq!(info.pending_basefee, builder_fee(&provider, hash));
+    assert_eq!(info.pending_basefee, predicted_fee(&provider, hash));
     assert_eq!(info.last_seen_block_number, 2);
     assert_eq!(info.block_gas_limit, GAS_LIMIT);
     maintenance.abort();
@@ -377,10 +389,38 @@ async fn default_and_non_default_overhead_match_builder_at_target_and_full_gas()
             });
             assert_eq!(
                 pool.block_info().pending_basefee,
-                builder_fee(&provider, parent)
+                predicted_fee(&provider, parent)
             );
         }
     }
+    validator.abort();
+}
+
+#[tokio::test]
+async fn pending_fee_applies_the_fee_params_when_the_next_block_activates_them() {
+    // Block 1 is one second before the fee parameters, so its child is the first block with them.
+    let activation = DOGEOS_DEV.genesis().timestamp + 2;
+    let (provider, pool, validator) = fixture_with_fee_params_time(Some(activation));
+    let adapter = DogeosPoolMaintenance::new(pool.clone(), provider.clone());
+    let head = block(
+        &provider,
+        provider.chain_spec().genesis_hash(),
+        1,
+        9_500_000_000,
+        GAS_LIMIT,
+        100_000_000,
+    );
+    let hash = head.recovered_block.hash();
+    assert_eq!(head.recovered_block.timestamp(), activation - 1);
+    commit(&provider, vec![head]);
+    adapter.set_block_info(BlockInfo {
+        last_seen_block_hash: hash,
+        pending_basefee: u64::MAX,
+        ..Default::default()
+    });
+    // D48/E10 under the 420,000 gwei cap, not D8/E2 clamped at 10 gwei.
+    assert_eq!(pool.block_info().pending_basefee, 11_262_500_000);
+    assert_eq!(predicted_fee(&provider, hash), 11_262_500_000);
     validator.abort();
 }
 
@@ -453,7 +493,7 @@ async fn unavailable_head_keeps_previous_fee_then_recovers() {
     });
     assert_eq!(
         pool.block_info().pending_basefee,
-        builder_fee(&provider, provider.chain_spec().genesis_hash())
+        predicted_fee(&provider, provider.chain_spec().genesis_hash())
     );
     validator.abort();
 }
@@ -533,7 +573,7 @@ async fn reorg_reinserts_mined_transaction_with_the_new_head_fee() {
     wait_for_head(&pool, new.recovered_block.hash()).await;
     assert_eq!(
         pool.block_info().pending_basefee,
-        builder_fee(&provider, new.recovered_block.hash())
+        predicted_fee(&provider, new.recovered_block.hash())
     );
     assert_eq!(
         tokio::time::timeout(Duration::from_secs(5), gossip.recv())

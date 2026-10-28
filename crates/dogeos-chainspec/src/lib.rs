@@ -39,9 +39,14 @@ pub use dogeos::DOGEOS_MAINNET;
 
 pub use reth_chainspec::ChainSpecProvider;
 
-/// Internal schedule key for the fee policy, separate from the Tsuki execution transition.
+/// Schedule key for the fee policy, separate from the Tsuki execution transition.
+///
+/// From its activation the EIP-1559 parameters are D48/E10 and the base-fee formula's cap is
+/// 420,000 gwei; before it, D8/E2 and 10 gwei. It activates at `tsukiFeeParamsTime`, or at
+/// Tsuki when the key is absent. Chain specs are looked up by fork name, so a guest spec may
+/// register its own key under the same name.
 #[derive(Debug, Clone, Copy)]
-struct TsukiFeeParams;
+pub struct TsukiFeeParams;
 
 impl Hardfork for TsukiFeeParams {
     fn name(&self) -> &'static str {
@@ -241,6 +246,10 @@ impl DogeosHardforks for DogeosChainSpec {
     fn dogeos_fork_activation(&self, fork: DogeosHardfork) -> ForkCondition {
         self.fork(fork)
     }
+
+    fn tsuki_fee_params_activation(&self) -> ForkCondition {
+        self.fork(TsukiFeeParams)
+    }
 }
 
 impl From<Genesis> for DogeosChainSpec {
@@ -433,6 +442,8 @@ mod tests {
         // Tsuki activated after genesis.
         let mut genesis: Genesis =
             serde_json::from_str(include_str!("../res/genesis/chikyu_dogeos.json")).unwrap();
+        // Fee parameters follow Tsuki here, not Chikyu's later placeholder.
+        genesis.config.extra_fields.remove("tsukiFeeParamsTime");
         genesis
             .config
             .extra_fields
@@ -749,6 +760,8 @@ mod tests {
     fn timestamp_hardforks_through_tsuki_do_not_change_p2p_fork_compatibility() {
         let mut genesis: Genesis =
             serde_json::from_str(include_str!("../res/genesis/chikyu_dogeos.json")).unwrap();
+        // Fee parameters follow Tsuki here, not Chikyu's later placeholder.
+        genesis.config.extra_fields.remove("tsukiFeeParamsTime");
         genesis.timestamp = 0;
         genesis
             .config
@@ -799,12 +812,12 @@ mod tests {
 
     #[test]
     fn network_fork_ids_match_frozen_genesis() {
+        // Mainnet and dev activate Tsuki and its fee parameters at genesis.
         for (spec, hash) in [
             (
                 &*DOGEOS_MAINNET,
                 ForkHash::from(DOGEOS_MAINNET_GENESIS_HASH),
             ),
-            (&*DOGEOS_CHIKYU, ForkHash::from(DOGEOS_CHIKYU_GENESIS_HASH)),
             (&*DOGEOS_DEV, ForkHash::from(DOGEOS_DEV.genesis_hash())),
         ] {
             let expected = ForkId { hash, next: 0 };
@@ -822,9 +835,82 @@ mod tests {
                 assert_eq!(spec.fork_id(&head), expected);
                 assert_eq!(spec.fork_filter(head).current(), expected);
             }
-            // Timestamp forks through Tsuki preserve the genesis-derived fork ID.
             assert_eq!(spec.latest_fork_id(), expected);
         }
+
+        // Chikyu's forks through Tsuki preserve the genesis-derived fork ID; its later
+        // fee-parameter activation changes it at that time.
+        let activation = DOGEOS_CHIKYU_TSUKI_FEE_PARAMS_TIME;
+        let base = ForkHash::from(DOGEOS_CHIKYU_GENESIS_HASH);
+        let before = ForkId {
+            hash: base,
+            next: activation,
+        };
+        let after = ForkId {
+            hash: base + activation,
+            next: 0,
+        };
+        for (timestamp, expected) in [
+            (DOGEOS_CHIKYU.genesis_timestamp(), before),
+            (1_790_030_900, before),
+            (activation - 1, before),
+            (activation, after),
+            (u64::MAX, after),
+        ] {
+            let head = Head {
+                number: 1,
+                timestamp,
+                ..Default::default()
+            };
+            assert_eq!(DOGEOS_CHIKYU.fork_id(&head), expected);
+            assert_eq!(DOGEOS_CHIKYU.fork_filter(head).current(), expected);
+        }
+        assert_eq!(DOGEOS_CHIKYU.latest_fork_id(), after);
+    }
+
+    #[test]
+    fn chikyu_fee_params_follow_the_placeholder_time() {
+        let activation = DOGEOS_CHIKYU_TSUKI_FEE_PARAMS_TIME;
+        assert_eq!(activation, 1_798_761_600);
+        assert!(activation > 1_790_030_900);
+        assert_eq!(
+            DOGEOS_CHIKYU.fork(TsukiFeeParams),
+            ForkCondition::Timestamp(activation)
+        );
+        assert_eq!(
+            DOGEOS_CHIKYU.tsuki_fee_params_activation(),
+            ForkCondition::Timestamp(activation)
+        );
+        assert_eq!(
+            DogeosHardforkInfo::try_from(&DOGEOS_CHIKYU.genesis().config.extra_fields)
+                .unwrap()
+                .tsuki_fee_params_time,
+            Some(activation)
+        );
+        for timestamp in [0, 1_790_030_900, activation - 1] {
+            assert!(!DOGEOS_CHIKYU.is_tsuki_fee_params_active_at_timestamp(timestamp));
+            assert_eq!(
+                DOGEOS_CHIKYU.base_fee_params_at_timestamp(timestamp),
+                DOGEOS_BASE_FEE_PARAMS_FEYNMAN
+            );
+        }
+        assert!(DOGEOS_CHIKYU.is_tsuki_fee_params_active_at_timestamp(activation));
+        assert_eq!(
+            DOGEOS_CHIKYU.base_fee_params_at_timestamp(activation),
+            DOGEOS_BASE_FEE_PARAMS_TSUKI
+        );
+        // Mainnet omits the key, so the fee parameters follow Tsuki from genesis.
+        assert!(
+            !DOGEOS_MAINNET
+                .genesis()
+                .config
+                .extra_fields
+                .contains_key("tsukiFeeParamsTime")
+        );
+        assert_eq!(
+            DOGEOS_MAINNET.tsuki_fee_params_activation(),
+            ForkCondition::Timestamp(0)
+        );
     }
 
     #[test]
@@ -839,6 +925,8 @@ mod tests {
         ] {
             let mut genesis: Genesis =
                 serde_json::from_str(include_str!("../res/genesis/chikyu_dogeos.json")).unwrap();
+            // Fee parameters follow Tsuki here, not Chikyu's later placeholder.
+            genesis.config.extra_fields.remove("tsukiFeeParamsTime");
             genesis.timestamp = genesis_time;
             for (field, time) in [
                 ("feynmanTime", 10),

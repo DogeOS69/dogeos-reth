@@ -72,6 +72,20 @@ pub trait DogeosHardforks: EthereumHardforks {
         self.dogeos_fork_activation(DogeosHardfork::Tsuki)
             .active_at_timestamp(timestamp)
     }
+
+    /// Activation of the Tsuki fee parameters: D48/E10 and the 420,000 gwei base-fee cap.
+    ///
+    /// Defaults to the Tsuki activation. A chain spec with a separate fee-parameter time
+    /// (`tsukiFeeParamsTime`) overrides this.
+    fn tsuki_fee_params_activation(&self) -> ForkCondition {
+        self.dogeos_fork_activation(DogeosHardfork::Tsuki)
+    }
+
+    /// Returns whether the Tsuki fee parameters are active at `timestamp`.
+    fn is_tsuki_fee_params_active_at_timestamp(&self, timestamp: u64) -> bool {
+        self.tsuki_fee_params_activation()
+            .active_at_timestamp(timestamp)
+    }
 }
 
 /// Ordered DogeOS hardfork activation configuration.
@@ -166,6 +180,20 @@ mod tests {
         assert!(!hardforks.is_tsuki_active_at_timestamp(1_790_030_899));
         assert!(hardforks.is_tsuki_active_at_timestamp(1_790_030_900));
         assert!(hardforks.is_tsuki_active_at_timestamp(u64::MAX));
+    }
+
+    #[test]
+    fn fee_params_default_to_the_tsuki_activation() {
+        for hardforks in [
+            DogeosChainHardforks::mainnet(),
+            DogeosChainHardforks::chikyu(),
+            DogeosChainHardforks::dev(),
+        ] {
+            assert_eq!(
+                hardforks.tsuki_fee_params_activation(),
+                hardforks.dogeos_fork_activation(DogeosHardfork::Tsuki)
+            );
+        }
     }
 
     #[test]

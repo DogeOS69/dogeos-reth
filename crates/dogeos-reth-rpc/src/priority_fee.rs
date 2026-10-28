@@ -216,7 +216,7 @@ where
                 .map_err(|error| ErrorObjectOwned::from(EthApiError::from(error)))?;
             let mut state = StateProviderDatabase::new(state.as_ref());
             ScrollBaseFeeProvider::new(self.eth.provider().chain_spec())
-                .next_block_base_fee(&mut state, last_header.header(), last_header.timestamp())
+                .predict_next_block_base_fee(&mut state, last_header.header())
                 .map_err(|error| ErrorObjectOwned::from(EthApiError::Internal(error.into())))?
         };
         if let Some(next) = history.base_fee_per_gas.last_mut() {

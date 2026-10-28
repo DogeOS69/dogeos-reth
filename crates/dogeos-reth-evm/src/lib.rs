@@ -22,8 +22,9 @@ pub use code_witness::{
 mod base_fee;
 pub mod gas_price_oracle;
 pub use base_fee::{
-    DEFAULT_BASE_FEE_OVERHEAD, L1_BASE_FEE_PRECISION, MAX_L2_BASE_FEE, ScrollBaseFeeParent,
-    ScrollBaseFeeProvider, base_fee_overhead, next_block_base_fee_with_overhead,
+    DEFAULT_BASE_FEE_OVERHEAD, L1_BASE_FEE_PRECISION, LEGACY_MAX_L2_BASE_FEE, MAX_L2_BASE_FEE,
+    ScrollBaseFeeParent, ScrollBaseFeeProvider, base_fee_overhead, max_l2_base_fee_at_timestamp,
+    next_block_base_fee_with_overhead,
 };
 mod l1;
 pub use l1::RethL1BlockInfo;
