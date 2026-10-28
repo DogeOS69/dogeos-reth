@@ -467,7 +467,7 @@ mod tests {
                 Some(crate::LEGACY_MAX_L2_BASE_FEE)
             );
         }
-        assert!(rejected_when_forced >= 5);
+        assert_eq!(rejected_when_forced, 9);
     }
 
     #[test]

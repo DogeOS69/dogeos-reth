@@ -31,7 +31,8 @@ block:
 
 Chikyu's Tsuki history was produced with D8/E2 and the 10 gwei cap, so its built-in genesis sets
 `tsukiFeeParamsTime` to the placeholder `1798761600` (2027-01-01T00:00:00Z,
-`DOGEOS_CHIKYU_TSUKI_FEE_PARAMS_TIME`); ops sets the real time before rollout. For any existing
+`DOGEOS_CHIKYU_TSUKI_FEE_PARAMS_TIME`). Ops sets the real time before rollout in both places,
+`res/genesis/chikyu_dogeos.json` and that constant; a test fails if they differ. For any existing
 network with Tsuki already active, choose a coordinated future timestamp to preserve its history
 on replay. All sequencers, followers, and RPC nodes must use the same value. Leaving the field
 omitted or null retains activation at Tsuki and does not protect that history from
