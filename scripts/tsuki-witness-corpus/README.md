@@ -21,7 +21,7 @@ The Engine API drives seven blocks and checks:
 Outputs are `1.json` through `7.json`, `provenance.json`, and `SHA256SUMS`.
 
 The custom genesis uses Chikyu's registered chain ID **6281971** and L2SystemConfig address,
-but activates Tsuki at genesis with fee parameters (48, 10). It includes funded development
+but activates Tsuki and TsukiV2 at genesis, so fee parameters (48, 10) apply. It includes funded development
 accounts, a gas burner, and a stand-in contract that writes slot 101. It is not the Chikyu
 network genesis.
 

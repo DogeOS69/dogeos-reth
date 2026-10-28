@@ -20,37 +20,50 @@ hardfork!(
         GalileoV2,
         /// DogeOS native-token protocol transition.
         Tsuki,
+        /// Tsuki fee and gas-pricing rules: D48/E10 EIP-1559 parameters, the 420,000 gwei
+        /// base-fee cap, EIP-7709 BLOCKHASH pricing and the combined L1-fee balance check.
+        TsukiV2,
     }
 );
 
+/// Placeholder Chikyu TsukiV2 activation (2027-01-01T00:00:00Z); ops sets the real time before
+/// rollout. It must match `tsukiV2Time` in the Chikyu genesis document.
+pub const CHIKYU_TSUKI_V2_TIMESTAMP: u64 = 1_798_761_600;
+
 impl DogeosHardfork {
     /// DogeOS Chikyu activation schedule from the operator-provided genesis document.
-    pub const fn chikyu() -> [(Self, ForkCondition); 4] {
+    pub const fn chikyu() -> [(Self, ForkCondition); 5] {
         [
             (Self::Feynman, ForkCondition::Timestamp(0)),
             (Self::Galileo, ForkCondition::Timestamp(1_790_030_800)),
             (Self::GalileoV2, ForkCondition::Timestamp(1_790_030_800)),
             (Self::Tsuki, ForkCondition::Timestamp(1_790_030_900)),
+            (
+                Self::TsukiV2,
+                ForkCondition::Timestamp(CHIKYU_TSUKI_V2_TIMESTAMP),
+            ),
         ]
     }
 
     /// DogeOS mainnet activation schedule.
-    pub const fn mainnet() -> [(Self, ForkCondition); 4] {
+    pub const fn mainnet() -> [(Self, ForkCondition); 5] {
         [
             (Self::Feynman, ForkCondition::Timestamp(0)),
             (Self::Galileo, ForkCondition::Timestamp(0)),
             (Self::GalileoV2, ForkCondition::Timestamp(0)),
             (Self::Tsuki, ForkCondition::Timestamp(0)),
+            (Self::TsukiV2, ForkCondition::Timestamp(0)),
         ]
     }
 
     /// Development-network activation schedule.
-    pub const fn dev() -> [(Self, ForkCondition); 4] {
+    pub const fn dev() -> [(Self, ForkCondition); 5] {
         [
             (Self::Feynman, ForkCondition::Timestamp(0)),
             (Self::Galileo, ForkCondition::Timestamp(0)),
             (Self::GalileoV2, ForkCondition::Timestamp(0)),
             (Self::Tsuki, ForkCondition::Timestamp(0)),
+            (Self::TsukiV2, ForkCondition::Timestamp(0)),
         ]
     }
 }
@@ -70,6 +83,12 @@ pub trait DogeosHardforks: EthereumHardforks {
     /// Returns whether Tsuki is active at `timestamp`.
     fn is_tsuki_active_at_timestamp(&self, timestamp: u64) -> bool {
         self.dogeos_fork_activation(DogeosHardfork::Tsuki)
+            .active_at_timestamp(timestamp)
+    }
+
+    /// Returns whether TsukiV2 is active at `timestamp`.
+    fn is_tsuki_v2_active_at_timestamp(&self, timestamp: u64) -> bool {
+        self.dogeos_fork_activation(DogeosHardfork::TsukiV2)
             .active_at_timestamp(timestamp)
     }
 }
@@ -138,11 +157,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mainnet_and_dev_activate_feynman_and_tsuki_at_genesis() {
+    fn mainnet_and_dev_activate_feynman_through_tsuki_v2_at_genesis() {
         for hardforks in [DogeosChainHardforks::mainnet(), DogeosChainHardforks::dev()] {
             assert!(hardforks.is_feynman_active_at_timestamp(0));
             assert!(hardforks.is_tsuki_active_at_timestamp(0));
+            assert!(hardforks.is_tsuki_v2_active_at_timestamp(0));
         }
+    }
+
+    #[test]
+    fn tsuki_v2_is_ordered_directly_after_tsuki() {
+        assert!(DogeosHardfork::Tsuki < DogeosHardfork::TsukiV2);
+        assert_eq!(DogeosHardfork::TsukiV2.name(), "TsukiV2");
+    }
+
+    #[test]
+    fn chikyu_schedules_tsuki_v2_at_the_placeholder_after_tsuki() {
+        let hardforks = DogeosChainHardforks::chikyu();
+        assert_eq!(
+            hardforks.dogeos_fork_activation(DogeosHardfork::TsukiV2),
+            ForkCondition::Timestamp(CHIKYU_TSUKI_V2_TIMESTAMP)
+        );
+        const { assert!(CHIKYU_TSUKI_V2_TIMESTAMP > 1_790_030_900) };
+        assert!(!hardforks.is_tsuki_v2_active_at_timestamp(1_790_030_900));
+        assert!(!hardforks.is_tsuki_v2_active_at_timestamp(CHIKYU_TSUKI_V2_TIMESTAMP - 1));
+        assert!(hardforks.is_tsuki_v2_active_at_timestamp(CHIKYU_TSUKI_V2_TIMESTAMP));
     }
 
     #[test]
@@ -176,5 +215,6 @@ mod tests {
             hardforks.dogeos_fork_activation(DogeosHardfork::Tsuki),
             ForkCondition::Never
         );
+        assert!(!hardforks.is_tsuki_v2_active_at_timestamp(u64::MAX));
     }
 }

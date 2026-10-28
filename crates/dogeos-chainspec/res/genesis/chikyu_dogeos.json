@@ -24,6 +24,7 @@
         "galileoTime": 1790030800,
         "galileoV2Time": 1790030800,
         "tsukiTime": 1790030900,
+        "tsukiV2Time": 1798761600,
         "clique": {
             "period": 3,
             "epoch": 30000,

@@ -24,6 +24,7 @@
     "galileoTime": 0,
     "galileoV2Time": 0,
     "tsukiTime": 0,
+    "tsukiV2Time": 0,
     "scroll": {
       "maxTxPayloadBytesPerBlock": 122880,
       "feeVaultAddress": "0x5300000000000000000000000000000000000005",
