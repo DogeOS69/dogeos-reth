@@ -138,7 +138,7 @@ where
 
 /// The base-fee formula's clamp for a block at `timestamp`: 10 gwei before the Tsuki fee
 /// parameters and 420,000 gwei from them.
-pub fn max_l2_base_fee_at_timestamp<ChainSpec: DogeosHardforks>(
+pub fn max_l2_base_fee_at_timestamp<ChainSpec: EthChainSpec + DogeosHardforks>(
     chain_spec: &ChainSpec,
     timestamp: u64,
 ) -> u64 {

@@ -145,6 +145,8 @@ impl DogeosHardforks for DogeosChainHardforks {
     }
 
     /// The plain schedule has no separate fee-parameter time, so the parameters follow Tsuki.
+    /// It does not carry `tsukiFeeParamsTime`; the chain specs (for example `DOGEOS_CHIKYU`) are
+    /// the source of truth for fee rules.
     fn tsuki_fee_params_activation(&self) -> ForkCondition {
         self.dogeos_fork_activation(DogeosHardfork::Tsuki)
     }
