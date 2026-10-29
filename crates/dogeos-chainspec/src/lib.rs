@@ -696,6 +696,25 @@ mod tests {
     }
 
     #[test]
+    fn mainnet_genesis_carries_hash_chain_l2_message_queue() {
+        use alloy_primitives::{address, b256, keccak256};
+
+        let account = DOGEOS_MAINNET
+            .genesis()
+            .alloc
+            .get(&address!("5300000000000000000000000000000000000000"))
+            .expect("mainnet genesis must predeploy L2MessageQueue");
+        let code = account.code.as_ref().expect("L2MessageQueue has code");
+        // Hash-chain runtime from scroll-contracts 419c693c; the withdrawal Merkle tree runtime
+        // (1,608 bytes) must not come back.
+        assert_eq!(code.len(), 1_215);
+        assert_eq!(
+            keccak256(code),
+            b256!("baf761a1daac2df442f2a373c18f86cbb257d60ee9e62933e5ffa1c9088ab5af")
+        );
+    }
+
+    #[test]
     fn supported_chain_ids_match_the_networks() {
         assert_eq!(DOGEOS_MAINNET.chain().id(), 1_122_005);
         assert_eq!(DOGEOS_CHIKYU.chain().id(), 0x5fdaf3);
