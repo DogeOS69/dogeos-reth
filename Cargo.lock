@@ -2852,6 +2852,7 @@ dependencies = [
  "reth-execution-types",
  "reth-primitives-traits",
  "reth-revm",
+ "reth-storage-api",
  "reth-storage-errors",
  "revm",
  "revm-scroll",
