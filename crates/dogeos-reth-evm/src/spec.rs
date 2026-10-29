@@ -12,7 +12,9 @@ pub fn spec_id_at_timestamp_and_number(
             .dogeos_fork_activation(fork)
             .active_at_timestamp_or_number(timestamp, number)
     };
-    if active(DogeosHardfork::Tsuki) {
+    if active(DogeosHardfork::TsukiV2) {
+        ScrollSpecId::TSUKI_V2
+    } else if active(DogeosHardfork::Tsuki) {
         ScrollSpecId::TSUKI
     } else if active(DogeosHardfork::GalileoV2) || active(DogeosHardfork::Galileo) {
         ScrollSpecId::GALILEO

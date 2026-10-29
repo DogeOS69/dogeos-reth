@@ -6,8 +6,10 @@ use dogeos_hardforks::DogeosHardforks;
 use reth_chainspec::EthChainSpec;
 use revm::Database;
 
-/// Protocol-enforced maximum L2 base fee.
+/// Protocol-enforced maximum L2 base fee, and the formula's clamp from TsukiV2.
 pub use dogeos_protocol_types::MAX_L2_BASE_FEE;
+/// The formula's clamp before TsukiV2.
+pub use dogeos_protocol_types::PRE_TSUKI_V2_MAX_L2_BASE_FEE;
 
 /// L2 base-fee overhead slot in the system config contract.
 const L2_BASE_FEE_OVERHEAD_SLOT: U256 = U256::from_limbs([101, 0, 0, 0]);
@@ -74,6 +76,23 @@ where
         self.next_block_base_fee_for_parent(db, &parent, timestamp)
     }
 
+    /// Predicts the base fee of `parent`'s child before the child's timestamp is known.
+    ///
+    /// Uses the earliest timestamp a child can have, `parent.timestamp + 1`, so a fork that can
+    /// activate on the next block is already applied. Fee predictors (pool maintenance, fee
+    /// RPCs) use this; the payload builder and the import check use the real child timestamp.
+    pub fn predict_next_block_base_fee<DB, H>(
+        &self,
+        db: &mut DB,
+        parent: &H,
+    ) -> Result<u64, DB::Error>
+    where
+        DB: Database,
+        H: BlockHeader,
+    {
+        self.next_block_base_fee(db, parent, parent.timestamp().saturating_add(1))
+    }
+
     /// Reads the L2 base-fee overhead from the system config contract in `db`.
     pub fn base_fee_overhead<DB: Database>(&self, db: &mut DB) -> Result<u64, DB::Error> {
         base_fee_overhead(&self.0, db)
@@ -116,11 +135,24 @@ where
     .saturating_to::<u64>())
 }
 
+/// The base-fee formula's clamp for a block at `timestamp`: 10 gwei before TsukiV2 and
+/// 420,000 gwei from it.
+pub fn max_l2_base_fee_at_timestamp<ChainSpec: DogeosHardforks>(
+    chain_spec: &ChainSpec,
+    timestamp: u64,
+) -> u64 {
+    if chain_spec.is_tsuki_v2_active_at_timestamp(timestamp) {
+        MAX_L2_BASE_FEE
+    } else {
+        PRE_TSUKI_V2_MAX_L2_BASE_FEE
+    }
+}
+
 /// Calculates the next block's base fee from the parent's inputs and a known overhead.
 ///
 /// The one place the formula lives; every other entry point reads the overhead and defers to
-/// this.
-pub fn next_block_base_fee_with_overhead<ChainSpec: EthChainSpec>(
+/// this. Both the EIP-1559 parameters and the clamp are keyed on the child's `timestamp`.
+pub fn next_block_base_fee_with_overhead<ChainSpec: EthChainSpec + DogeosHardforks>(
     chain_spec: &ChainSpec,
     parent: &ScrollBaseFeeParent,
     overhead: u64,
@@ -136,7 +168,7 @@ pub fn next_block_base_fee_with_overhead<ChainSpec: EthChainSpec>(
 
     next_eip1559_base_fee
         .saturating_add(overhead)
-        .min(MAX_L2_BASE_FEE)
+        .min(max_l2_base_fee_at_timestamp(chain_spec, timestamp))
 }
 
 #[cfg(test)]
@@ -191,11 +223,11 @@ mod tests {
         match chain {
             // Tsuki from genesis: denominator 48, elasticity 10.
             "mainnet" => (**DOGEOS_MAINNET).clone(),
-            // Before Chikyu's Tsuki activation: denominator 8, elasticity 2.
+            // Before Chikyu's TsukiV2 activation: denominator 8, elasticity 2, 10 gwei cap.
             "chikyu" => (**DOGEOS_CHIKYU).clone(),
-            // Mainnet with the fee parameters delayed past the Tsuki execution transition, so
-            // rows on either side of `tsuki_fee_params_time` cross the boundary.
-            "delayed-fee-params" => {
+            // Mainnet with TsukiV2 after the Tsuki execution transition, so rows on either
+            // side of `tsuki_v2_time` cross the boundary.
+            "tsuki-v2-after-tsuki" => {
                 let mut genesis = DOGEOS_MAINNET.genesis().clone();
                 genesis
                     .config
@@ -204,7 +236,7 @@ mod tests {
                 genesis
                     .config
                     .extra_fields
-                    .insert("tsukiFeeParamsTime".into(), 100.into());
+                    .insert("tsukiV2Time".into(), 100.into());
                 dogeos_chainspec::DogeosChainSpec::from_custom_genesis(genesis)
             }
             other => panic!("unknown parity chain {other}"),
@@ -311,8 +343,25 @@ mod tests {
     }
 
     #[test]
-    fn cap_is_420_000_gwei() {
+    fn cap_is_10_gwei_before_and_420_000_gwei_from_tsuki_v2() {
+        assert_eq!(PRE_TSUKI_V2_MAX_L2_BASE_FEE, 10_000_000_000);
         assert_eq!(MAX_L2_BASE_FEE, 420_000_000_000_000);
+        let tsuki_v2 = dogeos_hardforks::CHIKYU_TSUKI_V2_TIMESTAMP;
+        for (timestamp, cap) in [
+            (0, PRE_TSUKI_V2_MAX_L2_BASE_FEE),
+            (1_790_030_900, PRE_TSUKI_V2_MAX_L2_BASE_FEE),
+            (tsuki_v2 - 1, PRE_TSUKI_V2_MAX_L2_BASE_FEE),
+            (tsuki_v2, MAX_L2_BASE_FEE),
+        ] {
+            assert_eq!(
+                max_l2_base_fee_at_timestamp(&**DOGEOS_CHIKYU, timestamp),
+                cap
+            );
+        }
+        assert_eq!(
+            max_l2_base_fee_at_timestamp(&**DOGEOS_MAINNET, 0),
+            MAX_L2_BASE_FEE
+        );
     }
 
     #[test]
@@ -361,8 +410,8 @@ mod tests {
     }
 
     #[test]
-    fn delayed_fee_params_preserve_historical_fees_until_the_child_activation() -> eyre::Result<()>
-    {
+    fn tsuki_v2_after_tsuki_preserves_historical_fees_until_the_child_activation()
+    -> eyre::Result<()> {
         let mut genesis = DOGEOS_MAINNET.genesis().clone();
         let tsuki = genesis.timestamp + 40;
         let activation = genesis.timestamp + 100;
@@ -373,20 +422,23 @@ mod tests {
         genesis
             .config
             .extra_fields
-            .insert("tsukiFeeParamsTime".into(), activation.into());
+            .insert("tsukiV2Time".into(), activation.into());
         let spec = dogeos_chainspec::DogeosChainSpec::from_custom_genesis(genesis);
         assert!(spec.is_tsuki_active_at_timestamp(tsuki));
         let provider = ScrollBaseFeeProvider::new(spec);
-        // A full block with a 1 gwei fee and 0.1 gwei overhead grows the excess by
-        // 1/8 before activation, and 9/48 afterwards. Use literal historical fee values.
-        for (timestamp, expected) in [
-            (tsuki - 1, 1_112_500_000),
-            (tsuki, 1_112_500_000),
-            (activation - 1, 1_112_500_000),
-            (activation, 1_168_750_000),
-            (activation + 1, 1_168_750_000),
+        // A full block grows the excess by 1/8 before activation and 9/48 from it, and the
+        // clamp moves from 10 gwei to 420,000 gwei at the same child timestamp.
+        for (timestamp, parent_base_fee, expected) in [
+            (tsuki - 1, 1_000_000_000, 1_112_500_000),
+            (tsuki, 1_000_000_000, 1_112_500_000),
+            (activation - 1, 1_000_000_000, 1_112_500_000),
+            (activation, 1_000_000_000, 1_168_750_000),
+            (activation + 1, 1_000_000_000, 1_168_750_000),
+            (tsuki, 9_500_000_000, PRE_TSUKI_V2_MAX_L2_BASE_FEE),
+            (activation - 1, 9_500_000_000, PRE_TSUKI_V2_MAX_L2_BASE_FEE),
+            (activation, 9_500_000_000, 11_262_500_000),
         ] {
-            let mut parent = parent(1_000_000_000, GAS_LIMIT);
+            let mut parent = parent(parent_base_fee, GAS_LIMIT);
             parent.timestamp = timestamp - 1;
             assert_eq!(
                 provider.next_block_base_fee(
@@ -395,6 +447,68 @@ mod tests {
                     timestamp
                 )?,
                 expected
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn chikyu_clamps_at_10_gwei_before_tsuki_v2() -> eyre::Result<()> {
+        let provider = ScrollBaseFeeProvider::new(DOGEOS_CHIKYU.clone());
+        let tsuki_v2 = dogeos_hardforks::CHIKYU_TSUKI_V2_TIMESTAMP;
+        for (timestamp, expected) in [
+            (1_790_030_900, PRE_TSUKI_V2_MAX_L2_BASE_FEE),
+            (tsuki_v2 - 1, PRE_TSUKI_V2_MAX_L2_BASE_FEE),
+            (tsuki_v2, 11_262_500_000),
+        ] {
+            let mut parent = parent(9_500_000_000, GAS_LIMIT);
+            parent.timestamp = timestamp - 1;
+            let mut state = State::builder()
+                .with_database(EmptyDB::default())
+                .with_bundle_update()
+                .build();
+            state.insert_account_with_storage(
+                DOGEOS_CHIKYU.config.l1_config.l2_system_config_address,
+                Default::default(),
+                PlainStorage::from_iter([(L2_BASE_FEE_OVERHEAD_SLOT, U256::from(100_000_000))]),
+            );
+            assert_eq!(
+                provider.next_block_base_fee(&mut state, &parent, timestamp)?,
+                expected
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn prediction_applies_tsuki_v2_to_a_parent_one_second_before_activation() -> eyre::Result<()> {
+        let tsuki_v2 = dogeos_hardforks::CHIKYU_TSUKI_V2_TIMESTAMP;
+        let provider = ScrollBaseFeeProvider::new(DOGEOS_CHIKYU.clone());
+        let mut state = State::builder()
+            .with_database(EmptyDB::default())
+            .with_bundle_update()
+            .build();
+        state.insert_account_with_storage(
+            DOGEOS_CHIKYU.config.l1_config.l2_system_config_address,
+            Default::default(),
+            PlainStorage::from_iter([(L2_BASE_FEE_OVERHEAD_SLOT, U256::from(100_000_000))]),
+        );
+        // A full parent at 9.5 gwei with a 0.1 gwei overhead: D8/E2 clamps at 10 gwei, while
+        // D48/E10 under the 420,000 gwei cap gives 11.2625 gwei.
+        for (parent_timestamp, expected) in [
+            (tsuki_v2 - 2, PRE_TSUKI_V2_MAX_L2_BASE_FEE),
+            (tsuki_v2 - 1, 11_262_500_000),
+            (tsuki_v2, 11_262_500_000),
+        ] {
+            let mut parent = parent(9_500_000_000, GAS_LIMIT);
+            parent.timestamp = parent_timestamp;
+            assert_eq!(
+                provider.predict_next_block_base_fee(&mut state, &parent)?,
+                expected
+            );
+            assert_eq!(
+                provider.predict_next_block_base_fee(&mut state, &parent)?,
+                provider.next_block_base_fee(&mut state, &parent, parent_timestamp + 1)?
             );
         }
         Ok(())

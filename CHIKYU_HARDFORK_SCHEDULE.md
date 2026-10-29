@@ -14,6 +14,7 @@ Loading the document as a custom chain and selecting `--chain dogeos-chikyu` pro
 | Galileo | `Timestamp(1790030800)` | `config.galileoTime` in the same document. |
 | Galileo V2 | `Timestamp(1790030800)` | `config.galileoV2Time` in the same document. |
 | Tsuki | `Timestamp(1790030900)` | `config.tsukiTime` in the same document. |
+| TsukiV2 | `Timestamp(1798761600)` | Placeholder (2027-01-01T00:00:00Z) in `config.tsukiV2Time`, held in `CHIKYU_TSUKI_V2_TIMESTAMP`; ops sets the real time before rollout. Not in the operator document. |
 
 This replaces the earlier `Never` placeholders and the unqualified operational report of a direct
 Feynman-to-Tsuki transition. The public checkpoint below predates these timestamps and continues

@@ -324,12 +324,14 @@ mod tests {
     use dogeos_chainspec::{DOGEOS_CHIKYU, DOGEOS_MAINNET};
 
     #[test]
-    fn supported_mainnet_selects_tsuki_at_genesis() {
+    fn supported_mainnet_selects_tsuki_v2_at_genesis() {
         let config = ScrollEvmConfig::dogeos(DOGEOS_MAINNET.clone());
-        assert_eq!(
-            config.spec_id_at_timestamp_and_number(0, 0),
-            ScrollSpecId::TSUKI
-        );
+        for (timestamp, number) in [(0, 0), (DOGEOS_MAINNET.genesis_timestamp() + 1, 1)] {
+            assert_eq!(
+                config.spec_id_at_timestamp_and_number(timestamp, number),
+                ScrollSpecId::TSUKI_V2
+            );
+        }
     }
 
     #[test]
@@ -342,12 +344,180 @@ mod tests {
             (1_790_030_899, ScrollSpecId::GALILEO),
             (1_790_030_900, ScrollSpecId::TSUKI),
             (1_790_030_901, ScrollSpecId::TSUKI),
+            (
+                dogeos_hardforks::CHIKYU_TSUKI_V2_TIMESTAMP - 1,
+                ScrollSpecId::TSUKI,
+            ),
+            (
+                dogeos_hardforks::CHIKYU_TSUKI_V2_TIMESTAMP,
+                ScrollSpecId::TSUKI_V2,
+            ),
         ] {
             assert_eq!(
                 config.spec_id_at_timestamp_and_number(timestamp, 6_777_906),
                 expected
             );
         }
+    }
+
+    /// Runs a recorded Chikyu header through the import hook and returns its verdict.
+    fn import_hook_accepts(
+        config: &ScrollEvmConfig<DogeosChainSpec>,
+        row: &serde_json::Value,
+        base_fee: u64,
+    ) -> bool {
+        use revm::database::{EmptyDB, State, states::plain_account::PlainStorage};
+
+        let field = |name: &str| row[name].as_u64().expect(name);
+        let parent = SealedHeader::seal_slow(Header {
+            number: field("number") - 1,
+            base_fee_per_gas: Some(field("parent_base_fee")),
+            gas_used: field("parent_gas_used"),
+            gas_limit: field("parent_gas_limit"),
+            ..Default::default()
+        });
+        let child = Header {
+            number: field("number"),
+            timestamp: field("timestamp"),
+            parent_hash: parent.hash(),
+            base_fee_per_gas: Some(base_fee),
+            ..Default::default()
+        };
+        let slot_101 = row["parent_slot_101"]
+            .as_str()
+            .and_then(|value| U256::from_str_radix(value.trim_start_matches("0x"), 16).ok())
+            .expect("parent_slot_101");
+        let mut db = State::builder().with_database(EmptyDB::default()).build();
+        db.insert_account_with_storage(
+            config
+                .chain_spec()
+                .config
+                .l1_config
+                .l2_system_config_address,
+            Default::default(),
+            PlainStorage::from_iter([(U256::from(101), slot_101)]),
+        );
+        let env = config.evm_env(&child).unwrap();
+        config
+            .validate_block_pre_execution(&mut db, &env, parent.hash(), &parent)
+            .is_ok()
+    }
+
+    #[test]
+    fn chikyu_history_passes_the_import_hook_only_before_tsuki_v2() {
+        let document: serde_json::Value =
+            serde_json::from_str(include_str!("../testdata/chikyu-base-fee-history.json")).unwrap();
+        let tsuki = document["tsuki_time"].as_u64().unwrap();
+        assert_eq!(
+            DOGEOS_CHIKYU.fork(DogeosHardfork::Tsuki),
+            reth_chainspec::ForkCondition::Timestamp(tsuki)
+        );
+        let chikyu = ScrollEvmConfig::dogeos(DOGEOS_CHIKYU.clone());
+        let forced = ScrollEvmConfig::dogeos(Arc::new(
+            dogeos_chainspec::DogeosChainSpecBuilder::dogeos_chikyu()
+                .with_fork(
+                    DogeosHardfork::TsukiV2,
+                    reth_chainspec::ForkCondition::Timestamp(tsuki),
+                )
+                .build(DOGEOS_CHIKYU.config),
+        ));
+
+        let vectors = document["vectors"].as_array().unwrap();
+        let mut rejected_when_forced = 0;
+        for row in vectors {
+            let label = format!("block {} ({})", row["number"], row["note"]);
+            let header_fee = row["base_fee"].as_u64().unwrap();
+            let forced_fee = row["base_fee_under_tsuki_v2"].as_u64().unwrap();
+            let timestamp = row["timestamp"].as_u64().unwrap();
+
+            // The real schedule reproduces every recorded header.
+            assert!(
+                !DOGEOS_CHIKYU.is_tsuki_v2_active_at_timestamp(timestamp),
+                "{label}"
+            );
+            assert!(import_hook_accepts(&chikyu, row, header_fee), "{label}");
+            assert!(
+                !import_hook_accepts(&chikyu, row, header_fee + 1),
+                "{label}"
+            );
+
+            // TsukiV2 at Chikyu's Tsuki timestamp rejects history wherever the rule differs.
+            assert_eq!(
+                forced
+                    .chain_spec()
+                    .is_tsuki_v2_active_at_timestamp(timestamp),
+                timestamp >= tsuki,
+                "{label}"
+            );
+            assert_eq!(
+                import_hook_accepts(&forced, row, header_fee),
+                header_fee == forced_fee,
+                "{label}"
+            );
+            assert!(import_hook_accepts(&forced, row, forced_fee), "{label}");
+            if header_fee != forced_fee {
+                rejected_when_forced += 1;
+            }
+        }
+        // 8,295,087 (D48/E10) and 8,295,147 / 8,295,148 / 8,332,159 (the cap) among them.
+        for number in [8_295_087, 8_295_147, 8_295_148, 8_332_159] {
+            let row = vectors
+                .iter()
+                .find(|row| row["number"] == number)
+                .unwrap_or_else(|| panic!("missing block {number}"));
+            assert!(!import_hook_accepts(
+                &forced,
+                row,
+                row["base_fee"].as_u64().unwrap()
+            ));
+        }
+        for number in [8_295_147, 8_295_148, 8_332_159] {
+            let row = vectors.iter().find(|row| row["number"] == number).unwrap();
+            assert_eq!(
+                row["base_fee"].as_u64(),
+                Some(crate::PRE_TSUKI_V2_MAX_L2_BASE_FEE)
+            );
+        }
+        assert!(rejected_when_forced >= 4);
+    }
+
+    #[test]
+    fn mainnet_block_one_uses_tsuki_v2_fee_rules() {
+        use revm::database::EmptyDB;
+
+        let config = ScrollEvmConfig::dogeos(DOGEOS_MAINNET.clone());
+        // A full parent 1 gwei above the default overhead: D48/E10 grows the excess by 9/48.
+        let parent = SealedHeader::seal_slow(Header {
+            timestamp: DOGEOS_MAINNET.genesis_timestamp(),
+            gas_limit: 30_000_000,
+            gas_used: 30_000_000,
+            base_fee_per_gas: Some(1_015_680_000),
+            ..Default::default()
+        });
+        let mut child = Header {
+            number: 1,
+            timestamp: DOGEOS_MAINNET.genesis_timestamp() + 1,
+            parent_hash: parent.hash(),
+            base_fee_per_gas: Some(1_203_180_000),
+            ..Default::default()
+        };
+        let env = config.evm_env(&child).unwrap();
+        assert_eq!(env.cfg_env.spec, ScrollSpecId::TSUKI_V2);
+        config
+            .validate_block_pre_execution(&mut EmptyDB::default(), &env, parent.hash(), &parent)
+            .unwrap();
+
+        // Above 10 gwei the 420,000 gwei cap applies, not the legacy one.
+        let parent = SealedHeader::seal_slow(Header {
+            base_fee_per_gas: Some(crate::PRE_TSUKI_V2_MAX_L2_BASE_FEE),
+            ..parent.into_header()
+        });
+        child.parent_hash = parent.hash();
+        child.base_fee_per_gas = Some(11_872_060_000);
+        let env = config.evm_env(&child).unwrap();
+        config
+            .validate_block_pre_execution(&mut EmptyDB::default(), &env, parent.hash(), &parent)
+            .unwrap();
     }
 
     #[test]

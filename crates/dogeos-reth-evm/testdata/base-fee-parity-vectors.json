@@ -1,14 +1,23 @@
 {
   "chains": {
     "chikyu": {
-      "description": "DOGEOS_CHIKYU, Feynman only",
+      "description": "DOGEOS_CHIKYU before TsukiV2: Feynman and Tsuki history",
       "fee_params": [
         8,
         2
-      ]
+      ],
+      "max_base_fee": 10000000000
     },
-    "delayed-fee-params": {
-      "description": "mainnet genesis with tsukiTime 0 and tsukiFeeParamsTime 100",
+    "mainnet": {
+      "description": "DOGEOS_MAINNET, Tsuki and TsukiV2 from genesis",
+      "fee_params": [
+        48,
+        10
+      ],
+      "max_base_fee": 420000000000000
+    },
+    "tsuki-v2-after-tsuki": {
+      "description": "mainnet genesis with tsukiTime 0 and tsukiV2Time 100",
       "fee_params": [
         [
           8,
@@ -18,19 +27,15 @@
           48,
           10
         ]
-      ]
-    },
-    "mainnet": {
-      "description": "DOGEOS_MAINNET, Tsuki from genesis",
-      "fee_params": [
-        48,
-        10
+      ],
+      "max_base_fee": [
+        10000000000,
+        420000000000000
       ]
     }
   },
   "default_overhead": 15680000,
-  "max_base_fee": 420000000000000,
-  "note": "Base-fee parity vectors for the Feynman+ rule: header.base_fee == next_block_base_fee(parent, overhead at L2SystemConfig slot 101 of the pre-state). Shared with the guest (stateless-block-verifier) so both sides compute the same number; a divergence on any row is a chain split. slot_101 of 0x0 means the slot is unset, so the default overhead applies.",
+  "note": "Base-fee parity vectors for the Feynman+ rule: header.base_fee == next_block_base_fee(parent, overhead at L2SystemConfig slot 101 of the pre-state). Shared with the guest (stateless-block-verifier) so both sides compute the same number; a divergence on any row is a chain split. The fee parameters and the cap both switch at TsukiV2, keyed on the child timestamp. slot_101 of 0x0 means the slot is unset, so the default overhead applies.",
   "vectors": [
     {
       "chain": "mainnet",
@@ -221,8 +226,8 @@
     },
     {
       "chain": "chikyu",
-      "expected_base_fee": 421125000000,
-      "note": "configured overhead, full block",
+      "expected_base_fee": 10000000000,
+      "note": "configured overhead, full block: clamped at the 10 gwei pre-TsukiV2 cap",
       "overhead": 420000000000,
       "parent_base_fee": 421000000000,
       "parent_gas_limit": 30000000,
@@ -231,9 +236,9 @@
       "timestamp": 2
     },
     {
-      "chain": "delayed-fee-params",
+      "chain": "tsuki-v2-after-tsuki",
       "expected_base_fee": 1225000000,
-      "note": "one second before the fee parameters change: still (8, 2)",
+      "note": "one second before TsukiV2: still (8, 2)",
       "overhead": 100000000,
       "parent_base_fee": 1100000000,
       "parent_gas_limit": 30000000,
@@ -242,9 +247,9 @@
       "timestamp": 99
     },
     {
-      "chain": "delayed-fee-params",
+      "chain": "tsuki-v2-after-tsuki",
       "expected_base_fee": 1287500000,
-      "note": "at the fee parameter activation: (48, 10)",
+      "note": "at TsukiV2: (48, 10)",
       "overhead": 100000000,
       "parent_base_fee": 1100000000,
       "parent_gas_limit": 30000000,
@@ -253,15 +258,48 @@
       "timestamp": 100
     },
     {
-      "chain": "delayed-fee-params",
+      "chain": "tsuki-v2-after-tsuki",
       "expected_base_fee": 1287500000,
-      "note": "after the fee parameter activation: (48, 10)",
+      "note": "after TsukiV2: (48, 10)",
       "overhead": 100000000,
       "parent_base_fee": 1100000000,
       "parent_gas_limit": 30000000,
       "parent_gas_used": 30000000,
       "slot_101": "0x5f5e100",
       "timestamp": 101
+    },
+    {
+      "chain": "tsuki-v2-after-tsuki",
+      "expected_base_fee": 10000000000,
+      "note": "one second before TsukiV2: clamped at 10 gwei",
+      "overhead": 100000000,
+      "parent_base_fee": 9500000000,
+      "parent_gas_limit": 30000000,
+      "parent_gas_used": 30000000,
+      "slot_101": "0x5f5e100",
+      "timestamp": 99
+    },
+    {
+      "chain": "tsuki-v2-after-tsuki",
+      "expected_base_fee": 11262500000,
+      "note": "at TsukiV2: the 420,000 gwei cap no longer binds",
+      "overhead": 100000000,
+      "parent_base_fee": 9500000000,
+      "parent_gas_limit": 30000000,
+      "parent_gas_used": 30000000,
+      "slot_101": "0x5f5e100",
+      "timestamp": 100
+    },
+    {
+      "chain": "chikyu",
+      "expected_base_fee": 10000000000,
+      "note": "Chikyu block 8,295,148: at the 10 gwei cap",
+      "overhead": 15680000,
+      "parent_base_fee": 10000000000,
+      "parent_gas_limit": 10000000,
+      "parent_gas_used": 8589079,
+      "slot_101": "0x0",
+      "timestamp": 1791139871
     }
   ]
 }

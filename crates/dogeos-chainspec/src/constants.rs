@@ -11,7 +11,7 @@ pub const MAX_TX_PAYLOAD_BYTES_PER_BLOCK: usize = 120 * 1024;
 /// Feynman EIP-1559 parameters.
 pub const DOGEOS_BASE_FEE_PARAMS_FEYNMAN: BaseFeeParams = BaseFeeParams::new(8, 2);
 
-/// Tsuki EIP-1559 parameters: max change denominator 48, elasticity 10.
+/// Tsuki EIP-1559 parameters, active from TsukiV2: max change denominator 48, elasticity 10.
 pub const DOGEOS_BASE_FEE_PARAMS_TSUKI: BaseFeeParams = BaseFeeParams::new(48, 10);
 
 /// DogeOS development-network L1 configuration.
