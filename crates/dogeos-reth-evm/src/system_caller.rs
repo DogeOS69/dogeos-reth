@@ -47,16 +47,22 @@ impl<Spec> ScrollSystemCaller<Spec> {
     }
 
     /// Notifies the hook about a rollup-native pre-block transition.
+    ///
+    /// Alloy has no rollup transition variant, so every pre-block hard-fork transition is
+    /// reported with the [`StateChangePreBlockSource::BlockHashesContract`] source, including
+    /// updates to non-EIP-2935 accounts such as the gas price oracle or NativeDogeToken. The
+    /// source is only a phase label: root consumers use the state payload, and consumers must not
+    /// filter or attribute updates by this source. A transition block may report it more than
+    /// once.
+    ///
+    /// The hook fires only when a transition changes state, which in practice is the fork
+    /// activation block.
     pub(crate) fn on_pre_block_state(&mut self, state: &EvmState) {
         // Empty state is the sentinel returned by skipped or already-applied transitions.
         if state.is_empty() {
             return;
         }
 
-        // Alloy has no custom rollup transition variant. Root consumers use the state payload;
-        // the source is only a phase label, so use the existing pre-block category. A transition
-        // block may emit this source multiple times with non-EIP-2935 accounts such as the oracle
-        // or NativeDogeToken, so consumers must not filter or attribute updates by this source.
         self.on_state(
             StateChangeSource::PreBlock(StateChangePreBlockSource::BlockHashesContract),
             state,
