@@ -160,6 +160,19 @@ mod tests {
     use alloy_primitives::U256;
 
     #[test]
+    fn sim_converter_reports_blob_requests_as_unsupported() {
+        let request = ScrollTransactionRequest::default()
+            .transaction_type(3)
+            .to(Address::repeat_byte(1))
+            .gas_limit(21_000)
+            .nonce(0)
+            .max_fee_per_gas(10)
+            .max_priority_fee_per_gas(1);
+        let error = ScrollSimTxConverter.convert_sim_tx(request).unwrap_err();
+        assert_eq!(error.to_string(), "blob transactions are not supported");
+    }
+
+    #[test]
     fn rpc_converter_uses_the_supplied_recovered_signer() {
         let transaction =
             ScrollTxEnvelope::Legacy(TxLegacy::default().into_signed(Signature::test_signature()));

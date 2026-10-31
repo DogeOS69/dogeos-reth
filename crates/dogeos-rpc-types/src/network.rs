@@ -3,7 +3,7 @@ use crate::{
     transaction::BLOB_REQUEST_UNSUPPORTED,
 };
 use alloc::{vec, vec::Vec};
-use alloy_consensus::TxType;
+use alloy_consensus::{TxType, error::ValueError};
 use alloy_network::{
     BuildResult, Network, NetworkWallet, TransactionBuilder, TransactionBuilderError,
 };
@@ -154,15 +154,20 @@ impl TransactionBuilder<Scroll> for ScrollTransactionRequest {
     }
 
     fn prep_for_submission(&mut self) {
+        // Ethereum preparation would retype a blob request and drop its blob fields; keep them so
+        // building rejects it.
+        if self.is_blob_request() {
+            return;
+        }
         self.as_mut().prep_for_submission();
     }
 
     fn build_unsigned(self) -> BuildResult<ScrollTypedTransaction, Scroll> {
         if self.is_blob_request() {
-            return Err(TransactionBuilderError::InvalidTransactionRequest(
-                self.output_tx_type(),
-                vec![BLOB_REQUEST_UNSUPPORTED],
-            )
+            return Err(TransactionBuilderError::custom(ValueError::new_static(
+                (),
+                BLOB_REQUEST_UNSUPPORTED,
+            ))
             .into_unbuilt(self));
         }
         if let Err((tx_type, missing)) = self.as_ref().missing_keys() {
@@ -202,6 +207,8 @@ const fn map_tx_type(tx_type: TxType) -> ScrollTxType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_eips::eip7594::BlobTransactionSidecarVariant;
+    use alloy_primitives::B256;
 
     #[test]
     fn network_maps_blob_requests_to_scroll_eip1559() {
@@ -210,23 +217,76 @@ mod tests {
         assert_eq!(request.output_tx_type(), ScrollTxType::Eip1559);
     }
 
-    #[test]
-    fn network_rejects_blob_requests() {
+    fn eip1559_request() -> ScrollTransactionRequest {
         let mut request = ScrollTransactionRequest::default()
-            .transaction_type(3)
             .to(Address::repeat_byte(1))
             .gas_limit(21_000)
             .nonce(0)
             .max_fee_per_gas(10)
             .max_priority_fee_per_gas(1);
         request.as_mut().chain_id = Some(1);
-        request.as_mut().max_fee_per_blob_gas = Some(1);
+        request
+    }
+
+    fn blob_requests() -> [ScrollTransactionRequest; 4] {
+        let typed = eip1559_request().transaction_type(3);
+
+        let mut blob_fee = eip1559_request();
+        blob_fee.as_mut().max_fee_per_blob_gas = Some(1);
+
+        let mut blob_hashes = eip1559_request();
+        blob_hashes.as_mut().max_fee_per_blob_gas = Some(1);
+        blob_hashes.as_mut().blob_versioned_hashes = Some(vec![B256::repeat_byte(1)]);
+
+        let mut sidecar = eip1559_request();
+        sidecar.as_mut().sidecar = Some(BlobTransactionSidecarVariant::Eip4844(Default::default()));
+
+        [typed, blob_fee, blob_hashes, sidecar]
+    }
+
+    fn assert_blob_rejected(request: ScrollTransactionRequest) {
         let error = request.clone().build_unsigned().unwrap_err();
         assert_eq!(error.request, request);
+        assert!(matches!(error.error, TransactionBuilderError::Custom(_)));
+        assert_eq!(error.error.to_string(), BLOB_REQUEST_UNSUPPORTED);
+    }
+
+    #[test]
+    fn network_rejects_blob_requests() {
+        for request in blob_requests() {
+            assert_blob_rejected(request);
+        }
+    }
+
+    #[test]
+    fn blob_check_precedes_missing_keys() {
+        // Blob hashes without a sidecar make the request an incomplete EIP-4844 one, so the
+        // missing-keys check alone would ask for the sidecar.
+        let mut request = eip1559_request();
+        request.as_mut().max_fee_per_blob_gas = Some(1);
+        request.as_mut().blob_versioned_hashes = Some(vec![B256::repeat_byte(1)]);
+        assert!(request.as_ref().missing_keys().is_err());
+        assert_blob_rejected(request);
+    }
+
+    #[test]
+    fn prepared_blob_requests_are_still_rejected() {
+        for mut request in blob_requests() {
+            let unprepared = request.clone();
+            request.prep_for_submission();
+            assert_eq!(request, unprepared);
+            assert_blob_rejected(request);
+        }
+    }
+
+    #[test]
+    fn prepared_eip1559_request_still_builds() {
+        let mut request = eip1559_request();
+        request.prep_for_submission();
+        assert_eq!(request.as_ref().transaction_type, Some(2));
         assert!(matches!(
-            error.error,
-            TransactionBuilderError::InvalidTransactionRequest(_, ref keys)
-                if keys == &[BLOB_REQUEST_UNSUPPORTED]
+            request.build_unsigned().unwrap(),
+            ScrollTypedTransaction::Eip1559(_)
         ));
     }
 

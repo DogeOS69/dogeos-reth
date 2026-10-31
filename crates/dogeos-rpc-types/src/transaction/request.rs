@@ -173,6 +173,7 @@ impl From<ScrollTxEnvelope> for ScrollTransactionRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_eips::eip7594::BlobTransactionSidecarVariant;
     use alloy_primitives::B256;
 
     fn call_request() -> ScrollTransactionRequest {
@@ -212,6 +213,11 @@ mod tests {
         let mut untyped_blob_fee = eip1559_request();
         untyped_blob_fee.as_mut().max_fee_per_blob_gas = Some(1);
         assert_blob_rejected(untyped_blob_fee);
+
+        let mut untyped_sidecar = eip1559_request();
+        untyped_sidecar.as_mut().sidecar =
+            Some(BlobTransactionSidecarVariant::Eip4844(Default::default()));
+        assert_blob_rejected(untyped_sidecar);
     }
 
     #[test]
