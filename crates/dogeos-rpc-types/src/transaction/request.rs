@@ -156,14 +156,12 @@ impl From<ScrollTypedTransaction> for ScrollTransactionRequest {
 
 impl From<ScrollTxEnvelope> for ScrollTransactionRequest {
     fn from(transaction: ScrollTxEnvelope) -> Self {
-        #[allow(unreachable_patterns)]
         match transaction {
             ScrollTxEnvelope::Legacy(value) => value.into(),
             ScrollTxEnvelope::Eip2930(value) => value.into(),
             ScrollTxEnvelope::Eip1559(value) => value.into(),
             ScrollTxEnvelope::Eip7702(value) => value.into(),
             ScrollTxEnvelope::L1Message(value) => value.into(),
-            _ => Self::default(),
         }
     }
 }
