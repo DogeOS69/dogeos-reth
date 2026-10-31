@@ -99,9 +99,7 @@ impl SimTxConverter<ScrollTransactionRequest, ScrollTxEnvelope> for ScrollSimTxC
         &self,
         request: ScrollTransactionRequest,
     ) -> Result<ScrollTxEnvelope, Self::Err> {
-        let transaction = request
-            .build_typed_tx()
-            .map_err(|request| ValueError::new(request, "required fields missing"))?;
+        let transaction = request.build_typed_tx()?;
         let signature = Signature::new(Default::default(), Default::default(), false);
         Ok(transaction.into_signed(signature).into())
     }

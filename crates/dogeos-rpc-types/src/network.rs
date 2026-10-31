@@ -1,4 +1,7 @@
-use crate::{ScrollRpcTransaction, ScrollTransactionReceipt, ScrollTransactionRequest};
+use crate::{
+    ScrollRpcTransaction, ScrollTransactionReceipt, ScrollTransactionRequest,
+    transaction::BLOB_REQUEST_UNSUPPORTED,
+};
 use alloc::{vec, vec::Vec};
 use alloy_consensus::TxType;
 use alloy_network::{
@@ -155,6 +158,13 @@ impl TransactionBuilder<Scroll> for ScrollTransactionRequest {
     }
 
     fn build_unsigned(self) -> BuildResult<ScrollTypedTransaction, Scroll> {
+        if self.is_blob_request() {
+            return Err(TransactionBuilderError::InvalidTransactionRequest(
+                self.output_tx_type(),
+                vec![BLOB_REQUEST_UNSUPPORTED],
+            )
+            .into_unbuilt(self));
+        }
         if let Err((tx_type, missing)) = self.as_ref().missing_keys() {
             let tx_type = map_tx_type(tx_type);
             return Err(
@@ -162,7 +172,8 @@ impl TransactionBuilder<Scroll> for ScrollTransactionRequest {
                     .into_unbuilt(self),
             );
         }
-        self.clone().build_typed_tx().map_err(|request| {
+        self.clone().build_typed_tx().map_err(|error| {
+            let request = error.into_value();
             TransactionBuilderError::InvalidTransactionRequest(
                 request.output_tx_type(),
                 vec!["required fields"],
@@ -197,6 +208,26 @@ mod tests {
         let mut request = ScrollTransactionRequest::default().transaction_type(3);
         request.as_mut().max_fee_per_blob_gas = Some(1);
         assert_eq!(request.output_tx_type(), ScrollTxType::Eip1559);
+    }
+
+    #[test]
+    fn network_rejects_blob_requests() {
+        let mut request = ScrollTransactionRequest::default()
+            .transaction_type(3)
+            .to(Address::repeat_byte(1))
+            .gas_limit(21_000)
+            .nonce(0)
+            .max_fee_per_gas(10)
+            .max_priority_fee_per_gas(1);
+        request.as_mut().chain_id = Some(1);
+        request.as_mut().max_fee_per_blob_gas = Some(1);
+        let error = request.clone().build_unsigned().unwrap_err();
+        assert_eq!(error.request, request);
+        assert!(matches!(
+            error.error,
+            TransactionBuilderError::InvalidTransactionRequest(_, ref keys)
+                if keys == &[BLOB_REQUEST_UNSUPPORTED]
+        ));
     }
 
     #[test]

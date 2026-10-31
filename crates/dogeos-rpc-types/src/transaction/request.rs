@@ -1,10 +1,12 @@
-use alloy_consensus::{
-    Sealed, SignableTransaction, Signed, TxEip1559, TxEip4844, TypedTransaction,
-};
+use alloy_consensus::{Sealed, SignableTransaction, Signed, TypedTransaction, error::ValueError};
+use alloy_eips::eip2718::EIP4844_TX_TYPE_ID;
 use alloy_primitives::{Address, Signature, TxKind, U256};
 use alloy_rpc_types_eth::{AccessList, TransactionInput, TransactionRequest};
 use dogeos_protocol_types::{ScrollTxEnvelope, ScrollTypedTransaction, TxL1Message};
 use serde::{Deserialize, Serialize};
+
+/// Error message for requests that ask for a blob (EIP-4844) transaction.
+pub(crate) const BLOB_REQUEST_UNSUPPORTED: &str = "blob transactions are not supported";
 
 /// Transaction request that builds the inherited Scroll transaction family.
 #[derive(
@@ -69,31 +71,31 @@ impl ScrollTransactionRequest {
         self
     }
 
-    /// Builds a supported transaction. Blob requests retain their ordinary transaction fields but
-    /// are lowered to EIP-1559 because DogeOS has no blob transaction type.
-    #[allow(clippy::result_large_err)] // Preserve the request for callers that fill missing fields.
-    pub fn build_typed_tx(self) -> Result<ScrollTypedTransaction, Self> {
+    /// Returns true if the request asks for a blob transaction: type 3 or any EIP-4844 field.
+    pub const fn is_blob_request(&self) -> bool {
+        matches!(self.0.transaction_type, Some(EIP4844_TX_TYPE_ID)) || self.0.has_eip4844_fields()
+    }
+
+    /// Builds a supported transaction. Blob requests are rejected because DogeOS has no blob
+    /// transaction type. The error returns the request for callers that fill missing fields.
+    pub fn build_typed_tx(self) -> Result<ScrollTypedTransaction, ValueError<Self>> {
+        if self.is_blob_request() {
+            return Err(ValueError::new_static(self, BLOB_REQUEST_UNSUPPORTED));
+        }
         let transaction = self
             .0
             .build_consensus_tx()
-            .map_err(|error| Self(error.tx))?;
+            .map_err(|error| ValueError::new_static(Self(error.tx), "required fields missing"))?;
         Ok(match transaction {
             TypedTransaction::Legacy(transaction) => ScrollTypedTransaction::Legacy(transaction),
             TypedTransaction::Eip2930(transaction) => ScrollTypedTransaction::Eip2930(transaction),
             TypedTransaction::Eip1559(transaction) => ScrollTypedTransaction::Eip1559(transaction),
+            // Unreachable after the check above; rejected rather than lowered all the same.
             TypedTransaction::Eip4844(transaction) => {
-                let transaction: TxEip4844 = transaction.into();
-                ScrollTypedTransaction::Eip1559(TxEip1559 {
-                    chain_id: transaction.chain_id,
-                    nonce: transaction.nonce,
-                    gas_limit: transaction.gas_limit,
-                    max_priority_fee_per_gas: transaction.max_priority_fee_per_gas,
-                    max_fee_per_gas: transaction.max_fee_per_gas,
-                    to: TxKind::Call(transaction.to),
-                    value: transaction.value,
-                    access_list: transaction.access_list,
-                    input: transaction.input,
-                })
+                return Err(ValueError::new_static(
+                    Self(transaction.into()),
+                    BLOB_REQUEST_UNSUPPORTED,
+                ));
             }
             TypedTransaction::Eip7702(transaction) => ScrollTypedTransaction::Eip7702(transaction),
         })
@@ -173,22 +175,79 @@ mod tests {
     use super::*;
     use alloy_primitives::B256;
 
-    #[test]
-    fn blob_request_is_lowered_to_eip1559() {
+    fn call_request() -> ScrollTransactionRequest {
         let mut request = ScrollTransactionRequest::default()
-            .transaction_type(3)
             .to(Address::repeat_byte(1))
             .gas_limit(21_000)
-            .nonce(0)
-            .max_fee_per_gas(10)
-            .max_priority_fee_per_gas(1);
+            .nonce(0);
         request.as_mut().chain_id = Some(1);
-        request.as_mut().max_fee_per_blob_gas = Some(1);
-        request.as_mut().blob_versioned_hashes = Some(vec![B256::repeat_byte(1)]);
+        request
+    }
+
+    fn eip1559_request() -> ScrollTransactionRequest {
+        call_request()
+            .max_fee_per_gas(10)
+            .max_priority_fee_per_gas(1)
+    }
+
+    fn assert_blob_rejected(request: ScrollTransactionRequest) {
+        let error = request.clone().build_typed_tx().unwrap_err();
+        assert_eq!(error.to_string(), BLOB_REQUEST_UNSUPPORTED);
+        assert_eq!(error.into_value(), request);
+    }
+
+    #[test]
+    fn blob_requests_are_rejected() {
+        let mut with_blob_fields = eip1559_request().transaction_type(3);
+        with_blob_fields.as_mut().max_fee_per_blob_gas = Some(1);
+        with_blob_fields.as_mut().blob_versioned_hashes = Some(vec![B256::repeat_byte(1)]);
+        assert_blob_rejected(with_blob_fields);
+
+        assert_blob_rejected(eip1559_request().transaction_type(3));
+
+        let mut untyped_blob_hashes = eip1559_request();
+        untyped_blob_hashes.as_mut().blob_versioned_hashes = Some(vec![B256::repeat_byte(1)]);
+        assert_blob_rejected(untyped_blob_hashes);
+
+        let mut untyped_blob_fee = eip1559_request();
+        untyped_blob_fee.as_mut().max_fee_per_blob_gas = Some(1);
+        assert_blob_rejected(untyped_blob_fee);
+    }
+
+    #[test]
+    fn non_blob_requests_still_build() {
+        let mut legacy = call_request();
+        legacy.as_mut().gas_price = Some(10);
         assert!(matches!(
-            request.build_typed_tx().unwrap(),
+            legacy.clone().build_typed_tx().unwrap(),
+            ScrollTypedTransaction::Legacy(_)
+        ));
+
+        let eip2930 = legacy.access_list(AccessList::default());
+        assert!(matches!(
+            eip2930.build_typed_tx().unwrap(),
+            ScrollTypedTransaction::Eip2930(_)
+        ));
+
+        assert!(matches!(
+            eip1559_request().build_typed_tx().unwrap(),
             ScrollTypedTransaction::Eip1559(_)
         ));
+
+        let mut eip7702 = eip1559_request();
+        eip7702.as_mut().authorization_list = Some(Vec::new());
+        assert!(matches!(
+            eip7702.build_typed_tx().unwrap(),
+            ScrollTypedTransaction::Eip7702(_)
+        ));
+    }
+
+    #[test]
+    fn incomplete_request_returns_the_request() {
+        let request = ScrollTransactionRequest::default().to(Address::repeat_byte(1));
+        let error = request.clone().build_typed_tx().unwrap_err();
+        assert_eq!(error.to_string(), "required fields missing");
+        assert_eq!(error.into_value(), request);
     }
 
     #[test]
