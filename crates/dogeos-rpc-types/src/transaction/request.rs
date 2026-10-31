@@ -115,6 +115,7 @@ impl reth_rpc_traits::SignableTxRequest<ScrollTxEnvelope> for ScrollTransactionR
 }
 
 impl From<TxL1Message> for ScrollTransactionRequest {
+    /// Drops `queue_index`, which a request cannot carry; see the `ScrollTxEnvelope` conversion.
     fn from(transaction: TxL1Message) -> Self {
         Self(TransactionRequest {
             from: Some(transaction.sender),
@@ -155,6 +156,10 @@ impl From<ScrollTypedTransaction> for ScrollTransactionRequest {
 }
 
 impl From<ScrollTxEnvelope> for ScrollTransactionRequest {
+    /// The L1-message conversion is lossy: a request has no queue index, so `queue_index` is
+    /// dropped and the result is not a round trip. Going the other way,
+    /// [`ScrollTransactionRequest::build_typed_tx`] only yields signed transaction types, so an RPC
+    /// request can never become an L1 message.
     fn from(transaction: ScrollTxEnvelope) -> Self {
         match transaction {
             ScrollTxEnvelope::Legacy(value) => value.into(),
