@@ -155,6 +155,12 @@ impl From<ScrollTypedTransaction> for ScrollTransactionRequest {
 }
 
 impl From<ScrollTxEnvelope> for ScrollTransactionRequest {
+    /// Converts an envelope into a call request with its execution fields.
+    ///
+    /// The L1-message conversion is lossy: a request has no queue index, so `queue_index` is
+    /// dropped and the result is not a round trip. The reverse direction cannot produce an L1
+    /// message either: [`ScrollTransactionRequest::build_typed_tx`] only yields signed transaction
+    /// types, so an RPC request can never become an L1 message.
     fn from(transaction: ScrollTxEnvelope) -> Self {
         match transaction {
             ScrollTxEnvelope::Legacy(value) => value.into(),
