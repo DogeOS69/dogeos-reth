@@ -245,7 +245,7 @@ impl From<Genesis> for DogeosChainSpec {
 pub(crate) fn build_spec(
     genesis: Genesis,
     config: ScrollChainConfig,
-    dogeos_forks: [(DogeosHardfork, ForkCondition); 5],
+    dogeos_forks: impl IntoIterator<Item = (DogeosHardfork, ForkCondition)>,
     chain_override: Option<Chain>,
 ) -> DogeosChainSpec {
     build_spec_with_hardforks(
