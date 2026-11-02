@@ -21,7 +21,7 @@ production dependency.
 - Upstream source commit: `3a136fc8c38221e060cbc31ef5c5fa345cf0e17a`
 - DogeOS backport commit: `90e08ba40` in `DogeOS69/reth`
 - Stack base revision: `5235056be94c584edce6ba7900f163aaa9b8cda0`
-- Selected stack tag: `v2.0.0-dogeos-20261023.1` (`42b56304227691327c44415262d23ff680a44ffb`)
+- Selected stack tag: `tsuki-v0.12` (`bb3122afa33df077840b7e303a84d9b0dc6841ef`)
 - Generic rationale: successful RocksDB transactions and batch commits must enable WAL sync so
   acknowledged writes survive a host crash. The patch contains no DogeOS protocol behavior and
   does not change storage encodings.
@@ -62,7 +62,7 @@ scripts/audit-rocksdb-durability.sh
 - Upstream merge commit: `62808bd060e4c7398e3fb6df93881950b1433b18`
 - DogeOS patch PR: `DogeOS69/reth#5`
 - DogeOS behavior commit: `04e5c6ff415a3e8d1e299d6419b3b31ac88f3a8e`
-- Selected stack tag: `v2.0.0-dogeos-20261023.1` (`42b56304227691327c44415262d23ff680a44ffb`)
+- Selected stack tag: `tsuki-v0.12` (`bb3122afa33df077840b7e303a84d9b0dc6841ef`)
 - Generic rationale: EIP-3607 rejects a sender only when the account contains nonempty code.
   Native Storage V2 represents an explicitly empty genesis `code` value as
   `Some(KECCAK_EMPTY)`, which must remain eligible to send transactions. The change preserves
@@ -74,6 +74,30 @@ scripts/audit-rocksdb-durability.sh
 - Removal condition: move to an upstream Reth base containing PR #26644 or equivalent audited
   EIP-3607 empty-code semantics, then remove the backport while retaining the Storage V2 boundary
   regression.
+
+## Devnet P2P, RPC and reorg hardening
+
+- Selected stack: `tsuki-v0.12` at `bb3122afa33df077840b7e303a84d9b0dc6841ef`.
+- Generic rationale: bound peer/RPC resource use and preserve canonical-state and
+  trie correctness during reorgs. These backports add no DogeOS protocol rules.
+- Coverage: the linked PRs record the focused regression tests and upstream-port
+  deviations; the selected fork's `UPSTREAM_PATCHES.md` records their provenance.
+
+| DogeOS fork PR | Backported behavior | Focused test package(s) |
+| --- | --- | --- |
+| [#11](https://github.com/DogeOS69/reth/pull/11) | Revoke trusted peer membership | `reth-network` |
+| [#12](https://github.com/DogeOS69/reth/pull/12) | Bind Hello identity to the ECIES-authenticated peer | `reth-network` |
+| [#13](https://github.com/DogeOS69/reth/pull/13) | Validate and rate-limit Ping/Pong traffic | `reth-eth-wire`, `reth-network` |
+| [#14](https://github.com/DogeOS69/reth/pull/14) | Throttle inbound admissions at capacity | `reth-network` |
+| [#15](https://github.com/DogeOS69/reth/pull/15) | Release closed syncing subscriptions | `reth-rpc`, `reth-rpc-builder` |
+| [#16](https://github.com/DogeOS69/reth/pull/16) | Keep log subscriptions alive after broadcast lag | `reth-rpc` |
+| [#17](https://github.com/DogeOS69/reth/pull/17) | Bound blocking RPC work and retain worker permits | `reth-rpc-eth-api`, `reth-rpc` |
+| [#18](https://github.com/DogeOS69/reth/pull/18) | Reject stale persisted forkchoice hashes | `reth-engine-tree` |
+| [#19](https://github.com/DogeOS69/reth/pull/19) | Compute trie reverts before unwinding hashed state | `reth-provider` |
+
+- Removal condition: select an upstream Reth base with equivalent fixes, retaining
+  the regressions and DogeOS integration checks. The bounded-session-queue follow-up
+  (#20) is not part of this tag.
 
 ## Composite RPC add-on handles — retired, not selected
 
@@ -89,7 +113,7 @@ The standalone node retains the DogeOS-owned EVM dependency used by the
 oracle:
 
 ```toml
-revm-scroll = { git = "https://github.com/DogeOS69/dogeos-revm.git", tag = "tsuki-v0.9", default-features = false }
+revm-scroll = { git = "https://github.com/DogeOS69/dogeos-revm.git", tag = "tsuki-v0.12", default-features = false }
 ```
 
 `revm-scroll` is a required DogeOS dependency, not an upstream Reth patch. Its
@@ -98,7 +122,7 @@ standalone workspace may depend on it, but its resolved commit must be pinned
 in `Cargo.lock` and recorded here before the dependency spike is accepted;
 the moving branch name alone is not a reproducible release input.
 
-The oracle lockfile currently resolves this branch to
+The original oracle lockfile resolved this branch to
 `8f754e800a1580d181ce001b13aa91c64a7254d9`.  The Reth 2 / REVM 36 spike must
 either retain that revision with a compatible dependency graph or record the
 replacement `dogeos-revm` revision and its parity evidence here.
@@ -106,9 +130,12 @@ replacement `dogeos-revm` revision and its parity evidence here.
 The spike evaluated `chore/upgrade-revm-v36` revision
 `1b87ecf17af029ac2f39e8ad362f3503ff2f4583`, observed on 2026-08-02. That
 branch was merged into the canonical `dogeos` branch (PRs #16/#17) and deleted;
-`Cargo.toml` and `Cargo.lock` now pin `tsuki-v0.9` at
-`d4ac4dac66e5648099a0277eb63f606fc04caff7` on `dogeos`. This includes the
-Veridise 10098 upfront-balance fix and removal of the optional L1 fee buffer.
+`Cargo.toml` and `Cargo.lock` now pin `tsuki-v0.12` at
+`4633937125b70088bb12a214356cddb24cde18d0` on `dogeos`. This retains the
+Veridise 10098 upfront-balance fix, removal of the optional L1 fee buffer and
+TsukiV2, and adds PRs #23–27: spec documentation, fallible spec-name parsing,
+central precompile addresses, unit-explicit L1 fee helpers and the transfer
+precompile's receiver-overflow guard. The BLOCKHASH optimization (#22) is excluded.
 The locked graph retains one REVM 36.0.0 and one alloy-evm 0.30.0 instance.
 The exact audit and reproduction commands are in `DEPENDENCY_AUDIT.md`.
 

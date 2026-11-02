@@ -1,7 +1,8 @@
 # Phase 0 dependency audit
 
-Status: **passed on 2026-08-06; revalidated on 2026-08-13** after the repin to the
-clean-Reth stack tip `972366a0bfc11cf6a0d5dc79d5e779cd81e32232`.
+Historical baseline: **passed on 2026-08-06; revalidated on 2026-08-13** at the
+clean-Reth stack tip `972366a0bfc11cf6a0d5dc79d5e779cd81e32232`. The table below
+records the current selection; the reproduction commands check the selected graph.
 
 The standalone spike resolves official Reth v2.0.0 plus the reviewed clean-Reth compatibility
 stack as a source dependency and retains DogeOS EVM behavior through `revm-scroll`; it contains
@@ -9,9 +10,9 @@ no copied upstream Reth crate and no production dependency on the legacy `scroll
 
 | Component | Locked selection |
 | --- | --- |
-| Reth | `v2.0.0-dogeos-20261023.1` / `42b56304227691327c44415262d23ff680a44ffb` |
+| Reth | `tsuki-v0.12` / `bb3122afa33df077840b7e303a84d9b0dc6841ef` |
 | REVM | `36.0.0` |
-| `revm-scroll` | `d4ac4dac66e5648099a0277eb63f606fc04caff7` (`tsuki-v0.9` on `dogeos`) |
+| `revm-scroll` | `tsuki-v0.12` / `4633937125b70088bb12a214356cddb24cde18d0` |
 | Alloy API family | `alloy-consensus 1.8.2` |
 | alloy-evm | `0.30.0` |
 | Alloy primitives / Solidity types | `1.5.7` |
@@ -20,11 +21,13 @@ The first `feat/drop-scroll-patch` candidate resolved REVM 34 and
 `alloy-evm 0.27.3`, so it was rejected. The evaluation branch
 `chore/upgrade-revm-v36` (revision `1b87ecf...`) was merged into the canonical
 `dogeos` branch on 2026-08-12 (PRs #16/#17: drop the Scroll REVM fork, upgrade
-to REVM 36). The workspace now pins the `tsuki-v0.9` tag,
-which includes the Veridise 10098 upfront-balance fix and removes the optional
-L1 fee buffer. It resolves the same single REVM 36 and single alloy-evm 0.30.0
-instance. The audit requires both the encoded tag source and the exact
-`d4ac4dac66e5648099a0277eb63f606fc04caff7` commit resolved in `Cargo.lock`.
+to REVM 36). The workspace now pins both forks to `tsuki-v0.12`. The Reth tag
+adds the P2P, RPC and reorg backports from DogeOS69/reth #11–19; the DogeOS REVM
+tag adds the Veridise follow-ups from DogeOS69/dogeos-revm #23–27 on top of
+TsukiV2. It retains the upfront-balance fix and removal of the optional L1 fee
+buffer. The graph still requires a single REVM 36 and alloy-evm 0.30.0 instance.
+The audit checks both encoded tag sources and the exact commits above in
+`Cargo.lock`; tags alone are not the source allowlist.
 
 The Reth source manifest uses compatible semver ranges for a subset of the
 Alloy 1.5 components. Cargo otherwise selected a newer incompatible parser
