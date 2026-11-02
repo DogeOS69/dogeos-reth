@@ -12,6 +12,12 @@ pub use dogeos_protocol_types::MAX_L2_BASE_FEE;
 pub use dogeos_protocol_types::PRE_TSUKI_V2_MAX_L2_BASE_FEE;
 
 /// L2 base-fee overhead slot in the system config contract.
+///
+/// Slot 101 follows from `L2SystemConfig`'s OpenZeppelin 4.9 upgradeable layout: the
+/// `Initializable` flags (slot 0) and a 50-slot gap, then `_owner` (slot 51) and a 49-slot gap,
+/// so `baseFeeOverhead` is the first slot after 0..=100. It must match the L2 storage layout
+/// pinned in scroll-contracts (`storage-layouts/L2SystemConfig.json`), which CI checks; a layout
+/// change there, such as a move to namespaced storage, must update this constant.
 const L2_BASE_FEE_OVERHEAD_SLOT: U256 = U256::from_limbs([101, 0, 0, 0]);
 
 /// Default overhead when the system config contract has not initialized the slot.
@@ -113,6 +119,11 @@ where
 }
 
 /// Reads the L2 base-fee overhead from the system config contract in `db`.
+///
+/// `db` is the pre-state of the block being built, so an overhead change made in block N takes
+/// effect from block N+1. For that one block, the congestion part of the base fee is the
+/// parent's base fee minus the new overhead (clamped at zero), so it absorbs the difference;
+/// after that the normal EIP-1559 dynamics apply.
 ///
 /// A zero (or unset) slot means the default overhead. This is a pure read: it loads the system
 /// config account and its slot 101 into the state it is given and changes nothing, which is

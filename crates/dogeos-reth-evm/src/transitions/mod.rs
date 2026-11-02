@@ -20,6 +20,9 @@ use revm::{
 /// preserving the revert information accumulated by [`revm::database::State`].
 ///
 /// Returns the committed state update so the executor can forward it to state hooks.
+///
+/// `storage` must not yield the same slot twice. Each entry is inserted into the account's
+/// storage map, so a repeated slot would silently keep only the last value yielded.
 fn commit_account_update<DB>(
     db: &mut DB,
     address: Address,
