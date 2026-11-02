@@ -6,6 +6,7 @@ use dogeos_protocol_types::{ScrollTransactionInfo, ScrollTxEnvelope};
 use serde::{Deserialize, Serialize};
 
 mod request;
+pub(crate) use request::BLOB_REQUEST_UNSUPPORTED;
 pub use request::ScrollTransactionRequest;
 
 /// RPC transaction preserving Scroll L1-message JSON fields.
