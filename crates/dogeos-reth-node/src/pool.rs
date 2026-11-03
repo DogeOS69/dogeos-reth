@@ -1033,6 +1033,117 @@ mod tests {
     }
 
     #[test]
+    fn feynman_pool_applies_execution_rules_for_eip7702_and_calldata_floor() {
+        use alloy_consensus::TxEip7702;
+        use alloy_eips::eip7702::{Authorization, SignedAuthorization};
+
+        let sender = Address::repeat_byte(0x23);
+        let delegated_sender = Address::repeat_byte(0x24);
+        let delegate = Address::repeat_byte(0x25);
+        let delegation_code = Bytes::from([&[0xef, 0x01, 0x00][..], delegate.as_slice()].concat());
+        let mut genesis = DOGEOS_CHIKYU.genesis().clone();
+        genesis.alloc.extend([
+            (
+                sender,
+                GenesisAccount {
+                    balance: U256::MAX,
+                    ..Default::default()
+                },
+            ),
+            (
+                delegated_sender,
+                GenesisAccount {
+                    balance: U256::MAX,
+                    code: Some(delegation_code),
+                    ..Default::default()
+                },
+            ),
+        ]);
+        let chain_spec = Arc::new(
+            DogeosChainSpecBuilder::dogeos_chikyu()
+                .genesis(genesis)
+                .build(DOGEOS_CHIKYU.config),
+        );
+        let chain_id = chain_spec.chain().id();
+        let provider = initialize_native_v2(Arc::clone(&chain_spec));
+        let snapshot = DogeosL1FeeSnapshot::load_latest(&provider).unwrap();
+        let inner = EthTransactionValidatorBuilder::new(
+            provider,
+            ScrollEvmConfig::dogeos(Arc::clone(&chain_spec)),
+        )
+        .no_eip4844()
+        .build(InMemoryBlobStore::default());
+        let validator = DogeosTransactionValidator::new(inner, snapshot);
+        let pooled = |signed: ScrollTransactionSigned, sender| {
+            let encoded_length = signed.encode_2718_len();
+            DogeosPooledTransaction::new(Recovered::new_unchecked(signed, sender), encoded_length)
+        };
+
+        let authorization = Authorization {
+            chain_id: U256::from(chain_id),
+            address: delegate,
+            nonce: 0,
+        };
+        let set_code = pooled(
+            Signed::new_unchecked(
+                TxEip7702 {
+                    chain_id,
+                    gas_limit: 100_000,
+                    max_fee_per_gas: 1,
+                    to: sender,
+                    authorization_list: vec![SignedAuthorization::new_unchecked(
+                        authorization,
+                        0,
+                        U256::from(1),
+                        U256::from(1),
+                    )],
+                    ..Default::default()
+                },
+                Signature::test_signature(),
+                B256::repeat_byte(0x23),
+            )
+            .into(),
+            sender,
+        );
+        let outcome = validator.validate_one(TransactionOrigin::External, set_code);
+        assert!(outcome.is_valid(), "{outcome:?}");
+
+        let outcome = validator.validate_one(
+            TransactionOrigin::External,
+            transaction(delegated_sender, chain_id, 0x24),
+        );
+        assert!(outcome.is_valid(), "{outcome:?}");
+
+        // 100 nonzero bytes: 22,600 intrinsic gas, 25,000 EIP-7623 floor.
+        let calldata = |gas_limit, hash_byte| {
+            pooled(
+                Signed::new_unchecked(
+                    TxLegacy {
+                        chain_id: Some(chain_id),
+                        gas_price: 1,
+                        gas_limit,
+                        to: TxKind::Call(Address::ZERO),
+                        input: Bytes::from(vec![0xff; 100]),
+                        ..Default::default()
+                    },
+                    Signature::test_signature(),
+                    B256::repeat_byte(hash_byte),
+                )
+                .into(),
+                sender,
+            )
+        };
+        assert!(matches!(
+            validator
+                .validate_one(TransactionOrigin::External, calldata(22_600, 0x25))
+                .as_invalid(),
+            Some(InvalidPoolTransactionError::IntrinsicGasTooLow)
+        ));
+        let outcome = validator.validate_one(TransactionOrigin::External, calldata(25_000, 0x26));
+        assert!(outcome.is_valid(), "{outcome:?}");
+    }
+
+    #[test]
     fn restart_hydrates_persisted_native_v2_head_before_next_callback() {
         use revm::{database::BundleState, state::AccountInfo};
         use revm_scroll::l1block::{
