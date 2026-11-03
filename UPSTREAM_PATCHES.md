@@ -21,7 +21,7 @@ production dependency.
 - Upstream source commit: `3a136fc8c38221e060cbc31ef5c5fa345cf0e17a`
 - DogeOS backport commit: `90e08ba40` in `DogeOS69/reth`
 - Stack base revision: `5235056be94c584edce6ba7900f163aaa9b8cda0`
-- Selected stack tag: `tsuki-v0.12` (`bb3122afa33df077840b7e303a84d9b0dc6841ef`)
+- Selected stack tag: `tsuki-v0.13` (`09c6b809af6d7c2da35f48dd125924e8da793553`)
 - Generic rationale: successful RocksDB transactions and batch commits must enable WAL sync so
   acknowledged writes survive a host crash. The patch contains no DogeOS protocol behavior and
   does not change storage encodings.
@@ -62,7 +62,7 @@ scripts/audit-rocksdb-durability.sh
 - Upstream merge commit: `62808bd060e4c7398e3fb6df93881950b1433b18`
 - DogeOS patch PR: `DogeOS69/reth#5`
 - DogeOS behavior commit: `04e5c6ff415a3e8d1e299d6419b3b31ac88f3a8e`
-- Selected stack tag: `tsuki-v0.12` (`bb3122afa33df077840b7e303a84d9b0dc6841ef`)
+- Selected stack tag: `tsuki-v0.13` (`09c6b809af6d7c2da35f48dd125924e8da793553`)
 - Generic rationale: EIP-3607 rejects a sender only when the account contains nonempty code.
   Native Storage V2 represents an explicitly empty genesis `code` value as
   `Some(KECCAK_EMPTY)`, which must remain eligible to send transactions. The change preserves
@@ -77,7 +77,7 @@ scripts/audit-rocksdb-durability.sh
 
 ## Devnet P2P, RPC and reorg hardening
 
-- Selected stack: `tsuki-v0.12` at `bb3122afa33df077840b7e303a84d9b0dc6841ef`.
+- Selected stack: `tsuki-v0.13` at `09c6b809af6d7c2da35f48dd125924e8da793553`.
 - Generic rationale: bound peer/RPC resource use and preserve canonical-state and
   trie correctness during reorgs. These backports add no DogeOS protocol rules.
 - Coverage: the linked PRs record the focused regression tests and upstream-port
@@ -113,7 +113,7 @@ The standalone node retains the DogeOS-owned EVM dependency used by the
 oracle:
 
 ```toml
-revm-scroll = { git = "https://github.com/DogeOS69/dogeos-revm.git", tag = "tsuki-v0.12", default-features = false }
+revm-scroll = { git = "https://github.com/DogeOS69/dogeos-revm.git", tag = "tsuki-v0.13", default-features = false }
 ```
 
 `revm-scroll` is a required DogeOS dependency, not an upstream Reth patch. Its
@@ -130,12 +130,12 @@ replacement `dogeos-revm` revision and its parity evidence here.
 The spike evaluated `chore/upgrade-revm-v36` revision
 `1b87ecf17af029ac2f39e8ad362f3503ff2f4583`, observed on 2026-08-02. That
 branch was merged into the canonical `dogeos` branch (PRs #16/#17) and deleted;
-`Cargo.toml` and `Cargo.lock` now pin `tsuki-v0.12` at
-`4633937125b70088bb12a214356cddb24cde18d0` on `dogeos`. This retains the
+`Cargo.toml` and `Cargo.lock` now pin `tsuki-v0.13` at
+`516ff663b2fb2503dba8ef6b0d667f16334ac05a` on `dogeos`. This retains the
 Veridise 10098 upfront-balance fix, removal of the optional L1 fee buffer and
 TsukiV2, and adds PRs #23–27: spec documentation, fallible spec-name parsing,
 central precompile addresses, unit-explicit L1 fee helpers and the transfer
-precompile's receiver-overflow guard. The BLOCKHASH optimization (#22) is excluded.
+precompile's receiver-overflow guard. The release also includes the BLOCKHASH optimization (#22) and execution-assumption fixes (#28).
 The locked graph retains one REVM 36.0.0 and one alloy-evm 0.30.0 instance.
 The exact audit and reproduction commands are in `DEPENDENCY_AUDIT.md`.
 
