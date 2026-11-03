@@ -264,16 +264,27 @@ pub struct DogeosTransactionValidator<Client, Tx, Evm> {
     admission_check: Option<AdmissionCheck<Tx>>,
 }
 
-impl<Client, Tx, Evm> DogeosTransactionValidator<Client, Tx, Evm>
-where
-    Client: ChainSpecProvider<ChainSpec: DogeosHardforks>,
-{
+/// Turns on Reth's Prague pool rules for every DogeOS chain.
+///
+/// DogeOS execution never runs below Feynman, which already enables EIP-7702 and the EIP-7623
+/// calldata floor, but the chain spec keeps its Ethereum baseline at Shanghai. Reth's validator
+/// gates EIP-7702 admission, delegated senders and the calldata floor on Prague, so without this
+/// the pool rejects transactions that execution accepts and admits ones it rejects. Reth's head
+/// callback only ever sets the flag, so setting it once at construction is enough.
+fn enable_prague_pool_rules<Client, Tx, Evm>(inner: &EthTransactionValidator<Client, Tx, Evm>) {
+    inner
+        .fork_tracker()
+        .prague
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+impl<Client, Tx, Evm> DogeosTransactionValidator<Client, Tx, Evm> {
     /// Constructs a production validator from a fully hydrated snapshot.
     pub fn new(
         inner: EthTransactionValidator<Client, Tx, Evm>,
         snapshot: DogeosL1FeeSnapshot,
     ) -> Self {
-        apply_feynman_transaction_rules(&inner);
+        enable_prague_pool_rules(&inner);
         Self {
             inner,
             l1_fee_cache: RwLock::new(DogeosL1FeeCache::Ready(Arc::new(snapshot))),
@@ -284,7 +295,7 @@ where
 
     /// Constructs a development-mode validator with L1 fee checking explicitly disabled.
     pub fn disabled(inner: EthTransactionValidator<Client, Tx, Evm>) -> Self {
-        apply_feynman_transaction_rules(&inner);
+        enable_prague_pool_rules(&inner);
         Self {
             inner,
             l1_fee_cache: RwLock::new(DogeosL1FeeCache::Disabled),
@@ -292,31 +303,7 @@ where
             admission_check: None,
         }
     }
-}
 
-/// Enables Reth's Prague pool rules once DogeOS Feynman is active at the pool's tip.
-///
-/// DogeOS execution enables EIP-7702 and the EIP-7623 calldata floor at Feynman, but the chain
-/// spec keeps its Ethereum baseline at Shanghai. Reth's validator gates EIP-7702 admission,
-/// delegated senders and the calldata floor on Prague, so without this the pool rejects
-/// transactions that execution accepts. The flag only ever moves from inactive to active.
-fn apply_feynman_transaction_rules<Client, Tx, Evm>(
-    inner: &EthTransactionValidator<Client, Tx, Evm>,
-) where
-    Client: ChainSpecProvider<ChainSpec: DogeosHardforks>,
-{
-    let fork_tracker = inner.fork_tracker();
-    if inner
-        .chain_spec()
-        .is_feynman_active_at_timestamp(fork_tracker.tip_timestamp())
-    {
-        fork_tracker
-            .prague
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-    }
-}
-
-impl<Client, Tx, Evm> DogeosTransactionValidator<Client, Tx, Evm> {
     /// Installs the bounded code witness simulation used after the inexpensive pool checks.
     /// A failed simulation rejects admission as a retryable, state-dependent error.
     pub fn with_admission_check(
@@ -619,7 +606,6 @@ where
 
     fn on_new_head_block(&self, block: &SealedBlock<Self::Block>) {
         self.inner.on_new_head_block(block);
-        apply_feynman_transaction_rules(&self.inner);
     }
 }
 
@@ -912,44 +898,30 @@ mod tests {
     }
 
     #[test]
-    fn head_callback_enables_prague_pool_rules_when_feynman_activates() {
-        use dogeos_chainspec::DogeosChainSpecBuilder;
-        use dogeos_hardforks::{DogeosHardfork, ForkCondition};
+    fn constructors_enable_prague_pool_rules_without_ethereum_prague() {
+        use reth_chainspec::EthereumHardforks;
 
-        let activation = DOGEOS_CHIKYU.genesis().timestamp + 10;
-        let chain_spec = Arc::new(
-            DogeosChainSpecBuilder::dogeos_chikyu()
-                .with_fork(
-                    DogeosHardfork::Feynman,
-                    ForkCondition::Timestamp(activation),
-                )
-                .build(DOGEOS_CHIKYU.config),
-        );
-        let provider = provider(Arc::clone(&chain_spec));
-        let inner = EthTransactionValidatorBuilder::new(
-            provider.clone(),
-            ScrollEvmConfig::dogeos(Arc::clone(&chain_spec)),
-        )
-        .no_eip4844()
-        .build(InMemoryBlobStore::default());
-        let validator: DogeosTransactionValidator<_, DogeosPooledTransaction, _> =
-            DogeosTransactionValidator::disabled(inner);
-        let prague = || validator.inner.fork_tracker().is_prague_activated();
-        assert!(!prague());
+        let inner = || {
+            let provider = provider(DOGEOS_CHIKYU.clone());
+            EthTransactionValidatorBuilder::new(
+                provider,
+                ScrollEvmConfig::dogeos(DOGEOS_CHIKYU.clone()),
+            )
+            .no_eip4844()
+            .build(InMemoryBlobStore::default())
+        };
+        assert!(!DOGEOS_CHIKYU.is_prague_active_at_timestamp(u64::MAX));
+        assert!(!inner().fork_tracker().is_prague_activated());
 
-        let before = add_oracle_head(
-            &provider,
-            chain_spec.genesis_hash(),
-            1,
-            activation - 1,
-            U256::from(1),
-        );
-        validator.on_new_head_block(&before);
-        assert!(!prague());
-
-        let at = add_oracle_head(&provider, before.hash(), 2, activation, U256::from(1));
-        validator.on_new_head_block(&at);
-        assert!(prague());
+        let provider = provider(DOGEOS_CHIKYU.clone());
+        let snapshot = DogeosL1FeeSnapshot::load_latest(&provider).unwrap();
+        let production: DogeosTransactionValidator<_, DogeosPooledTransaction, _> =
+            DogeosTransactionValidator::new(inner(), snapshot);
+        let development: DogeosTransactionValidator<_, DogeosPooledTransaction, _> =
+            DogeosTransactionValidator::disabled(inner());
+        for validator in [&production, &development] {
+            assert!(validator.inner.fork_tracker().is_prague_activated());
+        }
     }
 
     #[test]

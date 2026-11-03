@@ -1033,30 +1033,33 @@ mod tests {
     }
 
     #[test]
-    fn feynman_pool_applies_execution_rules_for_eip7702_and_calldata_floor() {
+    fn pool_applies_execution_rules_for_eip7702_and_calldata_floor() {
         use alloy_consensus::TxEip7702;
         use alloy_eips::eip7702::{Authorization, SignedAuthorization};
+        use reth_chainspec::EthereumHardforks;
+        use reth_transaction_pool::error::Eip7702PoolTransactionError;
+        use revm::bytecode::Bytecode;
 
         let sender = Address::repeat_byte(0x23);
         let delegated_sender = Address::repeat_byte(0x24);
         let delegate = Address::repeat_byte(0x25);
-        let delegation_code = Bytes::from([&[0xef, 0x01, 0x00][..], delegate.as_slice()].concat());
+        let contract_sender = Address::repeat_byte(0x26);
+        let funded = |code: Option<Bytes>| GenesisAccount {
+            balance: U256::MAX,
+            code,
+            ..Default::default()
+        };
         let mut genesis = DOGEOS_CHIKYU.genesis().clone();
         genesis.alloc.extend([
-            (
-                sender,
-                GenesisAccount {
-                    balance: U256::MAX,
-                    ..Default::default()
-                },
-            ),
+            (sender, funded(None)),
             (
                 delegated_sender,
-                GenesisAccount {
-                    balance: U256::MAX,
-                    code: Some(delegation_code),
-                    ..Default::default()
-                },
+                funded(Some(Bytecode::new_eip7702(delegate).original_bytes())),
+            ),
+            // PUSH1 0: ordinary contract code, not an EIP-7702 delegation.
+            (
+                contract_sender,
+                funded(Some(Bytes::from_static(&[0x60, 0x00]))),
             ),
         ]);
         let chain_spec = Arc::new(
@@ -1064,55 +1067,90 @@ mod tests {
                 .genesis(genesis)
                 .build(DOGEOS_CHIKYU.config),
         );
+        // The pool enables these rules itself; Ethereum Prague stays unscheduled.
+        assert!(!chain_spec.is_prague_active_at_timestamp(u64::MAX));
         let chain_id = chain_spec.chain().id();
         let provider = initialize_native_v2(Arc::clone(&chain_spec));
         let snapshot = DogeosL1FeeSnapshot::load_latest(&provider).unwrap();
+        let execution_client = provider.clone();
+        let simulation_client = provider.clone();
+        let simulation_evm = ScrollEvmConfig::dogeos(Arc::clone(&chain_spec));
         let inner = EthTransactionValidatorBuilder::new(
             provider,
             ScrollEvmConfig::dogeos(Arc::clone(&chain_spec)),
         )
         .no_eip4844()
         .build(InMemoryBlobStore::default());
-        let validator = DogeosTransactionValidator::new(inner, snapshot);
+        // Same admission path as the production pool builder.
+        let validator = DogeosTransactionValidator::new(inner, snapshot).with_admission_check(
+            move |transaction| {
+                validate_code_witness(
+                    &simulation_client,
+                    &simulation_evm,
+                    transaction,
+                    Default::default(),
+                )
+                .map_err(|error| Box::new(error) as Box<dyn std::error::Error + Send + Sync>)
+            },
+        );
+        let validate =
+            |transaction| validator.validate_one(TransactionOrigin::External, transaction);
         let pooled = |signed: ScrollTransactionSigned, sender| {
             let encoded_length = signed.encode_2718_len();
             DogeosPooledTransaction::new(Recovered::new_unchecked(signed, sender), encoded_length)
         };
 
-        let authorization = Authorization {
-            chain_id: U256::from(chain_id),
-            address: delegate,
-            nonce: 0,
-        };
-        let set_code = pooled(
-            Signed::new_unchecked(
-                TxEip7702 {
-                    chain_id,
-                    gas_limit: 100_000,
-                    max_fee_per_gas: 1,
-                    to: sender,
-                    authorization_list: vec![SignedAuthorization::new_unchecked(
-                        authorization,
-                        0,
-                        U256::from(1),
-                        U256::from(1),
-                    )],
-                    ..Default::default()
-                },
-                Signature::test_signature(),
-                B256::repeat_byte(0x23),
+        let authorization = SignedAuthorization::new_unchecked(
+            Authorization {
+                chain_id: U256::from(chain_id),
+                address: delegate,
+                nonce: 0,
+            },
+            0,
+            U256::from(1),
+            U256::from(1),
+        );
+        let set_code = |gas_limit, authorization_list, hash_byte| {
+            pooled(
+                Signed::new_unchecked(
+                    TxEip7702 {
+                        chain_id,
+                        gas_limit,
+                        max_fee_per_gas: 1,
+                        to: sender,
+                        authorization_list,
+                        ..Default::default()
+                    },
+                    Signature::test_signature(),
+                    B256::repeat_byte(hash_byte),
+                )
+                .into(),
+                sender,
             )
-            .into(),
-            sender,
-        );
-        let outcome = validator.validate_one(TransactionOrigin::External, set_code);
+        };
+        // 21,000 base plus 25,000 per authorization.
+        let outcome = validate(set_code(46_000, vec![authorization.clone()], 0x30));
         assert!(outcome.is_valid(), "{outcome:?}");
+        assert!(matches!(
+            validate(set_code(45_999, vec![authorization], 0x31)).as_invalid(),
+            Some(InvalidPoolTransactionError::IntrinsicGasTooLow)
+        ));
+        assert!(matches!(
+            validate(set_code(46_000, vec![], 0x32)).as_invalid(),
+            Some(InvalidPoolTransactionError::Eip7702(
+                Eip7702PoolTransactionError::MissingEip7702AuthorizationList
+            ))
+        ));
 
-        let outcome = validator.validate_one(
-            TransactionOrigin::External,
-            transaction(delegated_sender, chain_id, 0x24),
-        );
+        // EIP-3607 is relaxed only for delegation code.
+        let outcome = validate(transaction(delegated_sender, chain_id, 0x33));
         assert!(outcome.is_valid(), "{outcome:?}");
+        assert!(matches!(
+            validate(transaction(contract_sender, chain_id, 0x34)).as_invalid(),
+            Some(InvalidPoolTransactionError::Consensus(
+                InvalidTransactionError::SignerAccountHasBytecode
+            ))
+        ));
 
         // 100 nonzero bytes: 22,600 intrinsic gas, 25,000 EIP-7623 floor.
         let calldata = |gas_limit, hash_byte| {
@@ -1133,14 +1171,34 @@ mod tests {
                 sender,
             )
         };
-        assert!(matches!(
-            validator
-                .validate_one(TransactionOrigin::External, calldata(22_600, 0x25))
-                .as_invalid(),
-            Some(InvalidPoolTransactionError::IntrinsicGasTooLow)
-        ));
-        let outcome = validator.validate_one(TransactionOrigin::External, calldata(25_000, 0x26));
+        for gas_limit in [22_600, 24_999] {
+            assert!(matches!(
+                validate(calldata(gas_limit, 0x35)).as_invalid(),
+                Some(InvalidPoolTransactionError::IntrinsicGasTooLow)
+            ));
+        }
+        let outcome = validate(calldata(25_000, 0x36));
         assert!(outcome.is_valid(), "{outcome:?}");
+
+        // Execution draws the same lines, so the pool never rejects what the EVM accepts.
+        let execute = |transaction| {
+            validate_code_witness(
+                &execution_client,
+                &ScrollEvmConfig::dogeos(Arc::clone(&chain_spec)),
+                &transaction,
+                Default::default(),
+            )
+        };
+        let error = execute(calldata(24_999, 0x37)).unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                dogeos_reth_txpool::CodeWitnessValidationError::Indeterminate(message)
+                    if message.contains("floor")
+            ),
+            "{error:?}"
+        );
+        assert!(execute(calldata(25_000, 0x38)).is_ok());
     }
 
     #[test]

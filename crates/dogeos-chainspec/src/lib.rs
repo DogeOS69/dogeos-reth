@@ -381,6 +381,28 @@ mod tests {
     }
 
     #[test]
+    fn ethereum_baseline_never_passes_shanghai() {
+        // DogeOS forks own every rule after Shanghai; the transaction pool enables Prague's pool
+        // rules itself. A scheduled Ethereum fork would silently change both.
+        let mut genesis: Genesis =
+            serde_json::from_str(include_str!("../res/genesis/dogeos.json")).unwrap();
+        genesis.config.cancun_time = Some(0);
+        genesis.config.prague_time = Some(0);
+        genesis.config.osaka_time = Some(0);
+        let custom = DogeosChainSpec::from_custom_genesis(genesis);
+        for spec in [&**DOGEOS_MAINNET, &**DOGEOS_CHIKYU, &**DOGEOS_DEV, &custom] {
+            assert!(spec.is_shanghai_active_at_timestamp(0));
+            for fork in [
+                EthereumHardfork::Cancun,
+                EthereumHardfork::Prague,
+                EthereumHardfork::Osaka,
+            ] {
+                assert_eq!(spec.ethereum_fork_activation(fork), ForkCondition::Never);
+            }
+        }
+    }
+
+    #[test]
     fn custom_genesis_rejects_unknown_scroll_fields() {
         for document in [
             include_str!("../res/genesis/dogeos.json"),
