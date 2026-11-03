@@ -5,7 +5,10 @@ use crate::{
     FromTxWithCompressionInfo, ScrollDefaultPrecompilesFactory, ScrollEvm, ScrollEvmFactory,
     ScrollPrecompilesFactory, ScrollTransactionIntoTxEnv, ToTxWithCompressionInfo,
     system_caller::ScrollSystemCaller,
-    transitions::{apply_feynman_hard_fork, apply_galileo_v2_hard_fork, apply_tsuki_hard_fork},
+    transitions::{
+        apply_feynman_hard_fork, apply_galileo_v2_hard_fork, apply_tsuki_hard_fork,
+        apply_withdrawal_queue_upgrade,
+    },
 };
 
 use alloc::{boxed::Box, format, vec::Vec};
@@ -220,6 +223,19 @@ where
             let state = apply_tsuki_hard_fork(self.evm.db_mut()).map_err(|err| {
                 BlockExecutionError::msg(format!("error occurred at Tsuki fork: {err:?}"))
             })?;
+            self.system_caller.on_pre_block_state(&state);
+        }
+
+        // replace the withdrawal queue code on a network upgraded from a drained checkpoint.
+        if let Some(upgrade) = self.spec.chain_config().withdrawal_queue_upgrade {
+            let block = self.evm.block();
+            let number = block.number().to();
+            let tsuki_v2_active = self
+                .spec
+                .is_tsuki_v2_active_at_timestamp(block.timestamp().to());
+            let state =
+                apply_withdrawal_queue_upgrade(self.evm.db_mut(), number, tsuki_v2_active, upgrade)
+                    .map_err(BlockExecutionError::msg)?;
             self.system_caller.on_pre_block_state(&state);
         }
 

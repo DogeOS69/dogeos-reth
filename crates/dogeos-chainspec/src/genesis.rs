@@ -136,6 +136,20 @@ impl TryFrom<&OtherFields> for DogeosHardforkInfo {
     }
 }
 
+/// One-time replacement of the L2MessageQueue code on a network upgraded from a drained checkpoint.
+///
+/// At `block`, the queue must still run `legacy_code_hash` and hold the checkpoint's withdrawal
+/// root and next index in slots 0 and 1. Only its code is replaced; storage is kept, so the root
+/// becomes the seed of the new withdrawal hash chain.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WithdrawalQueueUpgrade {
+    pub block: u64,
+    pub legacy_code_hash: B256,
+    pub seed_root: B256,
+    pub next_message_index: u64,
+}
+
 /// DogeOS sequencer configuration encoded under the inherited `scroll` genesis key.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", from = "ScrollChainConfigJson")]
@@ -143,6 +157,8 @@ pub struct ScrollChainConfig {
     pub fee_vault_address: Option<Address>,
     pub max_tx_payload_bytes_per_block: usize,
     pub l1_config: L1Config,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub withdrawal_queue_upgrade: Option<WithdrawalQueueUpgrade>,
 }
 
 /// Strict input schema including recognized metadata from published l2geth genesis documents.
@@ -155,6 +171,7 @@ struct ScrollChainConfigJson {
     fee_vault_address: Option<Address>,
     max_tx_payload_bytes_per_block: usize,
     l1_config: L1Config,
+    withdrawal_queue_upgrade: Option<WithdrawalQueueUpgrade>,
     #[serde(rename = "useZktrie")]
     _use_zktrie: Option<bool>,
     #[serde(rename = "maxTxPerBlock")]
@@ -171,6 +188,7 @@ impl From<ScrollChainConfigJson> for ScrollChainConfig {
             fee_vault_address: config.fee_vault_address,
             max_tx_payload_bytes_per_block: config.max_tx_payload_bytes_per_block,
             l1_config: config.l1_config,
+            withdrawal_queue_upgrade: config.withdrawal_queue_upgrade,
         }
     }
 }
@@ -193,6 +211,7 @@ impl ScrollChainConfig {
             fee_vault_address: Some(SCROLL_FEE_VAULT_ADDRESS),
             max_tx_payload_bytes_per_block: MAX_TX_PAYLOAD_BYTES_PER_BLOCK,
             l1_config,
+            withdrawal_queue_upgrade: None,
         }
     }
 
@@ -288,6 +307,22 @@ mod tests {
         let config = ScrollChainConfig::dev();
         let value = serde_json::to_value(config).unwrap();
         assert!(value.get("l1DataFeeBufferCheck").is_none());
+        let fields: OtherFields =
+            serde_json::from_value(serde_json::json!({ "scroll": value })).unwrap();
+        assert_eq!(ScrollChainConfig::try_from(&fields).unwrap(), config);
+    }
+
+    #[test]
+    fn withdrawal_queue_upgrade_round_trips() {
+        let mut config = ScrollChainConfig::dev();
+        config.withdrawal_queue_upgrade = Some(WithdrawalQueueUpgrade {
+            block: 2374,
+            legacy_code_hash: B256::repeat_byte(0x11),
+            seed_root: B256::repeat_byte(0x22),
+            next_message_index: 1173,
+        });
+        let value = serde_json::to_value(config).unwrap();
+        assert_eq!(value["withdrawalQueueUpgrade"]["nextMessageIndex"], 1173);
         let fields: OtherFields =
             serde_json::from_value(serde_json::json!({ "scroll": value })).unwrap();
         assert_eq!(ScrollChainConfig::try_from(&fields).unwrap(), config);
