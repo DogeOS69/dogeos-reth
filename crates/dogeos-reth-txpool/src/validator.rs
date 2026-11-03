@@ -925,6 +925,38 @@ mod tests {
     }
 
     #[test]
+    fn prague_pool_rules_stay_on_across_new_heads() {
+        let provider = provider(DOGEOS_CHIKYU.clone());
+        let initial = DogeosL1FeeSnapshot::load_latest(&provider).unwrap();
+        let production = validator(provider.clone(), initial.clone());
+        let development: DogeosTransactionValidator<_, DogeosPooledTransaction, _> =
+            DogeosTransactionValidator::disabled(
+                EthTransactionValidatorBuilder::new(
+                    provider.clone(),
+                    ScrollEvmConfig::dogeos(DOGEOS_CHIKYU.clone()),
+                )
+                .no_eip4844()
+                .build(InMemoryBlobStore::default()),
+            );
+
+        let mut parent = initial.head_hash();
+        for number in 1..=2 {
+            let head = add_oracle_head(
+                &provider,
+                parent,
+                number,
+                initial.timestamp() + number,
+                U256::from(number),
+            );
+            for validator in [&production, &development] {
+                validator.on_new_head_block(&head);
+                assert!(validator.inner.fork_tracker().is_prague_activated());
+            }
+            parent = head.hash();
+        }
+    }
+
+    #[test]
     fn moving_head_retry_exhaustion_is_typed_and_fail_closed() {
         let provider = provider(DOGEOS_CHIKYU.clone());
         let initial = DogeosL1FeeSnapshot::load_latest(&provider).unwrap();
