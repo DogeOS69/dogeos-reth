@@ -264,12 +264,27 @@ pub struct DogeosTransactionValidator<Client, Tx, Evm> {
     admission_check: Option<AdmissionCheck<Tx>>,
 }
 
+/// Turns on Reth's Prague pool rules for every DogeOS chain.
+///
+/// DogeOS execution never runs below Feynman, which already enables EIP-7702 and the EIP-7623
+/// calldata floor, but the chain spec keeps its Ethereum baseline at Shanghai. Reth's validator
+/// gates EIP-7702 admission, delegated senders and the calldata floor on Prague, so without this
+/// the pool rejects transactions that execution accepts and admits ones it rejects. Reth's head
+/// callback only ever sets the flag, so setting it once at construction is enough.
+fn enable_prague_pool_rules<Client, Tx, Evm>(inner: &EthTransactionValidator<Client, Tx, Evm>) {
+    inner
+        .fork_tracker()
+        .prague
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 impl<Client, Tx, Evm> DogeosTransactionValidator<Client, Tx, Evm> {
     /// Constructs a production validator from a fully hydrated snapshot.
     pub fn new(
         inner: EthTransactionValidator<Client, Tx, Evm>,
         snapshot: DogeosL1FeeSnapshot,
     ) -> Self {
+        enable_prague_pool_rules(&inner);
         Self {
             inner,
             l1_fee_cache: RwLock::new(DogeosL1FeeCache::Ready(Arc::new(snapshot))),
@@ -279,7 +294,8 @@ impl<Client, Tx, Evm> DogeosTransactionValidator<Client, Tx, Evm> {
     }
 
     /// Constructs a development-mode validator with L1 fee checking explicitly disabled.
-    pub const fn disabled(inner: EthTransactionValidator<Client, Tx, Evm>) -> Self {
+    pub fn disabled(inner: EthTransactionValidator<Client, Tx, Evm>) -> Self {
+        enable_prague_pool_rules(&inner);
         Self {
             inner,
             l1_fee_cache: RwLock::new(DogeosL1FeeCache::Disabled),
@@ -879,6 +895,65 @@ mod tests {
         validator.on_new_head_block(&block);
 
         assert_eq!(cache_snapshot(&validator), initial);
+    }
+
+    #[test]
+    fn constructors_enable_prague_pool_rules_without_ethereum_prague() {
+        use reth_chainspec::EthereumHardforks;
+
+        let inner = || {
+            let provider = provider(DOGEOS_CHIKYU.clone());
+            EthTransactionValidatorBuilder::new(
+                provider,
+                ScrollEvmConfig::dogeos(DOGEOS_CHIKYU.clone()),
+            )
+            .no_eip4844()
+            .build(InMemoryBlobStore::default())
+        };
+        assert!(!DOGEOS_CHIKYU.is_prague_active_at_timestamp(u64::MAX));
+        assert!(!inner().fork_tracker().is_prague_activated());
+
+        let provider = provider(DOGEOS_CHIKYU.clone());
+        let snapshot = DogeosL1FeeSnapshot::load_latest(&provider).unwrap();
+        let production: DogeosTransactionValidator<_, DogeosPooledTransaction, _> =
+            DogeosTransactionValidator::new(inner(), snapshot);
+        let development: DogeosTransactionValidator<_, DogeosPooledTransaction, _> =
+            DogeosTransactionValidator::disabled(inner());
+        for validator in [&production, &development] {
+            assert!(validator.inner.fork_tracker().is_prague_activated());
+        }
+    }
+
+    #[test]
+    fn prague_pool_rules_stay_on_across_new_heads() {
+        let provider = provider(DOGEOS_CHIKYU.clone());
+        let initial = DogeosL1FeeSnapshot::load_latest(&provider).unwrap();
+        let production = validator(provider.clone(), initial.clone());
+        let development: DogeosTransactionValidator<_, DogeosPooledTransaction, _> =
+            DogeosTransactionValidator::disabled(
+                EthTransactionValidatorBuilder::new(
+                    provider.clone(),
+                    ScrollEvmConfig::dogeos(DOGEOS_CHIKYU.clone()),
+                )
+                .no_eip4844()
+                .build(InMemoryBlobStore::default()),
+            );
+
+        let mut parent = initial.head_hash();
+        for number in 1..=2 {
+            let head = add_oracle_head(
+                &provider,
+                parent,
+                number,
+                initial.timestamp() + number,
+                U256::from(number),
+            );
+            for validator in [&production, &development] {
+                validator.on_new_head_block(&head);
+                assert!(validator.inner.fork_tracker().is_prague_activated());
+            }
+            parent = head.hash();
+        }
     }
 
     #[test]
