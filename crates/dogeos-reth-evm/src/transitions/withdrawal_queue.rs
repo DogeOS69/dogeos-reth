@@ -26,8 +26,9 @@ const HASH_CHAIN_QUEUE_BYTECODE_HASH: B256 =
 /// Replaces the L2MessageQueue code at `upgrade.block`, after checking the account against the
 /// drained checkpoint.
 ///
-/// Earlier blocks are untouched, and later blocks are a no-op once the code is replaced. Any
-/// mismatch with the checkpoint fails the block.
+/// Earlier blocks are untouched, and later blocks are a no-op once the code is replaced. The
+/// replacement requires TsukiV2 at `upgrade.block`. Any mismatch with the checkpoint fails the
+/// block, and so does a later block that still runs the legacy code.
 ///
 /// Returns the committed state update so the executor can forward it to state hooks.
 pub(crate) fn apply_withdrawal_queue_upgrade<DB>(
@@ -188,48 +189,47 @@ mod tests {
     #[test]
     fn rejects_a_queue_that_does_not_match_the_checkpoint() {
         let other_code = Bytecode::new_raw(bytes!("00"));
-        for (name, mut db, block, tsuki_v2_active) in [
+        for (reason, mut db, block, tsuki_v2_active) in [
             (
-                "late",
+                "not replaced at block",
                 drained_queue(legacy_code(), ROOT, NEXT_INDEX),
                 BLOCK + 1,
                 true,
             ),
             (
-                "no TsukiV2",
+                "requires TsukiV2",
                 drained_queue(legacy_code(), ROOT, NEXT_INDEX),
                 BLOCK,
                 false,
             ),
             (
-                "wrong code",
+                "code hash is",
                 drained_queue(other_code, ROOT, NEXT_INDEX),
                 BLOCK,
                 true,
             ),
             (
-                "wrong root",
+                "holds root 0x0000",
                 drained_queue(legacy_code(), B256::ZERO, NEXT_INDEX),
                 BLOCK,
                 true,
             ),
             (
-                "wrong index",
+                "next index 1174,",
                 drained_queue(legacy_code(), ROOT, NEXT_INDEX + 1),
                 BLOCK,
                 true,
             ),
             (
-                "missing account",
+                "account is missing",
                 CacheDB::new(EmptyDB::default()),
                 BLOCK,
                 true,
             ),
         ] {
-            assert!(
-                apply_withdrawal_queue_upgrade(&mut db, block, tsuki_v2_active, upgrade()).is_err(),
-                "{name}"
-            );
+            let error = apply_withdrawal_queue_upgrade(&mut db, block, tsuki_v2_active, upgrade())
+                .unwrap_err();
+            assert!(error.contains(reason), "{error}");
         }
     }
 
