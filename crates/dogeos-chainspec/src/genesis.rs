@@ -224,10 +224,20 @@ impl TryFrom<&OtherFields> for ScrollChainConfig {
     type Error = serde_json::Error;
 
     fn try_from(others: &OtherFields) -> Result<Self, Self::Error> {
-        match others.get_deserialized::<Self>("scroll") {
-            Some(config) => config,
-            None => Err(serde_json::Error::missing_field("scroll")),
+        let config = match others.get_deserialized::<Self>("scroll") {
+            Some(config) => config?,
+            None => return Err(serde_json::Error::missing_field("scroll")),
+        };
+        // Genesis is never executed, so a replacement there could never happen.
+        if config
+            .withdrawal_queue_upgrade
+            .is_some_and(|upgrade| upgrade.block == 0)
+        {
+            return Err(serde_json::Error::custom(
+                "`withdrawalQueueUpgrade.block` must be at least 1",
+            ));
         }
+        Ok(config)
     }
 }
 
@@ -329,7 +339,10 @@ mod tests {
             serde_json::from_value(serde_json::json!({ "scroll": value })).unwrap();
         assert_eq!(ScrollChainConfig::try_from(&fields).unwrap(), config);
 
-        // A typo or a missing value rejects the genesis instead of skipping the upgrade.
+        // A typo, a missing value or an unreachable block rejects the genesis instead of skipping
+        // or stalling the upgrade.
+        let mut genesis_block = value.clone();
+        genesis_block["withdrawalQueueUpgrade"]["block"] = serde_json::json!(0);
         let mut unknown = value.clone();
         unknown["withdrawalQueueUpgrade"]["seedRot"] = serde_json::json!(B256::ZERO);
         let mut missing = value;
@@ -337,7 +350,7 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("seedRoot");
-        for value in [unknown, missing] {
+        for value in [genesis_block, unknown, missing] {
             let fields: OtherFields =
                 serde_json::from_value(serde_json::json!({ "scroll": value })).unwrap();
             assert!(ScrollChainConfig::try_from(&fields).is_err());

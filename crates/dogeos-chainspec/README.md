@@ -72,9 +72,13 @@ This is a configuration excerpt; retain the other `scroll` fields.
 
 - At `block`, TsukiV2 must be active and the queue must still hold the old code, root and
   index; only its code is replaced, so the root seeds the new hash chain. Any mismatch fails
-  the block, and so does a later block that still runs the old code.
-- All four fields are required, `block` and `nextMessageIndex` are JSON numbers, and unknown
-  fields are rejected. Binaries that predate this setting reject a genesis that carries it.
+  the block, and so does a later block that still runs the old code. If the queue already
+  runs the hash-chain code, nothing is checked or changed.
+- The root and index must be the queue's state at the parent of `block`, so no withdrawal may
+  be appended to the old queue before `block`.
+- All four fields are required, `block` and `nextMessageIndex` are JSON numbers, and
+  `block: 0` and unknown fields are rejected. Binaries that predate this setting reject a
+  genesis that carries it.
 - All sequencers, followers, RPC nodes and the stateless verifier's chain settings must use
   the same values. The setting does not change the genesis block hash or the fork ID.
 
