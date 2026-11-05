@@ -111,8 +111,9 @@ where
     }
 
     /// Quotes `request` against one state snapshot: gas, nonce, base fee and oracle state all come
-    /// from the state `block` resolves to, read once. Gas is estimated, or with `estimate_gas`
-    /// false taken from the request or the RPC gas cap.
+    /// from the state `block` resolves to, read once. `pending` is quoted on top of the latest
+    /// block, an immutable snapshot, with the sender's pooled transactions counted in the nonce.
+    /// Gas is estimated, or with `estimate_gas` false taken from the request or the RPC gas cap.
     async fn estimate_fee(
         &self,
         request: ScrollTransactionRequest,
@@ -121,14 +122,21 @@ where
     ) -> Result<DogeosFeeEstimate, ErrorObjectOwned> {
         let eth = &self.priority_fee.eth;
         let suggested_tip = self.priority_fee.suggested_priority_fee().await?;
+        let pending = block.is_pending();
+        let block = if pending { BlockId::latest() } else { block };
         let (evm_env, state_block) = eth.evm_env_at(block).await.map_err(Into::into)?;
         let chain_id = evm_env.cfg_env.chain_id;
         let timestamp = evm_env.block_env.timestamp().saturating_to::<u64>();
         let number = evm_env.block_env.number().saturating_to::<u64>();
-        let pending_base_fee = evm_env.block_env.basefee();
         let from = request.as_ref().from.unwrap_or_default();
         let requested_gas = request.as_ref().gas;
-        let estimate_request = request.clone();
+        // Estimate without fee fields, as wallets call `eth_estimateGas`: with them, gas is capped
+        // by what the sender can afford, and a sender who cannot pay is not an error here.
+        let mut estimate_request = request.clone().into_inner();
+        estimate_request.gas_price = None;
+        estimate_request.max_fee_per_gas = None;
+        estimate_request.max_priority_fee_per_gas = None;
+        let estimate_request: ScrollTransactionRequest = estimate_request.into();
         let (gas_limit, nonce, base_fee, spec, l1_block_info) = eth
             .spawn_blocking_io_fut(async move |eth| {
                 let state = eth.state_at_block_id(state_block).await?;
@@ -144,7 +152,7 @@ where
                     .account_nonce(&from)
                     .map_err(Eth::Error::from_eth_err)?
                     .unwrap_or_default();
-                if block.is_pending()
+                if pending
                     && let Some(pooled) = eth
                         .pool()
                         .get_highest_consecutive_transaction_by_sender(from, nonce)
@@ -154,24 +162,18 @@ where
 
                 let chain_spec = eth.provider().chain_spec();
                 let mut state = StateProviderDatabase::new(&state);
-                // A locally built pending block has no sealed header; its environment already
-                // carries its base fee. Otherwise predict the next block's from the resolved one.
-                let base_fee = if state_block.is_pending() {
-                    pending_base_fee
-                } else {
-                    let header = eth
-                        .provider()
-                        .sealed_header_by_id(state_block)
-                        .map_err(Eth::Error::from_eth_err)?
-                        .ok_or_else(|| {
-                            Eth::Error::from_eth_err(EthApiError::HeaderNotFound(state_block))
-                        })?;
-                    ScrollBaseFeeProvider::new(chain_spec.clone())
-                        .predict_next_block_base_fee(&mut state, header.header())
-                        .map_err(|error| {
-                            Eth::Error::from_eth_err(EthApiError::Internal(error.into()))
-                        })?
-                };
+                let header = eth
+                    .provider()
+                    .sealed_header_by_id(state_block)
+                    .map_err(Eth::Error::from_eth_err)?
+                    .ok_or_else(|| {
+                        Eth::Error::from_eth_err(EthApiError::HeaderNotFound(state_block))
+                    })?;
+                let base_fee = ScrollBaseFeeProvider::new(chain_spec.clone())
+                    .predict_next_block_base_fee(&mut state, header.header())
+                    .map_err(|error| {
+                        Eth::Error::from_eth_err(EthApiError::Internal(error.into()))
+                    })?;
                 let spec = spec_id_at_timestamp_and_number(timestamp, number, chain_spec.as_ref());
                 let l1_block_info = L1BlockInfo::try_fetch(&mut state, spec).map_err(|error| {
                     Eth::Error::from_eth_err(EthApiError::Internal(error.into()))
