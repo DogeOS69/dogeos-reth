@@ -317,7 +317,7 @@ mod tests {
         let config = ScrollChainConfig::dev();
         let value = serde_json::to_value(config).unwrap();
         assert!(value.get("l1DataFeeBufferCheck").is_none());
-        // Binaries without the upgrade setting reject unknown fields, so an unset one is omitted.
+        // Binaries that predate the upgrade setting reject unknown fields, so an unset one is omitted.
         assert!(value.get("withdrawalQueueUpgrade").is_none());
         let fields: OtherFields =
             serde_json::from_value(serde_json::json!({ "scroll": value })).unwrap();
@@ -350,10 +350,15 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("seedRoot");
-        for value in [genesis_block, unknown, missing] {
+        for (value, reason) in [
+            (genesis_block, "must be at least 1"),
+            (unknown, "unknown field `seedRot`"),
+            (missing, "missing field `seedRoot`"),
+        ] {
             let fields: OtherFields =
                 serde_json::from_value(serde_json::json!({ "scroll": value })).unwrap();
-            assert!(ScrollChainConfig::try_from(&fields).is_err());
+            let error = ScrollChainConfig::try_from(&fields).unwrap_err();
+            assert!(error.to_string().contains(reason), "{error}");
         }
     }
 
