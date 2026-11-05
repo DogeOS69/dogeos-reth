@@ -1,7 +1,7 @@
 use crate::DogeosPriorityFeeApi;
 use alloy_consensus::SignableTransaction;
 use alloy_eips::{BlockId, eip2718::Encodable2718};
-use alloy_primitives::{Address, Signature, TxKind, U64, U256, b256};
+use alloy_primitives::{Address, Signature, TxKind, U64, U256, keccak256};
 use alloy_rpc_types_eth::TransactionRequest;
 use dogeos_chainspec::DogeosChainSpec;
 use dogeos_protocol_types::{ScrollTxEnvelope, ScrollTypedTransaction};
@@ -35,15 +35,6 @@ use serde::Serialize;
 /// Replaying ten days of testnet oracle updates through the mainnet update policy, the fee per
 /// byte rose by at most 22% over 60 seconds in 99% of windows.
 pub const L1_DATA_FEE_BUFFER_PERCENT: u64 = 25;
-
-/// Placeholder signature used to price an unsigned request. Its `r` and `s` are random bytes, so
-/// they do not compress, and their first byte is non-zero, so they encode at full length.
-const PLACEHOLDER_SIGNATURE_R: U256 = U256::from_be_bytes(
-    b256!("c8264941029a5ee8e7f78f11eb580a31962338367297a8c28802035d80b38b6d").0,
-);
-const PLACEHOLDER_SIGNATURE_S: U256 = U256::from_be_bytes(
-    b256!("da6ca367a96c07acd5a9b49cb12912e41058d2316a0f9ab3f92486aac5f39213").0,
-);
 
 /// Result of `dogeos_estimateFee`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -98,34 +89,48 @@ where
             let mut params = params.sequence();
             let request = params.next::<ScrollTransactionRequest>()?;
             let block = params.optional_next::<BlockId>()?.unwrap_or_default();
-            api.estimate_fee(request, block).await
+            api.estimate_fee(request, block, true).await
         })?;
-        // Scroll l2geth's method: same name, parameters, default block and result type.
+        // Scroll l2geth's method: same name, parameters, default block and result type. Like
+        // l2geth it does not execute the transaction, and prices it with the request's gas or,
+        // when absent, the RPC gas cap.
         module.register_async_method("scroll_estimateL1DataFee", |params, api, _| async move {
             let mut params = params.sequence();
             let request = params.next::<ScrollTransactionRequest>()?;
             let block = params
                 .optional_next::<BlockId>()?
                 .unwrap_or_else(BlockId::pending);
-            api.estimate_fee(request, block)
+            api.estimate_fee(request, block, false)
                 .await
                 .map(|estimate| U64::from(estimate.l1_data_fee.saturating_to::<u64>()))
         })?;
         Ok(module)
     }
 
+    /// Quotes `request` against one resolved block: gas, nonce, base fee and oracle state all come
+    /// from the state `block` resolves to once. Gas is estimated, or with `estimate_gas` false
+    /// taken from the request or the RPC gas cap.
     async fn estimate_fee(
         &self,
         request: ScrollTransactionRequest,
         block: BlockId,
+        estimate_gas: bool,
     ) -> Result<DogeosFeeEstimate, ErrorObjectOwned> {
         let eth = &self.priority_fee.eth;
-        let gas_limit = EstimateCall::estimate_gas_at(eth, request.clone(), block, None)
+        let (evm_env, state_block) = eth.evm_env_at(block).await.map_err(Into::into)?;
+        let gas_limit = if estimate_gas {
+            let (evm_env, request) = (evm_env.clone(), request.clone());
+            eth.spawn_blocking_io_fut(async move |eth| {
+                let state = eth.state_at_block_id(state_block).await?;
+                EstimateCall::estimate_gas_with(&eth, evm_env, request, state, None)
+            })
             .await
             .map_err(Into::into)?
-            .saturating_to::<u64>();
+            .saturating_to::<u64>()
+        } else {
+            request.as_ref().gas.unwrap_or_else(|| eth.call_gas_limit())
+        };
 
-        let (evm_env, state_block) = eth.evm_env_at(block).await.map_err(Into::into)?;
         let chain_spec = eth.provider().chain_spec();
         let header = eth
             .provider()
@@ -152,7 +157,14 @@ where
         let (max_fee, tip) = fill_fees(&mut request, base_fee, suggested_tip);
         if request.nonce.is_none() {
             let from = request.from.unwrap_or_default();
-            let nonce = LoadState::transaction_count(eth, from, Some(block))
+            // A pending quote counts the sender's pooled transactions, as
+            // `eth_getTransactionCount` does.
+            let at = if block.is_pending() {
+                block
+            } else {
+                state_block
+            };
+            let nonce = LoadState::transaction_count(eth, from, Some(at))
                 .await
                 .map_err(Into::into)?;
             request.nonce = Some(nonce.saturating_to());
@@ -231,9 +243,17 @@ fn l1_data_fee(
     )
 }
 
-/// Signs `transaction` with the placeholder signature.
+/// Signs `transaction` with a placeholder derived from its signing hash. Like a real signature it
+/// looks random to the compressor and cannot appear in the transaction's own payload, so it
+/// compresses no better than one. Its top bits are set so it encodes at full length.
 fn placeholder_signed(transaction: ScrollTypedTransaction) -> ScrollTxEnvelope {
-    let signature = Signature::new(PLACEHOLDER_SIGNATURE_R, PLACEHOLDER_SIGNATURE_S, true);
+    let hash = transaction.signature_hash();
+    let word = |tag: u8| {
+        let mut word = keccak256([hash.as_slice(), &[tag]].concat()).0;
+        word[0] |= 0x80;
+        U256::from_be_bytes(word)
+    };
+    let signature = Signature::new(word(0), word(1), true);
     transaction.into_signed(signature).into()
 }
 
@@ -265,7 +285,7 @@ mod tests {
     use super::*;
     use alloy_consensus::{TxEip1559, TxEip2930, TxEip7702, TxLegacy};
     use alloy_eips::{eip2930::AccessListItem, eip7702::Authorization};
-    use alloy_primitives::{Bytes, keccak256};
+    use alloy_primitives::Bytes;
 
     fn noise(seed: u64, len: usize) -> Vec<u8> {
         (0..len.div_ceil(32) as u64)
@@ -354,6 +374,19 @@ mod tests {
                 ..Default::default()
             }),
         ]
+    }
+
+    /// A payload that repeats the placeholder of the same transaction without that payload: the
+    /// closest a caller can get to making the placeholder compress better than a real signature.
+    fn adversarial(transaction: ScrollTypedTransaction) -> ScrollTypedTransaction {
+        let signature = placeholder_signed(transaction.clone()).signature().unwrap();
+        let mut input = signature.r().to_be_bytes::<32>().to_vec();
+        input.extend(signature.s().to_be_bytes::<32>());
+        let ScrollTypedTransaction::Eip1559(mut transaction) = transaction else {
+            unreachable!()
+        };
+        transaction.input = input.into();
+        ScrollTypedTransaction::Eip1559(transaction)
     }
 
     fn compressed_size(transaction: &ScrollTxEnvelope) -> usize {
@@ -447,7 +480,9 @@ mod tests {
     /// signatures, so the quote is never below the fee charged, and at most a byte above it.
     #[test]
     fn placeholder_signature_bounds_real_signatures() {
-        for transaction in corpus() {
+        let mut corpus = corpus();
+        corpus.push(adversarial(corpus[0].clone()));
+        for transaction in corpus {
             let placeholder = placeholder_signed(transaction.clone());
             let placeholder_size = compressed_size(&placeholder);
             for i in 0..1_000u64 {
