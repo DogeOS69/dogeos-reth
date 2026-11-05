@@ -307,6 +307,8 @@ mod tests {
         let config = ScrollChainConfig::dev();
         let value = serde_json::to_value(config).unwrap();
         assert!(value.get("l1DataFeeBufferCheck").is_none());
+        // Binaries without the upgrade setting reject unknown fields, so an unset one is omitted.
+        assert!(value.get("withdrawalQueueUpgrade").is_none());
         let fields: OtherFields =
             serde_json::from_value(serde_json::json!({ "scroll": value })).unwrap();
         assert_eq!(ScrollChainConfig::try_from(&fields).unwrap(), config);

@@ -66,7 +66,7 @@ where
     }
     let mut read_slot = |slot| {
         db.storage(L2_MESSAGE_QUEUE_ADDRESS, slot)
-            .map_err(|err| format!("failed to read withdrawal queue slot {slot}: {err:?}"))
+            .map_err(|err| format!("failed to read the withdrawal queue slot {slot}: {err:?}"))
     };
     let root = read_slot(WITHDRAW_TRIE_ROOT_SLOT)?;
     let next_index = read_slot(NEXT_MESSAGE_INDEX_SLOT)?;
