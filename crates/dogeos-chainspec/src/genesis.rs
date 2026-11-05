@@ -326,6 +326,20 @@ mod tests {
         let fields: OtherFields =
             serde_json::from_value(serde_json::json!({ "scroll": value })).unwrap();
         assert_eq!(ScrollChainConfig::try_from(&fields).unwrap(), config);
+
+        // A typo or a missing value rejects the genesis instead of skipping the upgrade.
+        let mut unknown = value.clone();
+        unknown["withdrawalQueueUpgrade"]["seedRot"] = serde_json::json!(B256::ZERO);
+        let mut missing = value;
+        missing["withdrawalQueueUpgrade"]
+            .as_object_mut()
+            .unwrap()
+            .remove("seedRoot");
+        for value in [unknown, missing] {
+            let fields: OtherFields =
+                serde_json::from_value(serde_json::json!({ "scroll": value })).unwrap();
+            assert!(ScrollChainConfig::try_from(&fields).is_err());
+        }
     }
 
     #[test]

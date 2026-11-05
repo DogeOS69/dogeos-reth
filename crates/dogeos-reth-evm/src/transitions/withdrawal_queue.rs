@@ -74,8 +74,11 @@ where
         || next_index != U256::from(upgrade.next_message_index)
     {
         return Err(format!(
-            "the withdrawal queue holds root {root:#x} and next index {next_index}, expected the              checkpoint's {} and {}",
-            upgrade.seed_root, upgrade.next_message_index
+            "the withdrawal queue holds root {} and next index {next_index}, expected the \
+             checkpoint's {} and {}",
+            B256::from(root),
+            upgrade.seed_root,
+            upgrade.next_message_index
         ));
     }
 
@@ -213,6 +216,12 @@ mod tests {
             (
                 "wrong index",
                 drained_queue(legacy_code(), ROOT, NEXT_INDEX + 1),
+                BLOCK,
+                true,
+            ),
+            (
+                "missing account",
+                CacheDB::new(EmptyDB::default()),
                 BLOCK,
                 true,
             ),
