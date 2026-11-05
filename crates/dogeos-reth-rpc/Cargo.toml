@@ -38,8 +38,13 @@ reth-storage-api = { workspace = true, features = ["std"] }
 reth-tasks.workspace = true
 reqwest.workspace = true
 revm.workspace = true
+revm-scroll.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [features]
 default = ["std"]
