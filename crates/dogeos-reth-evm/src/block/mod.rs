@@ -666,9 +666,9 @@ mod tests {
         assert!(keys.contains(&NATIVE_DOGE_TOKEN_ADDRESS));
     }
 
-    /// The executor takes the block number and the TsukiV2 check from the block it runs, and the
-    /// replaced code reaches the state hook, the witness and the bundle like the fork transitions
-    /// do.
+    /// The executor takes the block number and the TsukiV2 check from the block it runs. The
+    /// replaced code reaches the state hook and the bundle like the fork transitions do, and the
+    /// checkpoint reads reach the witness.
     #[test]
     fn executor_replaces_the_withdrawal_queue_at_the_configured_block_with_tsuki_v2() {
         let legacy = Bytecode::new_raw(Bytes::from_static(&[0x60, 0x80]));
