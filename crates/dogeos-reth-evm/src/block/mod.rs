@@ -680,6 +680,13 @@ mod tests {
             next_message_index: 3,
         });
         let spec = Arc::new(spec);
+        let legacy_info = AccountInfo {
+            balance: U256::from(7),
+            nonce: 3,
+            code_hash: legacy.hash_slow(),
+            code: Some(legacy.clone()),
+            ..Default::default()
+        };
         let execute = |timestamp: u64| {
             let mut state = State::builder()
                 .with_database(EmptyDB::default())
@@ -687,11 +694,7 @@ mod tests {
                 .build();
             state.insert_account_with_storage(
                 L2_MESSAGE_QUEUE_ADDRESS,
-                AccountInfo {
-                    code_hash: legacy.hash_slow(),
-                    code: Some(legacy.clone()),
-                    ..Default::default()
-                },
+                legacy_info.clone(),
                 PlainStorage::from_iter([
                     (WITHDRAW_TRIE_ROOT_SLOT, U256::from_be_bytes(root.0)),
                     (NEXT_MESSAGE_INDEX_SLOT, U256::from(3)),
@@ -749,6 +752,13 @@ mod tests {
             db.bundle_state.contracts[&code_hash].original_bytes(),
             mainnet_queue
         );
+        // A reorg across the upgrade block restores the legacy account from the bundle.
+        let queue = &db.bundle_state.state[&L2_MESSAGE_QUEUE_ADDRESS];
+        let original = queue.original_info.as_ref().unwrap();
+        assert_eq!(original.code_hash, legacy.hash_slow());
+        assert_eq!((original.balance, original.nonce), (U256::from(7), 3));
+        let info = queue.info.as_ref().unwrap();
+        assert_eq!((info.balance, info.nonce), (U256::from(7), 3));
     }
 
     #[test]
