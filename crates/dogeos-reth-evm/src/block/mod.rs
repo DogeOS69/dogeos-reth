@@ -487,8 +487,8 @@ mod tests {
             result::{ExecutionResult, HaltReason, ResultAndState, ResultGas},
         },
         database::{
-            EmptyDB, State,
-            states::{bundle_state::BundleRetention, plain_account::PlainStorage},
+            CacheDB, EmptyDB, State,
+            states::{bundle_state::BundleRetention, reverts::AccountInfoRevert},
         },
         state::{Account, AccountInfo, EvmState},
     };
@@ -667,7 +667,8 @@ mod tests {
     }
 
     /// The executor takes the block number and the TsukiV2 check from the block it runs, and the
-    /// replaced code reaches the state hook and the bundle like the fork transitions do.
+    /// replaced code reaches the state hook, the witness and the bundle like the fork transitions
+    /// do.
     #[test]
     fn executor_replaces_the_withdrawal_queue_at_the_configured_block_with_tsuki_v2() {
         let legacy = Bytecode::new_raw(Bytes::from_static(&[0x60, 0x80]));
@@ -680,26 +681,28 @@ mod tests {
             next_message_index: 3,
         });
         let spec = Arc::new(spec);
+        // The node's and the guest's databases return the code hash without the code.
         let legacy_info = AccountInfo {
             balance: U256::from(7),
             nonce: 3,
             code_hash: legacy.hash_slow(),
-            code: Some(legacy.clone()),
             ..Default::default()
         };
         let execute = |timestamp: u64| {
-            let mut state = State::builder()
-                .with_database(EmptyDB::default())
+            // Seed the backing database, so only the executor's reads fill the witness cache.
+            let mut db = CacheDB::new(EmptyDB::default());
+            db.insert_account_info(L2_MESSAGE_QUEUE_ADDRESS, legacy_info.clone());
+            for (slot, value) in [
+                (WITHDRAW_TRIE_ROOT_SLOT, U256::from_be_bytes(root.0)),
+                (NEXT_MESSAGE_INDEX_SLOT, U256::from(3)),
+            ] {
+                db.insert_account_storage(L2_MESSAGE_QUEUE_ADDRESS, slot, value)
+                    .unwrap();
+            }
+            let state = State::builder()
+                .with_database(db)
                 .with_bundle_update()
                 .build();
-            state.insert_account_with_storage(
-                L2_MESSAGE_QUEUE_ADDRESS,
-                legacy_info.clone(),
-                PlainStorage::from_iter([
-                    (WITHDRAW_TRIE_ROOT_SLOT, U256::from_be_bytes(root.0)),
-                    (NEXT_MESSAGE_INDEX_SLOT, U256::from(3)),
-                ]),
-            );
             let block = BlockEnv {
                 number: U256::from(10),
                 timestamp: U256::from(timestamp),
@@ -740,6 +743,16 @@ mod tests {
             .unwrap();
         let code_hash = alloy_primitives::keccak256(&mainnet_queue);
         let db = executor.evm_mut().db_mut();
+        // The guest checks the queue account and both checkpoint slots; it installs the new code
+        // itself.
+        let record = ExecutionWitnessRecord::from_executed_state(db);
+        let hashed_address = alloy_primitives::keccak256(L2_MESSAGE_QUEUE_ADDRESS);
+        assert!(record.hashed_state.accounts.contains_key(&hashed_address));
+        let storage = &record.hashed_state.storages[&hashed_address].storage;
+        for slot in [WITHDRAW_TRIE_ROOT_SLOT, NEXT_MESSAGE_INDEX_SLOT] {
+            assert!(storage.contains_key(&alloy_primitives::keccak256(B256::from(slot))));
+        }
+
         let info = db.basic(L2_MESSAGE_QUEUE_ADDRESS).unwrap().unwrap();
         assert_eq!(info.code_hash, code_hash);
         assert_eq!(
@@ -747,17 +760,22 @@ mod tests {
                 .unwrap(),
             U256::from_be_bytes(root.0)
         );
+
         db.merge_transitions(BundleRetention::Reverts);
         assert_eq!(
             db.bundle_state.contracts[&code_hash].original_bytes(),
             mainnet_queue
         );
-        // A reorg across the upgrade block restores the legacy account from the bundle.
-        let queue = &db.bundle_state.state[&L2_MESSAGE_QUEUE_ADDRESS];
-        let original = queue.original_info.as_ref().unwrap();
-        assert_eq!(original.code_hash, legacy.hash_slow());
-        assert_eq!((original.balance, original.nonce), (U256::from(7), 3));
-        let info = queue.info.as_ref().unwrap();
+        // Unwinding the upgrade block puts the legacy account back.
+        let revert = db.bundle_state.reverts[0]
+            .iter()
+            .find(|(address, _)| *address == L2_MESSAGE_QUEUE_ADDRESS)
+            .map(|(_, revert)| &revert.account);
+        assert_eq!(revert, Some(&AccountInfoRevert::RevertTo(legacy_info)));
+        let info = db.bundle_state.state[&L2_MESSAGE_QUEUE_ADDRESS]
+            .info
+            .as_ref()
+            .unwrap();
         assert_eq!((info.balance, info.nonce), (U256::from(7), 3));
     }
 
