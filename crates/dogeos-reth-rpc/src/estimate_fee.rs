@@ -2,7 +2,10 @@ use crate::DogeosPriorityFeeApi;
 use alloy_consensus::SignableTransaction;
 use alloy_eips::{BlockId, eip2718::Encodable2718};
 use alloy_primitives::{Address, Signature, TxKind, U64, U256, keccak256};
-use alloy_rpc_types_eth::TransactionRequest;
+use alloy_rpc_types_eth::{
+    TransactionRequest,
+    state::{AccountOverride, StateOverride},
+};
 use dogeos_chainspec::DogeosChainSpec;
 use dogeos_protocol_types::{ScrollTxEnvelope, ScrollTypedTransaction};
 use dogeos_reth_evm::{
@@ -110,10 +113,11 @@ where
         Ok(module)
     }
 
-    /// Quotes `request` against one state snapshot: gas, nonce, base fee and oracle state all come
-    /// from the state `block` resolves to, read once. `pending` is quoted on top of the latest
-    /// block, an immutable snapshot, with the sender's pooled transactions counted in the nonce.
-    /// Gas is estimated, or with `estimate_gas` false taken from the request or the RPC gas cap.
+    /// Quotes `request` against one state snapshot: nonce, base fee, oracle state and estimated gas
+    /// all come from the state `block` resolves to, read once. `pending` is quoted on top of the
+    /// latest block, an immutable snapshot, with the sender's pooled transactions counted in the
+    /// nonce. Gas is estimated, or with `estimate_gas` false taken from the request or the RPC gas
+    /// cap.
     async fn estimate_fee(
         &self,
         request: ScrollTransactionRequest,
@@ -128,30 +132,18 @@ where
         let chain_id = evm_env.cfg_env.chain_id;
         let timestamp = evm_env.block_env.timestamp().saturating_to::<u64>();
         let number = evm_env.block_env.number().saturating_to::<u64>();
-        let from = request.as_ref().from.unwrap_or_default();
-        let requested_gas = request.as_ref().gas;
-        // Estimate without fee fields, as wallets call `eth_estimateGas`: with them, gas is capped
-        // by what the sender can afford, and a sender who cannot pay is not an error here.
-        let mut estimate_request = request.clone().into_inner();
-        estimate_request.gas_price = None;
-        estimate_request.max_fee_per_gas = None;
-        estimate_request.max_priority_fee_per_gas = None;
-        let estimate_request: ScrollTransactionRequest = estimate_request.into();
-        let (gas_limit, nonce, base_fee, spec, l1_block_info) = eth
+        let (request, base_fee, max_fee, tip, spec, l1_block_info) = eth
             .spawn_blocking_io_fut(async move |eth| {
                 let state = eth.state_at_block_id(state_block).await?;
-                let gas_limit = if estimate_gas {
-                    EstimateCall::estimate_gas_with(&eth, evm_env, estimate_request, &state, None)?
-                        .saturating_to::<u64>()
-                } else {
-                    requested_gas.unwrap_or_else(|| eth.call_gas_limit())
-                };
-                // A pending quote counts the sender's pooled transactions, as
-                // `eth_getTransactionCount` does.
-                let mut nonce = state
-                    .account_nonce(&from)
+                let mut request = request.into_inner();
+                let from = request.from.unwrap_or_default();
+                let account = state
+                    .basic_account(&from)
                     .map_err(Eth::Error::from_eth_err)?
                     .unwrap_or_default();
+                // A pending quote counts the sender's pooled transactions, as
+                // `eth_getTransactionCount` does.
+                let mut nonce = account.nonce;
                 if pending
                     && let Some(pooled) = eth
                         .pool()
@@ -161,7 +153,7 @@ where
                 }
 
                 let chain_spec = eth.provider().chain_spec();
-                let mut state = StateProviderDatabase::new(&state);
+                let mut database = StateProviderDatabase::new(&state);
                 let header = eth
                     .provider()
                     .sealed_header_by_id(state_block)
@@ -170,25 +162,56 @@ where
                         Eth::Error::from_eth_err(EthApiError::HeaderNotFound(state_block))
                     })?;
                 let base_fee = ScrollBaseFeeProvider::new(chain_spec.clone())
-                    .predict_next_block_base_fee(&mut state, header.header())
+                    .predict_next_block_base_fee(&mut database, header.header())
                     .map_err(|error| {
                         Eth::Error::from_eth_err(EthApiError::Internal(error.into()))
                     })?;
+                let base_fee = U256::from(base_fee);
                 let spec = spec_id_at_timestamp_and_number(timestamp, number, chain_spec.as_ref());
-                let l1_block_info = L1BlockInfo::try_fetch(&mut state, spec).map_err(|error| {
-                    Eth::Error::from_eth_err(EthApiError::Internal(error.into()))
-                })?;
-                Ok((gas_limit, nonce, base_fee, spec, l1_block_info))
+                let l1_block_info =
+                    L1BlockInfo::try_fetch(&mut database, spec).map_err(|error| {
+                        Eth::Error::from_eth_err(EthApiError::Internal(error.into()))
+                    })?;
+
+                let (max_fee, tip) = fill_fees(&mut request, base_fee, suggested_tip);
+                request.nonce.get_or_insert(nonce);
+                request.chain_id.get_or_insert(chain_id);
+                let gas_limit = if estimate_gas {
+                    // Execute the transaction as it will be sent: its gas price and nonce, so
+                    // `GASPRICE` and authorization nonces see what inclusion will. Top up the
+                    // sender's balance when it cannot cover the fees, since that is not an
+                    // error here.
+                    let cap = U256::from(eth.call_gas_limit());
+                    let needed = request
+                        .value
+                        .unwrap_or_default()
+                        .saturating_add(cap.saturating_mul(max_fee));
+                    let mut overrides = StateOverride::default();
+                    overrides.insert(
+                        from,
+                        AccountOverride::default()
+                            .with_nonce(request.nonce.unwrap_or(nonce))
+                            .with_balance(account.balance.max(needed)),
+                    );
+                    EstimateCall::estimate_gas_with(
+                        &eth,
+                        evm_env,
+                        request.clone().into(),
+                        &state,
+                        Some(overrides),
+                    )?
+                    .saturating_to::<u64>()
+                } else {
+                    request.gas.unwrap_or_else(|| eth.call_gas_limit())
+                };
+                request.gas = Some(gas_limit);
+                Ok((request, base_fee, max_fee, tip, spec, l1_block_info))
             })
             .await
             .map_err(Into::into)?;
 
-        let mut request = request.into_inner();
-        let base_fee = U256::from(base_fee);
-        let (max_fee, tip) = fill_fees(&mut request, base_fee, suggested_tip);
-        request.nonce.get_or_insert(nonce);
-        request.gas = Some(gas_limit);
-        request.chain_id.get_or_insert(chain_id);
+        let gas_limit = request.gas.unwrap_or_default();
+        let mut request = request;
         request.to.get_or_insert(TxKind::Create);
 
         let request: ScrollTransactionRequest = request.into();
