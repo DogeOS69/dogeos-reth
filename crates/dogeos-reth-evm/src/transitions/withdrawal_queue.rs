@@ -178,6 +178,16 @@ mod tests {
     }
 
     #[test]
+    fn leaves_a_queue_that_already_runs_the_hash_chain_code_alone() {
+        let hash_chain_code = Bytecode::new_raw(HASH_CHAIN_QUEUE_BYTECODE);
+        for block in [BLOCK, BLOCK + 1] {
+            let mut db = drained_queue(hash_chain_code.clone(), B256::ZERO, 0);
+            let state = apply_withdrawal_queue_upgrade(&mut db, block, false, upgrade()).unwrap();
+            assert!(state.is_empty());
+        }
+    }
+
+    #[test]
     fn leaves_blocks_before_the_checkpoint_alone() {
         let mut db = drained_queue(legacy_code(), ROOT, NEXT_INDEX);
         let state = apply_withdrawal_queue_upgrade(&mut db, BLOCK - 1, false, upgrade()).unwrap();

@@ -65,7 +65,7 @@ This is a configuration excerpt; retain the other `scroll` fields.
 
 | Field | Value |
 | --- | --- |
-| `block` | Block that replaces the code; at least 1, since genesis is never executed |
+| `block` | Block at which the code is replaced; at least 1, since genesis is never executed |
 | `legacyCodeHash` | Code hash of the old queue at the checkpoint |
 | `seedRoot` | Withdrawal root in the queue's slot 0 at the checkpoint |
 | `nextMessageIndex` | Next withdrawal index in the queue's slot 1 at the checkpoint |
@@ -75,7 +75,7 @@ This is a configuration excerpt; retain the other `scroll` fields.
   the block, and so does a later block that still runs the old code. If the queue already
   runs the hash-chain code, nothing is checked or changed.
 - The root and index must be the queue's state at the parent of `block`, so no withdrawal may
-  be appended to the old queue before `block`.
+  be appended to the old queue between the checkpoint and `block`.
 - All four fields are required, `block` and `nextMessageIndex` are JSON numbers, and
   `block: 0` and unknown fields are rejected. Binaries that predate this setting reject a
   genesis that carries it.
