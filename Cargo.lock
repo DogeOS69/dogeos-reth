@@ -3010,6 +3010,7 @@ dependencies = [
  "reth-rpc-eth-types",
  "reth-storage-api",
  "reth-tasks",
+ "reth-transaction-pool",
  "revm",
  "revm-scroll",
  "serde",

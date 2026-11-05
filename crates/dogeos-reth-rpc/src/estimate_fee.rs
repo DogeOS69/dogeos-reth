@@ -17,12 +17,14 @@ use reth_chainspec::ChainSpecProvider;
 use reth_errors::RethError;
 use reth_evm::FromTxWithEncoded;
 use reth_revm::database::StateProviderDatabase;
+use reth_rpc_eth_api::FromEthApiError;
 use reth_rpc_eth_api::{
     EthApiTypes, RpcNodeCoreExt,
     helpers::{LoadPendingBlock, LoadState, estimate::EstimateCall},
 };
 use reth_rpc_eth_types::EthApiError;
 use reth_storage_api::{BlockReaderIdExt, StateProviderFactory};
+use reth_transaction_pool::TransactionPool;
 use revm::context::{Block, TxEnv};
 use revm_scroll::{
     ScrollSpecId, ScrollTransaction,
@@ -108,9 +110,9 @@ where
         Ok(module)
     }
 
-    /// Quotes `request` against one resolved block: gas, nonce, base fee and oracle state all come
-    /// from the state `block` resolves to once. Gas is estimated, or with `estimate_gas` false
-    /// taken from the request or the RPC gas cap.
+    /// Quotes `request` against one state snapshot: gas, nonce, base fee and oracle state all come
+    /// from the state `block` resolves to, read once. Gas is estimated, or with `estimate_gas`
+    /// false taken from the request or the RPC gas cap.
     async fn estimate_fee(
         &self,
         request: ScrollTransactionRequest,
@@ -118,66 +120,73 @@ where
         estimate_gas: bool,
     ) -> Result<DogeosFeeEstimate, ErrorObjectOwned> {
         let eth = &self.priority_fee.eth;
+        let suggested_tip = self.priority_fee.suggested_priority_fee().await?;
         let (evm_env, state_block) = eth.evm_env_at(block).await.map_err(Into::into)?;
-        let gas_limit = if estimate_gas {
-            let (evm_env, request) = (evm_env.clone(), request.clone());
-            eth.spawn_blocking_io_fut(async move |eth| {
-                let state = eth.state_at_block_id(state_block).await?;
-                EstimateCall::estimate_gas_with(&eth, evm_env, request, state, None)
-            })
-            .await
-            .map_err(Into::into)?
-            .saturating_to::<u64>()
-        } else {
-            request.as_ref().gas.unwrap_or_else(|| eth.call_gas_limit())
-        };
-
-        let chain_spec = eth.provider().chain_spec();
-        let state = eth
-            .state_at_block_id(state_block)
-            .await
-            .map_err(Into::into)?;
-        let mut state = StateProviderDatabase::new(state);
-        // A locally built pending block has no sealed header; its environment already carries the
-        // base fee of the block it is. Otherwise predict the next block's from the resolved one.
-        let base_fee = if state_block.is_pending() {
-            evm_env.block_env.basefee()
-        } else {
-            let header = eth
-                .provider()
-                .sealed_header_by_id(state_block)
-                .map_err(|error| ErrorObjectOwned::from(EthApiError::from(error)))?
-                .ok_or_else(|| ErrorObjectOwned::from(EthApiError::HeaderNotFound(state_block)))?;
-            ScrollBaseFeeProvider::new(chain_spec.clone())
-                .predict_next_block_base_fee(&mut state, header.header())
-                .map_err(|error| ErrorObjectOwned::from(EthApiError::Internal(error.into())))?
-        };
+        let chain_id = evm_env.cfg_env.chain_id;
         let timestamp = evm_env.block_env.timestamp().saturating_to::<u64>();
         let number = evm_env.block_env.number().saturating_to::<u64>();
-        let spec = spec_id_at_timestamp_and_number(timestamp, number, chain_spec.as_ref());
-        let l1_block_info = L1BlockInfo::try_fetch(&mut state, spec)
-            .map_err(|error| ErrorObjectOwned::from(EthApiError::Internal(error.into())))?;
+        let pending_base_fee = evm_env.block_env.basefee();
+        let from = request.as_ref().from.unwrap_or_default();
+        let requested_gas = request.as_ref().gas;
+        let estimate_request = request.clone();
+        let (gas_limit, nonce, base_fee, spec, l1_block_info) = eth
+            .spawn_blocking_io_fut(async move |eth| {
+                let state = eth.state_at_block_id(state_block).await?;
+                let gas_limit = if estimate_gas {
+                    EstimateCall::estimate_gas_with(&eth, evm_env, estimate_request, &state, None)?
+                        .saturating_to::<u64>()
+                } else {
+                    requested_gas.unwrap_or_else(|| eth.call_gas_limit())
+                };
+                // A pending quote counts the sender's pooled transactions, as
+                // `eth_getTransactionCount` does.
+                let mut nonce = state
+                    .account_nonce(&from)
+                    .map_err(Eth::Error::from_eth_err)?
+                    .unwrap_or_default();
+                if block.is_pending()
+                    && let Some(pooled) = eth
+                        .pool()
+                        .get_highest_consecutive_transaction_by_sender(from, nonce)
+                {
+                    nonce = pooled.nonce().saturating_add(1);
+                }
+
+                let chain_spec = eth.provider().chain_spec();
+                let mut state = StateProviderDatabase::new(&state);
+                // A locally built pending block has no sealed header; its environment already
+                // carries its base fee. Otherwise predict the next block's from the resolved one.
+                let base_fee = if state_block.is_pending() {
+                    pending_base_fee
+                } else {
+                    let header = eth
+                        .provider()
+                        .sealed_header_by_id(state_block)
+                        .map_err(Eth::Error::from_eth_err)?
+                        .ok_or_else(|| {
+                            Eth::Error::from_eth_err(EthApiError::HeaderNotFound(state_block))
+                        })?;
+                    ScrollBaseFeeProvider::new(chain_spec.clone())
+                        .predict_next_block_base_fee(&mut state, header.header())
+                        .map_err(|error| {
+                            Eth::Error::from_eth_err(EthApiError::Internal(error.into()))
+                        })?
+                };
+                let spec = spec_id_at_timestamp_and_number(timestamp, number, chain_spec.as_ref());
+                let l1_block_info = L1BlockInfo::try_fetch(&mut state, spec).map_err(|error| {
+                    Eth::Error::from_eth_err(EthApiError::Internal(error.into()))
+                })?;
+                Ok((gas_limit, nonce, base_fee, spec, l1_block_info))
+            })
+            .await
+            .map_err(Into::into)?;
 
         let mut request = request.into_inner();
         let base_fee = U256::from(base_fee);
-        let suggested_tip = self.priority_fee.suggested_priority_fee().await?;
         let (max_fee, tip) = fill_fees(&mut request, base_fee, suggested_tip);
-        if request.nonce.is_none() {
-            let from = request.from.unwrap_or_default();
-            // A pending quote counts the sender's pooled transactions, as
-            // `eth_getTransactionCount` does.
-            let at = if block.is_pending() {
-                block
-            } else {
-                state_block
-            };
-            let nonce = LoadState::transaction_count(eth, from, Some(at))
-                .await
-                .map_err(Into::into)?;
-            request.nonce = Some(nonce.saturating_to());
-        }
+        request.nonce.get_or_insert(nonce);
         request.gas = Some(gas_limit);
-        request.chain_id.get_or_insert(evm_env.cfg_env.chain_id);
+        request.chain_id.get_or_insert(chain_id);
         request.to.get_or_insert(TxKind::Create);
 
         let request: ScrollTransactionRequest = request.into();
