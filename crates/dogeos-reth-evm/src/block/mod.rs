@@ -686,6 +686,7 @@ mod tests {
             balance: U256::from(7),
             nonce: 3,
             code_hash: legacy.hash_slow(),
+            code: None,
             ..Default::default()
         };
         let execute = |timestamp: u64| {

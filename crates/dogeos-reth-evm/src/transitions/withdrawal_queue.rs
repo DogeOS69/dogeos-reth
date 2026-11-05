@@ -103,14 +103,26 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{ScrollEvmFactory, ScrollTransactionIntoTxEnv, TX_L1_FEE_PRECISION_U256};
+    use alloy_evm::{Evm, EvmEnv, EvmFactory};
+    use alloy_primitives::{Address, TxKind, address, keccak256};
     use dogeos_chainspec::DOGEOS_MAINNET;
     use reth_chainspec::EthChainSpec;
-    use revm::database::{CacheDB, EmptyDB};
+    use revm::{
+        context::{
+            BlockEnv, CfgEnv, TxEnv,
+            result::{ExecutionResult, Output},
+        },
+        database::{CacheDB, EmptyDB},
+    };
+    use revm_scroll::ScrollSpecId;
 
     const BLOCK: u64 = 2374;
     const ROOT: B256 = B256::repeat_byte(0x51);
     const NEXT_INDEX: u64 = 1173;
     const OTHER_SLOT: U256 = U256::from_limbs([82, 0, 0, 0]);
+    const MESSENGER_SLOT: U256 = U256::from_limbs([83, 0, 0, 0]);
+    const MESSENGER: Address = address!("0000000000000000000000000000000000001001");
 
     fn legacy_code() -> Bytecode {
         Bytecode::new_raw(bytes!("6080604052"))
@@ -141,6 +153,7 @@ mod tests {
             (WITHDRAW_TRIE_ROOT_SLOT, U256::from_be_bytes(root.0)),
             (NEXT_MESSAGE_INDEX_SLOT, U256::from(next_index)),
             (OTHER_SLOT, U256::from(9)),
+            (MESSENGER_SLOT, U256::from_be_slice(MESSENGER.as_slice())),
         ] {
             db.insert_account_storage(L2_MESSAGE_QUEUE_ADDRESS, slot, value)
                 .unwrap();
@@ -175,6 +188,59 @@ mod tests {
         // Later blocks leave the replaced queue alone.
         let state = apply_withdrawal_queue_upgrade(&mut db, BLOCK + 1, true, upgrade()).unwrap();
         assert!(state.is_empty());
+    }
+
+    /// The messenger kept in storage appends the next withdrawal on top of the checkpoint root.
+    #[test]
+    fn the_replaced_queue_continues_the_checkpoint_chain() {
+        let mut db = drained_queue(legacy_code(), ROOT, NEXT_INDEX);
+        apply_withdrawal_queue_upgrade(&mut db, BLOCK, true, upgrade()).unwrap();
+
+        let message_hash = B256::repeat_byte(0xab);
+        // appendMessage(bytes32)
+        let mut data = vec![0x60, 0x0a, 0x2e, 0x77];
+        data.extend_from_slice(message_hash.as_slice());
+        let tx = ScrollTransactionIntoTxEnv::new(
+            TxEnv {
+                caller: MESSENGER,
+                kind: TxKind::Call(L2_MESSAGE_QUEUE_ADDRESS),
+                gas_limit: 1_000_000,
+                data: data.into(),
+                ..Default::default()
+            },
+            Some(Bytes::new()),
+            Some(TX_L1_FEE_PRECISION_U256),
+            Some(0),
+        );
+        let env = EvmEnv::new(
+            CfgEnv::new_with_spec(ScrollSpecId::TSUKI),
+            BlockEnv::default(),
+        );
+        let evm_factory: ScrollEvmFactory = ScrollEvmFactory::default();
+        let mut evm = evm_factory.create_evm(&mut db, env);
+        let result = evm.transact_commit(tx).unwrap();
+
+        let root = keccak256([ROOT.as_slice(), message_hash.as_slice()].concat());
+        match result {
+            ExecutionResult::Success {
+                output: Output::Call(output),
+                ..
+            } => assert_eq!(output.as_ref(), root.as_slice()),
+            result => panic!("appendMessage failed: {result:?}"),
+        }
+        let mut queue_slot = |slot| {
+            evm.db_mut()
+                .storage(L2_MESSAGE_QUEUE_ADDRESS, slot)
+                .unwrap()
+        };
+        assert_eq!(
+            queue_slot(WITHDRAW_TRIE_ROOT_SLOT),
+            U256::from_be_bytes(root.0)
+        );
+        assert_eq!(
+            queue_slot(NEXT_MESSAGE_INDEX_SLOT),
+            U256::from(NEXT_INDEX + 1)
+        );
     }
 
     #[test]
