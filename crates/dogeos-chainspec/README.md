@@ -74,7 +74,7 @@ This is a configuration excerpt; retain the other `scroll` fields.
   index; only its code is replaced, so the root seeds the new hash chain. Any mismatch fails
   the block, and so does a later block that still runs the old code.
 - All four fields are required, `block` and `nextMessageIndex` are JSON numbers, and unknown
-  fields are rejected. Binaries without this setting reject a genesis that carries it.
+  fields are rejected. Binaries that predate this setting reject a genesis that carries it.
 - All sequencers, followers, RPC nodes and the stateless verifier's chain settings must use
   the same values. The setting does not change the genesis block hash or the fork ID.
 
