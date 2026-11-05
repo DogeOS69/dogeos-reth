@@ -91,9 +91,10 @@ where
             let block = params.optional_next::<BlockId>()?.unwrap_or_default();
             api.estimate_fee(request, block, true).await
         })?;
-        // Scroll l2geth's method: same name, parameters, default block and result type. Like
-        // l2geth it does not execute the transaction, and prices it with the request's gas or,
-        // when absent, the RPC gas cap.
+        // Scroll l2geth's method: same name, parameters and default block, and a hex quantity
+        // that reads as l2geth's uint64 up to 2^64 but, unlike it, is not cut off above (the L1
+        // fee is capped at 2^96 since Tsuki). Like l2geth it does not execute the transaction,
+        // and prices it with the request's gas or, when absent, the RPC gas cap.
         module.register_async_method("scroll_estimateL1DataFee", |params, api, _| async move {
             let mut params = params.sequence();
             let request = params.next::<ScrollTransactionRequest>()?;
@@ -102,7 +103,7 @@ where
                 .unwrap_or_else(BlockId::pending);
             api.estimate_fee(request, block, false)
                 .await
-                .map(|estimate| U64::from(estimate.l1_data_fee.saturating_to::<u64>()))
+                .map(|estimate| estimate.l1_data_fee)
         })?;
         Ok(module)
     }
@@ -132,19 +133,25 @@ where
         };
 
         let chain_spec = eth.provider().chain_spec();
-        let header = eth
-            .provider()
-            .sealed_header_by_id(state_block)
-            .map_err(|error| ErrorObjectOwned::from(EthApiError::from(error)))?
-            .ok_or_else(|| ErrorObjectOwned::from(EthApiError::HeaderNotFound(state_block)))?;
         let state = eth
             .state_at_block_id(state_block)
             .await
             .map_err(Into::into)?;
         let mut state = StateProviderDatabase::new(state);
-        let base_fee = ScrollBaseFeeProvider::new(chain_spec.clone())
-            .predict_next_block_base_fee(&mut state, header.header())
-            .map_err(|error| ErrorObjectOwned::from(EthApiError::Internal(error.into())))?;
+        // A locally built pending block has no sealed header; its environment already carries the
+        // base fee of the block it is. Otherwise predict the next block's from the resolved one.
+        let base_fee = if state_block.is_pending() {
+            evm_env.block_env.basefee()
+        } else {
+            let header = eth
+                .provider()
+                .sealed_header_by_id(state_block)
+                .map_err(|error| ErrorObjectOwned::from(EthApiError::from(error)))?
+                .ok_or_else(|| ErrorObjectOwned::from(EthApiError::HeaderNotFound(state_block)))?;
+            ScrollBaseFeeProvider::new(chain_spec.clone())
+                .predict_next_block_base_fee(&mut state, header.header())
+                .map_err(|error| ErrorObjectOwned::from(EthApiError::Internal(error.into())))?
+        };
         let timestamp = evm_env.block_env.timestamp().saturating_to::<u64>();
         let number = evm_env.block_env.number().saturating_to::<u64>();
         let spec = spec_id_at_timestamp_and_number(timestamp, number, chain_spec.as_ref());
@@ -175,7 +182,16 @@ where
 
         let request: ScrollTransactionRequest = request.into();
         let transaction = request.build_typed_tx().map_err(|error| {
-            ErrorObjectOwned::owned(INVALID_PARAMS_CODE, error.to_string(), None::<()>)
+            let message = match error.to_string() {
+                message if message.contains("missing") => {
+                    match error.into_value().into_inner().missing_keys() {
+                        Err((_, keys)) => format!("{message}: {}", keys.join(", ")),
+                        Ok(_) => message,
+                    }
+                }
+                message => message,
+            };
+            ErrorObjectOwned::owned(INVALID_PARAMS_CODE, message, None::<()>)
         })?;
         let l1_data_fee = l1_data_fee(&l1_block_info, spec, &placeholder_signed(transaction))
             .map_err(|error| {
@@ -189,19 +205,34 @@ where
 /// Fills the request's missing fee fields and returns its fee cap and tip. Legacy and EIP-2930
 /// requests get `base_fee + tip` as gas price; others a cap of `2 * base_fee + tip`, the default
 /// ethers and viem use, which leaves room for the base fee to rise before inclusion.
+///
+/// The fields are chosen so the request builds as the type it asks for: an explicit `type` wins,
+/// otherwise a gas price without an authorization list means legacy. As in geth, a gas price on a
+/// dynamic-fee request sets both its cap and its tip.
 fn fill_fees(
     request: &mut TransactionRequest,
     base_fee: U256,
     suggested_tip: U256,
 ) -> (U256, U256) {
-    if request.gas_price.is_some() || matches!(request.transaction_type, Some(0 | 1)) {
+    let gas_priced = match request.transaction_type {
+        Some(ty) => ty <= 1,
+        None => request.gas_price.is_some() && request.authorization_list.is_none(),
+    };
+    if gas_priced {
         let gas_price = request
             .gas_price
             .map(U256::from)
             .unwrap_or(base_fee + suggested_tip);
         request.gas_price = Some(gas_price.saturating_to());
+        if request.transaction_type == Some(1) {
+            request.access_list.get_or_insert_default();
+        }
         (gas_price, gas_price.saturating_sub(base_fee))
     } else {
+        if let Some(gas_price) = request.gas_price.take() {
+            request.max_fee_per_gas.get_or_insert(gas_price);
+            request.max_priority_fee_per_gas.get_or_insert(gas_price);
+        }
         let tip = request
             .max_priority_fee_per_gas
             .map(U256::from)
@@ -449,6 +480,49 @@ mod tests {
             fill_fees(&mut request, base_fee, tip),
             (U256::from(900), U256::ZERO)
         );
+    }
+
+    /// Filled requests build as the type they ask for.
+    #[test]
+    fn filled_requests_build_the_requested_type() {
+        let authorization = Authorization {
+            chain_id: U256::from(6_281_971),
+            address: Address::repeat_byte(0xde),
+            nonce: 1,
+        }
+        .into_signed(Signature::new(U256::ONE, U256::ONE, false));
+        let cases = [
+            (TransactionRequest::default(), 2),
+            (TransactionRequest::default().transaction_type(0), 0),
+            (TransactionRequest::default().transaction_type(1), 1),
+            (TransactionRequest::default().gas_price(900), 0),
+            (
+                TransactionRequest::default()
+                    .transaction_type(2)
+                    .gas_price(900),
+                2,
+            ),
+            (
+                TransactionRequest {
+                    gas_price: Some(900),
+                    authorization_list: Some(vec![authorization]),
+                    ..Default::default()
+                },
+                4,
+            ),
+        ];
+        for (mut request, expected) in cases {
+            fill_fees(&mut request, U256::from(1_000), U256::from(100));
+            request.nonce = Some(0);
+            request.gas = Some(21_000);
+            request.chain_id = Some(6_281_971);
+            request.to = Some(TxKind::Call(Address::repeat_byte(0x11)));
+            let scroll_request: ScrollTransactionRequest = request.clone().into();
+            let built = scroll_request
+                .build_typed_tx()
+                .unwrap_or_else(|error| panic!("{request:?}: {error}"));
+            assert_eq!(built.tx_type() as u8, expected, "{request:?}");
+        }
     }
 
     #[test]
