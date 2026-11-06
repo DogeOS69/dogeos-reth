@@ -38,3 +38,10 @@ and fee RPCs. TsukiV2 also switches execution rules in `revm-scroll` (`ScrollSpe
 An activation after Tsuki and after genesis participates in the fork-ID schedule, so
 un-upgraded peers disconnect at the activation. The header validator's 420,000 gwei upper bound
 is not gated. Before TsukiV2 the formula clamps every base fee, overhead included, to 10 gwei.
+
+At the first TsukiV2 block, an L2MessageQueue (`0x5300000000000000000000000000000000000000`) that
+still runs the legacy Merkle-tree code of the Chikyu genesis gets the hash-chain queue code of the
+mainnet genesis; its storage is kept, so the legacy withdrawal root seeds the hash chain. Any other
+code is left alone, so mainnet is unaffected. On a network with the legacy queue, TsukiV2 is
+therefore also the withdrawal-queue cutover: drain withdrawals before it, and move the bridge,
+the provers and the L1 withdrawal verification to the hash chain at the same time.

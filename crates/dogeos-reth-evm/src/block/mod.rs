@@ -226,7 +226,7 @@ where
             self.system_caller.on_pre_block_state(&state);
         }
 
-        // replace the legacy withdrawal queue code at TsukiV2 transition block.
+        // replace the legacy withdrawal queue code; a no-op on TsukiV2 blocks after the swap.
         if self
             .spec
             .is_tsuki_v2_active_at_timestamp(self.evm.block().timestamp().to())
@@ -696,7 +696,7 @@ mod tests {
             };
             let evm = ScrollEvmFactory::<ScrollDefaultPrecompilesFactory>::default().create_evm(
                 state,
-                EvmEnv::new(CfgEnv::new_with_spec(ScrollSpecId::TSUKI), block),
+                EvmEnv::new(CfgEnv::new_with_spec(ScrollSpecId::TSUKI_V2), block),
             );
             let mut executor = ScrollBlockExecutor::new(
                 evm,
@@ -730,7 +730,7 @@ mod tests {
             .unwrap();
         let code_hash = keccak256(&mainnet_queue);
         let db = executor.evm_mut().db_mut();
-        // The guest checks the queue account; it installs the new code itself.
+        // The witness carries the queue account; the replacement code is a constant of the executor.
         let record = ExecutionWitnessRecord::from_executed_state(db);
         assert!(
             record
@@ -758,6 +758,14 @@ mod tests {
             .find(|(address, _)| *address == L2_MESSAGE_QUEUE_ADDRESS)
             .map(|(_, revert)| &revert.account);
         assert_eq!(revert, Some(&AccountInfoRevert::RevertTo(legacy_info)));
+        // The swap keeps the queue's storage, so neither the bundle nor its revert wipes it.
+        let reverts = &db.bundle_state.reverts[0];
+        let (_, queue_revert) = reverts
+            .iter()
+            .find(|(address, _)| *address == L2_MESSAGE_QUEUE_ADDRESS)
+            .unwrap();
+        assert!(!queue_revert.wipe_storage);
+        assert!(!db.bundle_state.state[&L2_MESSAGE_QUEUE_ADDRESS].was_destroyed());
         let info = db.bundle_state.state[&L2_MESSAGE_QUEUE_ADDRESS]
             .info
             .as_ref()
