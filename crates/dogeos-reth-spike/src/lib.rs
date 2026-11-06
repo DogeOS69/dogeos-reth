@@ -6,7 +6,7 @@
 //! dependency before component integration starts.
 
 /// The pinned Reth production-stack revision selected by the dependency audit.
-pub const RETH_V2_REVISION: &str = "972366a0bfc11cf6a0d5dc79d5e779cd81e32232";
+pub const RETH_V2_REVISION: &str = "6318fb3627e3d744026b4b70ae0227b1655c5513";
 
 /// The immutable DogeOS REVM revision evaluated by the Phase 0 spike.
 pub const DOGEOS_REVM_REVISION: &str = "1b87ecf17af029ac2f39e8ad362f3503ff2f4583";
