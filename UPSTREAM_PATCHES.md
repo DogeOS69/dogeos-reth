@@ -94,6 +94,7 @@ scripts/audit-rocksdb-durability.sh
 | [#17](https://github.com/DogeOS69/reth/pull/17) | Bound blocking RPC work and retain worker permits | `reth-rpc-eth-api`, `reth-rpc` |
 | [#18](https://github.com/DogeOS69/reth/pull/18) | Reject stale persisted forkchoice hashes | `reth-engine-tree` |
 | [#19](https://github.com/DogeOS69/reth/pull/19) | Compute trie reverts before unwinding hashed state | `reth-provider` |
+| fix/trie-seek-boundary-tsuki-v0.13 (`b4a77efea`, upstream #28264) | Seek hashed entries unless the walker is at the exact prefix | `reth-trie` |
 
 - Removal condition: select an upstream Reth base with equivalent fixes, retaining
   the regressions and DogeOS integration checks. The bounded-session-queue follow-up

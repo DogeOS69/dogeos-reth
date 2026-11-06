@@ -10,7 +10,7 @@ no copied upstream Reth crate and no production dependency on the legacy `scroll
 
 | Component | Locked selection |
 | --- | --- |
-| Reth | `tsuki-v0.13` / `09c6b809af6d7c2da35f48dd125924e8da793553` |
+| Reth | rev `b4a77efea79928b82712669ac71eee0e5f878db5` (`tsuki-v0.13` + upstream #28264 via DogeOS69/reth #22; tag pending) |
 | REVM | `36.0.0` |
 | `revm-scroll` | `tsuki-v0.13` / `516ff663b2fb2503dba8ef6b0d667f16334ac05a` |
 | Alloy API family | `alloy-consensus 1.8.2` |
@@ -22,7 +22,8 @@ The first `feat/drop-scroll-patch` candidate resolved REVM 34 and
 `chore/upgrade-revm-v36` (revision `1b87ecf...`) was merged into the canonical
 `dogeos` branch on 2026-08-12 (PRs #16/#17: drop the Scroll REVM fork, upgrade
 to REVM 36). The workspace now pins both forks to `tsuki-v0.13`. The Reth tag
-adds the P2P, RPC and reorg backports from DogeOS69/reth #11–19 and bounded session queues from #21; the DogeOS REVM
+adds the P2P, RPC and reorg backports from DogeOS69/reth #11–19 and bounded session queues from #21; the
+temporary Reth rev adds the upstream trie iterator seek-boundary fix (#28264) on top of that tag; the DogeOS REVM
 tag adds the Veridise follow-ups from DogeOS69/dogeos-revm #23–28 and the BLOCKHASH optimization (#22) on top of
 TsukiV2. It retains the upfront-balance fix and removal of the optional L1 fee
 buffer. The graph still requires a single REVM 36 and alloy-evm 0.30.0 instance.
