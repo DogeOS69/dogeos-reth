@@ -28,7 +28,7 @@ use std::sync::LazyLock;
 mod constants;
 pub use constants::*;
 mod genesis;
-pub use genesis::{DogeosHardforkInfo, L1Config, ScrollChainConfig};
+pub use genesis::{DogeosHardforkInfo, L1Config, ScrollChainConfig, WithdrawalQueueUpgrade};
 
 mod chikyu;
 pub use chikyu::DOGEOS_CHIKYU;
