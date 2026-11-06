@@ -21,7 +21,8 @@ The first `feat/drop-scroll-patch` candidate resolved REVM 34 and
 `alloy-evm 0.27.3`, so it was rejected. The evaluation branch
 `chore/upgrade-revm-v36` (revision `1b87ecf...`) was merged into the canonical
 `dogeos` branch on 2026-08-12 (PRs #16/#17: drop the Scroll REVM fork, upgrade
-to REVM 36). The workspace now pins both forks to `tsuki-v0.13`. The Reth tag
+to REVM 36). The workspace pins `revm-scroll` to `tsuki-v0.13` and Reth to a temporary rev on top of
+`tsuki-v0.13`. The Reth tag
 adds the P2P, RPC and reorg backports from DogeOS69/reth #11–19 and bounded session queues from #21; the
 temporary Reth rev adds the upstream trie iterator seek-boundary fix (#28264) on top of that tag; the DogeOS REVM
 tag adds the Veridise follow-ups from DogeOS69/dogeos-revm #23–28 and the BLOCKHASH optimization (#22) on top of
