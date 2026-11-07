@@ -3010,7 +3010,11 @@ dependencies = [
  "reth-rpc-eth-types",
  "reth-storage-api",
  "reth-tasks",
+ "reth-transaction-pool",
  "revm",
+ "revm-scroll",
+ "serde",
+ "serde_json",
  "thiserror 2.0.19",
  "tracing",
 ]

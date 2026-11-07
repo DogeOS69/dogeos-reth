@@ -48,7 +48,7 @@ fn capacity_tip(mut tips: Vec<u128>, minimum: U256, maximum: Option<U256>) -> U2
 /// Scroll-compatible priority-fee policy installed over Reth's generic Ethereum method.
 #[derive(Clone, Debug)]
 pub struct DogeosPriorityFeeApi<Eth: RpcNodeCore> {
-    eth: Eth,
+    pub(crate) eth: Eth,
     max_price: Option<U256>,
     min_suggested_priority_fee: U256,
     payload_size_limit: u64,
@@ -165,7 +165,7 @@ where
         ))
     }
 
-    async fn suggested_priority_fee(&self) -> Result<U256, ErrorObjectOwned> {
+    pub(crate) async fn suggested_priority_fee(&self) -> Result<U256, ErrorObjectOwned> {
         self.priority_fee_for_block(BlockNumberOrTag::Latest)
             .await
             .map(|(tip, _)| tip)
