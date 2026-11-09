@@ -3,10 +3,12 @@
 mod feynman;
 mod galileo_v2;
 mod tsuki;
+mod withdrawal_queue;
 
 pub(crate) use feynman::apply_feynman_hard_fork;
 pub(crate) use galileo_v2::apply_galileo_v2_hard_fork;
 pub(crate) use tsuki::apply_tsuki_hard_fork;
+pub(crate) use withdrawal_queue::apply_withdrawal_queue_upgrade;
 
 use revm::{
     Database, DatabaseCommit,
