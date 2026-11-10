@@ -136,6 +136,16 @@ impl TryFrom<&OtherFields> for DogeosHardforkInfo {
     }
 }
 
+/// Frozen withdrawal queue state used to build the converted bridge snapshot.
+/// TsukiV2 determines the code-swap time; this checkpoint only constrains its input state.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WithdrawalQueueCheckpoint {
+    pub legacy_code_hash: B256,
+    pub seed_root: B256,
+    pub next_message_index: u64,
+}
+
 /// DogeOS sequencer configuration encoded under the inherited `scroll` genesis key.
 #[derive(Default, Debug, Clone, Copy, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", from = "ScrollChainConfigJson")]
@@ -143,6 +153,8 @@ pub struct ScrollChainConfig {
     pub fee_vault_address: Option<Address>,
     pub max_tx_payload_bytes_per_block: usize,
     pub l1_config: L1Config,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub withdrawal_queue_checkpoint: Option<WithdrawalQueueCheckpoint>,
 }
 
 /// Strict input schema including recognized metadata from published l2geth genesis documents.
@@ -155,6 +167,7 @@ struct ScrollChainConfigJson {
     fee_vault_address: Option<Address>,
     max_tx_payload_bytes_per_block: usize,
     l1_config: L1Config,
+    withdrawal_queue_checkpoint: Option<WithdrawalQueueCheckpoint>,
     #[serde(rename = "useZktrie")]
     _use_zktrie: Option<bool>,
     #[serde(rename = "maxTxPerBlock")]
@@ -171,6 +184,7 @@ impl From<ScrollChainConfigJson> for ScrollChainConfig {
             fee_vault_address: config.fee_vault_address,
             max_tx_payload_bytes_per_block: config.max_tx_payload_bytes_per_block,
             l1_config: config.l1_config,
+            withdrawal_queue_checkpoint: config.withdrawal_queue_checkpoint,
         }
     }
 }
@@ -193,6 +207,7 @@ impl ScrollChainConfig {
             fee_vault_address: Some(SCROLL_FEE_VAULT_ADDRESS),
             max_tx_payload_bytes_per_block: MAX_TX_PAYLOAD_BYTES_PER_BLOCK,
             l1_config,
+            withdrawal_queue_checkpoint: None,
         }
     }
 
@@ -289,9 +304,40 @@ mod tests {
         let value = serde_json::to_value(config).unwrap();
         assert!(value.get("l1DataFeeBufferCheck").is_none());
         assert!(value.get("withdrawalQueueUpgrade").is_none());
+        assert!(value.get("withdrawalQueueCheckpoint").is_none());
         let fields: OtherFields =
             serde_json::from_value(serde_json::json!({ "scroll": value })).unwrap();
         assert_eq!(ScrollChainConfig::try_from(&fields).unwrap(), config);
+    }
+
+    #[test]
+    fn withdrawal_queue_checkpoint_round_trips_and_rejects_incomplete_or_scheduled_values() {
+        let mut config = ScrollChainConfig::dev();
+        config.withdrawal_queue_checkpoint = Some(WithdrawalQueueCheckpoint {
+            legacy_code_hash: B256::repeat_byte(0x11),
+            seed_root: B256::repeat_byte(0x22),
+            next_message_index: 1173,
+        });
+        let value = serde_json::to_value(config).unwrap();
+        let fields: OtherFields =
+            serde_json::from_value(serde_json::json!({ "scroll": value.clone() })).unwrap();
+        assert_eq!(ScrollChainConfig::try_from(&fields).unwrap(), config);
+
+        for field in ["legacyCodeHash", "seedRoot", "nextMessageIndex"] {
+            let mut incomplete = value.clone();
+            incomplete["withdrawalQueueCheckpoint"]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+            let error = serde_json::from_value::<ScrollChainConfig>(incomplete).unwrap_err();
+            assert!(error.to_string().contains("missing field"), "{error}");
+        }
+        for field in ["block", "seedRot"] {
+            let mut unknown = value.clone();
+            unknown["withdrawalQueueCheckpoint"][field] = serde_json::json!(1);
+            let error = serde_json::from_value::<ScrollChainConfig>(unknown).unwrap_err();
+            assert!(error.to_string().contains("unknown field"), "{error}");
+        }
     }
 
     #[test]

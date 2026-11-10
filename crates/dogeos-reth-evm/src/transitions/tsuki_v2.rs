@@ -2,19 +2,21 @@
 //!
 //! On the first block of the TsukiV2 fork, a network whose L2MessageQueue at
 //! `0x5300000000000000000000000000000000000000` still runs the legacy append-only Merkle-tree code
-//! of the Chikyu genesis switches it to the hash-chain queue. Only the code changes; storage is
-//! kept, so the legacy withdrawal root (slot 0), next index (slot 1), owner and messenger carry
+//! switches it to the hash-chain queue after checking the configured frozen checkpoint. Only the
+//! code changes; storage is kept, so the legacy withdrawal root (slot 0), next index (slot 1), owner and messenger carry
 //! over and the root seeds the new hash chain. The legacy tree's branch slots stay unused.
 
+use alloc::{format, string::String};
 use alloy_primitives::{B256, b256, bytes};
+use dogeos_chainspec::WithdrawalQueueCheckpoint;
 use revm::{
     Database, DatabaseCommit,
     bytecode::Bytecode,
-    primitives::Bytes,
+    primitives::{Bytes, U256},
     state::{AccountInfo, EvmState},
 };
 
-use crate::L2_MESSAGE_QUEUE_ADDRESS;
+use crate::{L2_MESSAGE_QUEUE_ADDRESS, NEXT_MESSAGE_INDEX_SLOT, WITHDRAW_TRIE_ROOT_SLOT};
 
 /// Code hash of the legacy Merkle-tree L2MessageQueue predeployed in the Chikyu genesis.
 const LEGACY_QUEUE_BYTECODE_HASH: B256 =
@@ -32,22 +34,64 @@ const HASH_CHAIN_QUEUE_BYTECODE_HASH: B256 =
 /// Applies the TsukiV2 hard fork to the state by replacing the legacy L2MessageQueue code with the
 /// hash-chain queue.
 ///
-/// Only an account that still runs the legacy code is changed, so the migration is a no-op on every
-/// later block and on networks whose genesis already holds the hash-chain queue (mainnet). Balance,
-/// nonce and storage are kept.
+/// The checkpoint binds the legacy code, root and index to the converted bridge snapshot.
+/// Missing or mismatched checkpoints reject a legacy queue before any code is changed.
+/// An already upgraded queue is a no-op, including after withdrawals advance its root/index.
+/// Without a checkpoint, unrelated code and missing accounts are left alone; the known Chikyu
+/// legacy queue must have a checkpoint. Balance, nonce and storage are kept.
 ///
 /// Returns the committed state update so the executor can forward it to state hooks.
-pub(crate) fn apply_tsuki_v2_hard_fork<DB>(db: &mut DB) -> Result<EvmState, DB::Error>
+pub(crate) fn apply_tsuki_v2_hard_fork<DB>(
+    db: &mut DB,
+    checkpoint: Option<WithdrawalQueueCheckpoint>,
+) -> Result<EvmState, String>
 where
     DB: Database + DatabaseCommit,
 {
-    // Only the code hash is compared, so the legacy code is never loaded and the read needs
-    // nothing beyond the queue account, which the witness carries for the withdrawal root.
-    let Some(old_info) = db.basic(L2_MESSAGE_QUEUE_ADDRESS)? else {
-        return Ok(EvmState::default());
+    // Compare hashes without loading old bytecode. The witness carries the account and both
+    // checkpoint slots; the replacement bytecode is supplied by the executor.
+    let old_info = db
+        .basic(L2_MESSAGE_QUEUE_ADDRESS)
+        .map_err(|err| format!("failed to read the withdrawal queue: {err:?}"))?;
+    let Some(old_info) = old_info else {
+        return if checkpoint.is_some() {
+            Err("the withdrawal queue account is missing".into())
+        } else {
+            Ok(EvmState::default())
+        };
     };
-    if old_info.code_hash != LEGACY_QUEUE_BYTECODE_HASH {
+    if old_info.code_hash == HASH_CHAIN_QUEUE_BYTECODE_HASH {
         return Ok(EvmState::default());
+    }
+    let Some(checkpoint) = checkpoint else {
+        return if old_info.code_hash == LEGACY_QUEUE_BYTECODE_HASH {
+            Err("the legacy withdrawal queue requires withdrawalQueueCheckpoint at TsukiV2".into())
+        } else {
+            Ok(EvmState::default())
+        };
+    };
+    if old_info.code_hash != checkpoint.legacy_code_hash {
+        return Err(format!(
+            "the withdrawal queue code hash is {}, expected {}",
+            old_info.code_hash, checkpoint.legacy_code_hash
+        ));
+    }
+    let mut read_slot = |slot| {
+        db.storage(L2_MESSAGE_QUEUE_ADDRESS, slot)
+            .map_err(|err| format!("failed to read the withdrawal queue slot {slot}: {err:?}"))
+    };
+    let root = read_slot(WITHDRAW_TRIE_ROOT_SLOT)?;
+    let next_index = read_slot(NEXT_MESSAGE_INDEX_SLOT)?;
+    if root != U256::from_be_bytes(checkpoint.seed_root.0)
+        || next_index != U256::from(checkpoint.next_message_index)
+    {
+        return Err(format!(
+            "the withdrawal queue holds root {} and next index {next_index}, expected the \
+             checkpoint's {} and {}",
+            B256::from(root),
+            checkpoint.seed_root,
+            checkpoint.next_message_index
+        ));
     }
 
     let bytecode = Bytecode::new_raw(HASH_CHAIN_QUEUE_BYTECODE);
@@ -65,6 +109,7 @@ where
         new_info,
         core::iter::empty(),
     )
+    .map_err(|err| format!("failed to replace the withdrawal queue code: {err:?}"))
 }
 
 #[cfg(test)]
@@ -99,6 +144,14 @@ mod tests {
         Bytecode::new_raw(queue.code.clone().unwrap())
     }
 
+    fn checkpoint() -> Option<WithdrawalQueueCheckpoint> {
+        Some(WithdrawalQueueCheckpoint {
+            legacy_code_hash: legacy_code().hash_slow(),
+            seed_root: ROOT,
+            next_message_index: NEXT_INDEX,
+        })
+    }
+
     fn queue_with(code: Bytecode) -> CacheDB<EmptyDB> {
         let mut db = CacheDB::new(EmptyDB::default());
         db.insert_account_info(
@@ -126,7 +179,7 @@ mod tests {
     #[test]
     fn replaces_only_the_legacy_queue_code() {
         let mut db = queue_with(legacy_code());
-        let state = apply_tsuki_v2_hard_fork(&mut db).unwrap();
+        let state = apply_tsuki_v2_hard_fork(&mut db, checkpoint()).unwrap();
         assert!(state[&L2_MESSAGE_QUEUE_ADDRESS].storage.is_empty());
 
         let info = db.basic(L2_MESSAGE_QUEUE_ADDRESS).unwrap().unwrap();
@@ -142,14 +195,18 @@ mod tests {
         }
 
         // Later TsukiV2 blocks leave the replaced queue alone.
-        assert!(apply_tsuki_v2_hard_fork(&mut db).unwrap().is_empty());
+        assert!(
+            apply_tsuki_v2_hard_fork(&mut db, checkpoint())
+                .unwrap()
+                .is_empty()
+        );
     }
 
     /// The messenger kept in storage appends the next withdrawal on top of the legacy root.
     #[test]
     fn the_replaced_queue_continues_the_legacy_root() {
         let mut db = queue_with(legacy_code());
-        apply_tsuki_v2_hard_fork(&mut db).unwrap();
+        apply_tsuki_v2_hard_fork(&mut db, checkpoint()).unwrap();
 
         let message_hash = B256::repeat_byte(0xab);
         // appendMessage(bytes32)
@@ -197,7 +254,11 @@ mod tests {
             U256::from(NEXT_INDEX + 1)
         );
         // Re-running the transition must preserve withdrawals made after activation.
-        assert!(apply_tsuki_v2_hard_fork(evm.db_mut()).unwrap().is_empty());
+        assert!(
+            apply_tsuki_v2_hard_fork(evm.db_mut(), checkpoint())
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(
             evm.db_mut()
                 .storage(L2_MESSAGE_QUEUE_ADDRESS, WITHDRAW_TRIE_ROOT_SLOT)
@@ -221,14 +282,106 @@ mod tests {
             Bytecode::new_raw(bytes!("00")),
         ] {
             let mut db = queue_with(code.clone());
-            assert!(apply_tsuki_v2_hard_fork(&mut db).unwrap().is_empty());
+            assert!(apply_tsuki_v2_hard_fork(&mut db, None).unwrap().is_empty());
             let info = db.basic(L2_MESSAGE_QUEUE_ADDRESS).unwrap().unwrap();
             assert_eq!(info.code_hash, code.hash_slow());
         }
 
         let mut db = CacheDB::new(EmptyDB::default());
-        assert!(apply_tsuki_v2_hard_fork(&mut db).unwrap().is_empty());
+        assert!(apply_tsuki_v2_hard_fork(&mut db, None).unwrap().is_empty());
         assert!(db.basic(L2_MESSAGE_QUEUE_ADDRESS).unwrap().is_none());
+    }
+
+    #[test]
+    fn rejects_missing_or_mismatched_checkpoints_before_changing_code() {
+        let valid = checkpoint().unwrap();
+        for (expected, checkpoint) in [
+            ("requires withdrawalQueueCheckpoint", None),
+            (
+                "code hash is",
+                Some(WithdrawalQueueCheckpoint {
+                    legacy_code_hash: B256::ZERO,
+                    ..valid
+                }),
+            ),
+            (
+                "holds root",
+                Some(WithdrawalQueueCheckpoint {
+                    seed_root: B256::ZERO,
+                    ..valid
+                }),
+            ),
+            (
+                "next index",
+                Some(WithdrawalQueueCheckpoint {
+                    next_message_index: NEXT_INDEX + 1,
+                    ..valid
+                }),
+            ),
+        ] {
+            let mut db = queue_with(legacy_code());
+            let before = db.basic(L2_MESSAGE_QUEUE_ADDRESS).unwrap().unwrap();
+            let error = apply_tsuki_v2_hard_fork(&mut db, checkpoint).unwrap_err();
+            assert!(error.contains(expected), "{error}");
+            assert_eq!(db.basic(L2_MESSAGE_QUEUE_ADDRESS).unwrap().unwrap(), before);
+            assert_eq!(
+                db.storage(L2_MESSAGE_QUEUE_ADDRESS, WITHDRAW_TRIE_ROOT_SLOT)
+                    .unwrap(),
+                U256::from_be_bytes(ROOT.0)
+            );
+            assert_eq!(
+                db.storage(L2_MESSAGE_QUEUE_ADDRESS, NEXT_MESSAGE_INDEX_SLOT)
+                    .unwrap(),
+                U256::from(NEXT_INDEX)
+            );
+        }
+    }
+
+    #[test]
+    fn configured_checkpoint_rejects_missing_and_unexpected_queue_code() {
+        let mut db = CacheDB::new(EmptyDB::default());
+        let error = apply_tsuki_v2_hard_fork(&mut db, checkpoint()).unwrap_err();
+        assert!(error.contains("account is missing"), "{error}");
+        let mut db = queue_with(Bytecode::new_raw(bytes!("00")));
+        let before = db.basic(L2_MESSAGE_QUEUE_ADDRESS).unwrap();
+        let error = apply_tsuki_v2_hard_fork(&mut db, checkpoint()).unwrap_err();
+        assert!(error.contains("code hash is"), "{error}");
+        assert_eq!(db.basic(L2_MESSAGE_QUEUE_ADDRESS).unwrap(), before);
+    }
+
+    #[test]
+    fn upgraded_queue_does_not_read_or_validate_checkpoint_storage() {
+        struct UpgradedQueue;
+        impl Database for UpgradedQueue {
+            type Error = core::convert::Infallible;
+            fn basic(&mut self, _: Address) -> Result<Option<AccountInfo>, Self::Error> {
+                Ok(Some(AccountInfo {
+                    code_hash: HASH_CHAIN_QUEUE_BYTECODE_HASH,
+                    ..Default::default()
+                }))
+            }
+            fn code_by_hash(&mut self, _: B256) -> Result<Bytecode, Self::Error> {
+                panic!("must not load code")
+            }
+            fn storage(&mut self, _: Address, _: U256) -> Result<U256, Self::Error> {
+                panic!("must not read the old checkpoint after migration")
+            }
+            fn block_hash(&mut self, _: u64) -> Result<B256, Self::Error> {
+                panic!("must not read block hashes")
+            }
+        }
+        impl DatabaseCommit for UpgradedQueue {
+            fn commit(&mut self, _: EvmState) {
+                panic!("must not commit an update")
+            }
+        }
+        for checkpoint in [None, checkpoint()] {
+            assert!(
+                apply_tsuki_v2_hard_fork(&mut UpgradedQueue, checkpoint)
+                    .unwrap()
+                    .is_empty()
+            );
+        }
     }
 
     #[test]

@@ -43,30 +43,64 @@ is not gated. Before TsukiV2 the formula clamps every base fee, overhead include
 
 The withdrawal queue code swap is part of TsukiV2, using the same `tsukiV2Time`
 as the fee and EVM rules above. At the first executed block whose timestamp is at
-or after activation, the executor replaces the legacy Merkle-tree L2MessageQueue
-at `0x5300000000000000000000000000000000000000` with the hash-chain queue.
-There is no separate block-number schedule or checkpoint setting.
+or after activation, the executor checks the frozen checkpoint and replaces the
+legacy L2MessageQueue at `0x5300000000000000000000000000000000000000` with the
+hash-chain queue. There is no separate block-number schedule. If TsukiV2 is active
+at genesis, this happens in the first executed block; genesis itself is not executed.
 
-Like the Feynman oracle transition, the transition is called on every active block
-and uses on-chain state to make the change idempotent. Only the exact legacy code
-hash from the Chikyu genesis (`0xdc3a5ee2e8f8bcfd3a6ae7d2b5f38c8bf5c77b9a3fad31aa5dfe1ffed7aad50c`)
-is replaced. The hash-chain queue, other code, and a missing account are left alone.
-Mainnet already has the hash-chain code in genesis. If TsukiV2 is active at genesis,
-the transition runs on the first executed block; genesis itself is not executed.
+A network migrating from the legacy queue must set `withdrawalQueueCheckpoint`
+under `config.scroll`, with all three values taken from the authenticated frozen
+checkpoint used to build the converted bridge snapshot:
 
-Only code changes: balance, nonce, withdrawal root (slot 0), next index (slot 1),
-owner, messenger, and all other storage are preserved. The old root seeds the new
-hash chain. Subsequent blocks keep the new code and the evolving queue state.
+```json
+{
+  "config": {
+    "scroll": {
+      "withdrawalQueueCheckpoint": {
+        "legacyCodeHash": "0x…",
+        "seedRoot": "0x…",
+        "nextMessageIndex": 1173
+      }
+    }
+  }
+}
+```
 
-Before scheduling activation on an existing network, operators must verify the
-live queue's legacy code hash and complete the bridge drain and checkpoint
-conversion for that same cutover. Root and index are taken from the parent state;
-they are no longer checked against values supplied in genesis. Activating this
-rule retroactively on a chain that ran TsukiV2 with the legacy queue changes its
-historical state roots.
+This is a configuration excerpt; retain the other `scroll` fields. The hashes above
+are placeholders and the count is illustrative, not a production checkpoint.
+All three fields are required when the checkpoint is supplied; unknown fields,
+including `block`, are rejected. `nextMessageIndex` is a JSON unsigned integer.
 
-Remove `config.scroll.withdrawalQueueUpgrade` from configurations made for the old
-block-based mechanism: it is rejected as an unknown field, including `null`.
-Sequencers, followers, RPC nodes, and proving programs must agree on the TsukiV2
-schedule and execution code. Update the stateless verifier/prover pins with the
-upgrade-support release and validate a proof across the cutover before rollout.
+At migration, the account's code hash, withdrawal root (slot 0), and next index
+(slot 1) must match the checkpoint. A mismatch rejects the block before replacing
+the code. No withdrawal may be appended between the frozen checkpoint and the
+parent of the first TsukiV2 block. A withdrawal in the activation block executes
+with the new code, after the checkpoint check and swap.
+
+Only code changes: balance, nonce, root, next index, owner, messenger, and all other
+storage are preserved. The old root seeds the new hash chain. Already-upgraded
+queues are a no-op without rereading or checking checkpoint storage, so subsequent
+withdrawals can advance the root and index normally. Mainnet already has the
+hash-chain code in genesis and does not need a checkpoint.
+
+With a configured checkpoint, missing accounts and unexpected code hashes reject
+the block. Without one, unrelated code and missing accounts remain unchanged, but
+the known Chikyu legacy code hash
+(`0xdc3a5ee2e8f8bcfd3a6ae7d2b5f38c8bf5c77b9a3fad31aa5dfe1ffed7aad50c`)
+is rejected at TsukiV2: omitting the checkpoint cannot bypass its validation.
+The built-in Chikyu configuration has no checkpoint; operators must supply the
+actual frozen values before migrating its legacy queue.
+
+Publish one set of checkpoint values for the network, generated from the same
+capture as the converted bridge snapshot. Sequencers, followers, RPC nodes, and
+stateless verifier/prover builds must use those identical values and the same
+TsukiV2 schedule and execution code. These are not independent operator choices.
+The checkpoint setting does not change the genesis block hash or fork ID.
+
+Migrate old `config.scroll.withdrawalQueueUpgrade` configurations to
+`withdrawalQueueCheckpoint`, retaining the code hash, root and index and removing
+`block`. The old key is rejected, including `null`. Align bridge drain and snapshot
+conversion with TsukiV2 activation; activating this rule retroactively on a chain
+that ran TsukiV2 with the legacy queue changes historical state roots.
+Update stateless verifier/prover pins and validate a real proof across the cutover
+before rollout.
