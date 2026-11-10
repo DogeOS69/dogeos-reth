@@ -7,7 +7,7 @@ use crate::{
     system_caller::ScrollSystemCaller,
     transitions::{
         apply_feynman_hard_fork, apply_galileo_v2_hard_fork, apply_tsuki_hard_fork,
-        apply_withdrawal_queue_upgrade,
+        apply_tsuki_v2_hard_fork,
     },
 };
 
@@ -226,16 +226,15 @@ where
             self.system_caller.on_pre_block_state(&state);
         }
 
-        // replace the withdrawal queue code on a network upgraded from a drained checkpoint.
-        if let Some(upgrade) = self.spec.chain_config().withdrawal_queue_upgrade {
-            let block = self.evm.block();
-            let number = block.number().to();
-            let tsuki_v2_active = self
-                .spec
-                .is_tsuki_v2_active_at_timestamp(block.timestamp().to());
-            let state =
-                apply_withdrawal_queue_upgrade(self.evm.db_mut(), number, tsuki_v2_active, upgrade)
-                    .map_err(BlockExecutionError::msg)?;
+        // replace the legacy withdrawal queue code; a no-op on TsukiV2 blocks after the swap.
+        if self
+            .spec
+            .is_tsuki_v2_active_at_timestamp(self.evm.block().timestamp().to())
+        {
+            let checkpoint = self.spec.chain_config().withdrawal_queue_checkpoint;
+            let state = apply_tsuki_v2_hard_fork(self.evm.db_mut(), checkpoint).map_err(|err| {
+                BlockExecutionError::msg(format!("error occurred at TsukiV2 fork: {err:?}"))
+            })?;
             self.system_caller.on_pre_block_state(&state);
         }
 
@@ -471,17 +470,19 @@ where
 mod tests {
     use super::*;
     use crate::{
-        L2_MESSAGE_QUEUE_ADDRESS, NEXT_MESSAGE_INDEX_SLOT, ScrollRethReceiptBuilder,
-        ScrollTransactionIntoTxEnv, TX_L1_FEE_PRECISION_U256, WITHDRAW_TRIE_ROOT_SLOT,
+        L2_MESSAGE_QUEUE_ADDRESS, ScrollRethReceiptBuilder, ScrollTransactionIntoTxEnv,
+        TX_L1_FEE_PRECISION_U256, WITHDRAW_TRIE_ROOT_SLOT,
         gas_price_oracle::L1_GAS_PRICE_ORACLE_ADDRESS,
     };
     use alloy_evm::{EvmEnv, block::StateChangePreBlockSource};
-    use alloy_primitives::{Address, Bytes};
-    use dogeos_chainspec::{DOGEOS_CHIKYU, DOGEOS_MAINNET, WithdrawalQueueUpgrade};
+    use alloy_primitives::{Address, Bytes, keccak256};
+    use dogeos_chainspec::{
+        DOGEOS_CHIKYU, DOGEOS_MAINNET, DogeosChainSpec, DogeosChainSpecBuilder,
+        WithdrawalQueueCheckpoint,
+    };
     use reth_revm::witness::ExecutionWitnessRecord;
     use revm::{
         Database,
-        bytecode::Bytecode,
         context::{
             BlockEnv, CfgEnv, TxEnv,
             result::{ExecutionResult, HaltReason, ResultAndState, ResultGas},
@@ -666,92 +667,237 @@ mod tests {
         assert!(keys.contains(&NATIVE_DOGE_TOKEN_ADDRESS));
     }
 
-    /// The executor takes the block number and the TsukiV2 check from the block it runs. The
-    /// replaced code reaches the state hook and the bundle like the fork transitions do, and the
-    /// checkpoint reads reach the witness.
+    /// At the first TsukiV2 block the executor swaps Chikyu's legacy withdrawal queue for the
+    /// mainnet hash-chain queue; earlier blocks keep it. The databases of the node and of the
+    /// stateless guest return the code hash without the code, so the swap must not need the code.
     #[test]
-    fn executor_replaces_the_withdrawal_queue_at_the_configured_block_with_tsuki_v2() {
-        let legacy = Bytecode::new_raw(Bytes::from_static(&[0x60, 0x80]));
-        let root = B256::repeat_byte(0x51);
-        let mut spec = DOGEOS_CHIKYU.as_ref().clone();
-        spec.config.withdrawal_queue_upgrade = Some(WithdrawalQueueUpgrade {
-            block: 10,
-            legacy_code_hash: legacy.hash_slow(),
-            seed_root: root,
-            next_message_index: 3,
-        });
-        let spec = Arc::new(spec);
-        // The node's and the guest's databases return the code hash without the code.
+    fn executor_replaces_the_legacy_withdrawal_queue_at_tsuki_v2() {
+        let legacy_code = DOGEOS_CHIKYU.genesis.alloc[&L2_MESSAGE_QUEUE_ADDRESS]
+            .code
+            .clone()
+            .unwrap();
         let legacy_info = AccountInfo {
             balance: U256::from(7),
             nonce: 3,
-            code_hash: legacy.hash_slow(),
+            code_hash: keccak256(&legacy_code),
             code: None,
             ..Default::default()
         };
-        let execute = |timestamp: u64| {
+        let root = U256::from(0x51ec);
+        let mut spec = DOGEOS_CHIKYU.as_ref().clone();
+        spec.config.withdrawal_queue_checkpoint = Some(WithdrawalQueueCheckpoint {
+            legacy_code_hash: legacy_info.code_hash,
+            seed_root: B256::from(root),
+            next_message_index: 0,
+        });
+        let spec = Arc::new(spec);
+        let try_execute = |timestamp: u64,
+                           number: u64,
+                           spec: Arc<DogeosChainSpec>,
+                           append_after_capture: bool| {
             // Seed the backing database, so only the executor's reads fill the witness cache.
             let mut db = CacheDB::new(EmptyDB::default());
-            db.insert_account_info(L2_MESSAGE_QUEUE_ADDRESS, legacy_info.clone());
-            for (slot, value) in [
-                (WITHDRAW_TRIE_ROOT_SLOT, U256::from_be_bytes(root.0)),
-                (NEXT_MESSAGE_INDEX_SLOT, U256::from(3)),
-            ] {
-                db.insert_account_storage(L2_MESSAGE_QUEUE_ADDRESS, slot, value)
+            if append_after_capture {
+                // Seed the initialized legacy Merkle tree's zero hashes (slots 2 through 41).
+                let mut zero_hash = B256::ZERO;
+                for slot in 2..42 {
+                    db.insert_account_storage(
+                        L2_MESSAGE_QUEUE_ADDRESS,
+                        U256::from(slot),
+                        U256::from_be_bytes(zero_hash.0),
+                    )
                     .unwrap();
+                    zero_hash = keccak256([zero_hash.as_slice(), zero_hash.as_slice()].concat());
+                }
+                // Seed bytecode for the simulated pre-cutover transaction, then retain the
+                // hash-only account record used by production databases.
+                db.insert_account_info(
+                    L2_MESSAGE_QUEUE_ADDRESS,
+                    AccountInfo {
+                        code: Some(revm::bytecode::Bytecode::new_raw(legacy_code.clone())),
+                        ..legacy_info.clone()
+                    },
+                );
             }
+            db.insert_account_info(L2_MESSAGE_QUEUE_ADDRESS, legacy_info.clone());
+            db.insert_account_storage(L2_MESSAGE_QUEUE_ADDRESS, WITHDRAW_TRIE_ROOT_SLOT, root)
+                .unwrap();
+            let messenger = Address::repeat_byte(0x42);
+            db.insert_account_storage(
+                L2_MESSAGE_QUEUE_ADDRESS,
+                U256::from(83),
+                U256::from_be_slice(messenger.as_slice()),
+            )
+            .unwrap();
             let state = State::builder()
                 .with_database(db)
                 .with_bundle_update()
                 .build();
             let block = BlockEnv {
-                number: U256::from(10),
+                number: U256::from(number),
                 timestamp: U256::from(timestamp),
                 ..Default::default()
             };
-            let evm = ScrollEvmFactory::<ScrollDefaultPrecompilesFactory>::default().create_evm(
-                state,
-                EvmEnv::new(CfgEnv::new_with_spec(ScrollSpecId::TSUKI), block),
-            );
+            let mut evm = ScrollEvmFactory::<ScrollDefaultPrecompilesFactory>::default()
+                .create_evm(
+                    state,
+                    EvmEnv::new(
+                        CfgEnv::new_with_spec(if spec.is_tsuki_v2_active_at_timestamp(timestamp) {
+                            ScrollSpecId::TSUKI_V2
+                        } else {
+                            ScrollSpecId::TSUKI
+                        }),
+                        block,
+                    ),
+                );
+            if append_after_capture {
+                // Append a real withdrawal to the legacy contract after the snapshot was frozen.
+                let mut data = vec![0x60, 0x0a, 0x2e, 0x77];
+                data.extend_from_slice(B256::repeat_byte(0xab).as_slice());
+                let tx = ScrollTransactionIntoTxEnv::new(
+                    TxEnv {
+                        caller: messenger,
+                        kind: alloy_primitives::TxKind::Call(L2_MESSAGE_QUEUE_ADDRESS),
+                        gas_limit: 1_000_000,
+                        data: data.into(),
+                        ..Default::default()
+                    },
+                    Some(Bytes::new()),
+                    Some(TX_L1_FEE_PRECISION_U256),
+                    Some(0),
+                );
+                let result = evm.transact_commit(tx).unwrap();
+                assert!(
+                    matches!(result, ExecutionResult::Success { .. }),
+                    "{result:?}"
+                );
+            }
             let mut executor = ScrollBlockExecutor::new(
                 evm,
                 ScrollBlockExecutionCtx::default(),
-                Arc::clone(&spec),
+                spec,
                 ScrollRethReceiptBuilder,
             );
             let (updates, hook) = recording_hook();
             executor.set_state_hook(Some(hook));
             let result = executor.apply_pre_execution_changes();
-            (result, updates, executor)
-        };
-
-        let tsuki_v2 = dogeos_hardforks::CHIKYU_TSUKI_V2_TIMESTAMP;
-        let error = execute(tsuki_v2 - 1).0.unwrap_err();
-        assert!(error.to_string().contains("requires TsukiV2"), "{error}");
-
-        let (result, updates, mut executor) = execute(tsuki_v2);
-        result.unwrap();
-        assert!(
-            updates
+            let touched = updates
                 .lock()
                 .unwrap()
                 .iter()
-                .any(|(_, keys)| keys.contains(&L2_MESSAGE_QUEUE_ADDRESS))
+                .any(|(_, keys)| keys.contains(&L2_MESSAGE_QUEUE_ADDRESS));
+            (result, touched, executor)
+        };
+        let execute = |timestamp, number, spec| {
+            let (result, touched, executor) = try_execute(timestamp, number, spec, false);
+            result.unwrap();
+            (touched, executor)
+        };
+
+        let tsuki_v2 = dogeos_hardforks::CHIKYU_TSUKI_V2_TIMESTAMP;
+        let (result, touched, mut failed_executor) =
+            try_execute(tsuki_v2, 2374, Arc::clone(&spec), true);
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("next index 1"), "{error}");
+        assert!(
+            !touched,
+            "a failed checkpoint must not publish a queue code update"
         );
+        let failed_db = failed_executor.evm_mut().db_mut();
+        assert_eq!(
+            failed_db
+                .basic(L2_MESSAGE_QUEUE_ADDRESS)
+                .unwrap()
+                .unwrap()
+                .code_hash,
+            legacy_info.code_hash
+        );
+        assert_eq!(
+            failed_db
+                .storage(L2_MESSAGE_QUEUE_ADDRESS, crate::NEXT_MESSAGE_INDEX_SLOT)
+                .unwrap(),
+            U256::from(1)
+        );
+        assert_ne!(
+            failed_db
+                .storage(L2_MESSAGE_QUEUE_ADDRESS, WITHDRAW_TRIE_ROOT_SLOT)
+                .unwrap(),
+            root
+        );
+
+        // Timestamp alone drives the cutover, regardless of height. A block may skip
+        // over the activation timestamp rather than land exactly on it.
+        for number in [1, 2374, 1_000_000] {
+            let (touched, mut executor) = execute(tsuki_v2 - 1, number, Arc::clone(&spec));
+            assert!(!touched);
+            let info = executor
+                .evm_mut()
+                .db_mut()
+                .basic(L2_MESSAGE_QUEUE_ADDRESS)
+                .unwrap()
+                .unwrap();
+            assert_eq!(info.code_hash, legacy_info.code_hash);
+            for timestamp in [tsuki_v2, tsuki_v2 + 12] {
+                let (touched, mut executor) = execute(timestamp, number, Arc::clone(&spec));
+                assert!(touched);
+                let info = executor
+                    .evm_mut()
+                    .db_mut()
+                    .basic(L2_MESSAGE_QUEUE_ADDRESS)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(
+                    info.code_hash,
+                    keccak256(
+                        DOGEOS_MAINNET.genesis.alloc[&L2_MESSAGE_QUEUE_ADDRESS]
+                            .code
+                            .as_ref()
+                            .unwrap()
+                    )
+                );
+            }
+        }
+
+        // An unscheduled fork does not migrate, while a fork active from genesis
+        // migrates a legacy queue in the first executed block.
+        for (condition, should_swap) in [
+            (dogeos_hardforks::ForkCondition::Never, false),
+            (dogeos_hardforks::ForkCondition::Timestamp(0), true),
+        ] {
+            let spec = DogeosChainSpecBuilder::dogeos_chikyu()
+                .with_fork(dogeos_hardforks::DogeosHardfork::TsukiV2, condition)
+                .build(spec.config);
+            let (touched, mut executor) = execute(tsuki_v2 + 12, 1, Arc::new(spec));
+            assert_eq!(touched, should_swap);
+            let info = executor
+                .evm_mut()
+                .db_mut()
+                .basic(L2_MESSAGE_QUEUE_ADDRESS)
+                .unwrap()
+                .unwrap();
+            assert_eq!(info.code_hash == legacy_info.code_hash, !should_swap);
+        }
+
+        let (touched, mut executor) = execute(tsuki_v2, 2374, Arc::clone(&spec));
+        assert!(touched);
         let mainnet_queue = DOGEOS_MAINNET.genesis.alloc[&L2_MESSAGE_QUEUE_ADDRESS]
             .code
             .clone()
             .unwrap();
-        let code_hash = alloy_primitives::keccak256(&mainnet_queue);
+        let code_hash = keccak256(&mainnet_queue);
         let db = executor.evm_mut().db_mut();
-        // The guest checks the queue account and both checkpoint slots; it installs the new code
-        // itself.
+        // The witness must prove the queue account and both checkpoint slots.
         let record = ExecutionWitnessRecord::from_executed_state(db);
-        let hashed_address = alloy_primitives::keccak256(L2_MESSAGE_QUEUE_ADDRESS);
-        assert!(record.hashed_state.accounts.contains_key(&hashed_address));
-        let storage = &record.hashed_state.storages[&hashed_address].storage;
-        for slot in [WITHDRAW_TRIE_ROOT_SLOT, NEXT_MESSAGE_INDEX_SLOT] {
-            assert!(storage.contains_key(&alloy_primitives::keccak256(B256::from(slot))));
+        assert!(
+            record
+                .hashed_state
+                .accounts
+                .contains_key(&keccak256(L2_MESSAGE_QUEUE_ADDRESS))
+        );
+
+        let storage = &record.hashed_state.storages[&keccak256(L2_MESSAGE_QUEUE_ADDRESS)].storage;
+        for slot in [WITHDRAW_TRIE_ROOT_SLOT, crate::NEXT_MESSAGE_INDEX_SLOT] {
+            assert!(storage.contains_key(&keccak256(B256::from(slot))));
         }
 
         let info = db.basic(L2_MESSAGE_QUEUE_ADDRESS).unwrap().unwrap();
@@ -759,7 +905,7 @@ mod tests {
         assert_eq!(
             db.storage(L2_MESSAGE_QUEUE_ADDRESS, WITHDRAW_TRIE_ROOT_SLOT)
                 .unwrap(),
-            U256::from_be_bytes(root.0)
+            root
         );
 
         db.merge_transitions(BundleRetention::Reverts);
@@ -767,17 +913,52 @@ mod tests {
             db.bundle_state.contracts[&code_hash].original_bytes(),
             mainnet_queue
         );
-        // Unwinding the upgrade block puts the legacy account back.
+        // Unwinding the TsukiV2 block puts the legacy account back.
         let revert = db.bundle_state.reverts[0]
             .iter()
             .find(|(address, _)| *address == L2_MESSAGE_QUEUE_ADDRESS)
             .map(|(_, revert)| &revert.account);
         assert_eq!(revert, Some(&AccountInfoRevert::RevertTo(legacy_info)));
+        // The swap keeps the queue's storage, so neither the bundle nor its revert wipes it.
+        let reverts = &db.bundle_state.reverts[0];
+        let (_, queue_revert) = reverts
+            .iter()
+            .find(|(address, _)| *address == L2_MESSAGE_QUEUE_ADDRESS)
+            .unwrap();
+        assert!(!queue_revert.wipe_storage);
+        assert!(!db.bundle_state.state[&L2_MESSAGE_QUEUE_ADDRESS].was_destroyed());
         let info = db.bundle_state.state[&L2_MESSAGE_QUEUE_ADDRESS]
             .info
             .as_ref()
             .unwrap();
         assert_eq!((info.balance, info.nonce), (U256::from(7), 3));
+
+        // Execute the following block on the migrated state: no second swap or queue hook.
+        executor.evm_mut().ctx_mut().block.timestamp = U256::from(tsuki_v2 + 12);
+        executor.evm_mut().ctx_mut().block.number = U256::from(2375);
+        let (updates, hook) = recording_hook();
+        executor.set_state_hook(Some(hook));
+        executor.apply_pre_execution_changes().unwrap();
+        assert!(
+            !updates
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(_, keys)| keys.contains(&L2_MESSAGE_QUEUE_ADDRESS))
+        );
+        let db = executor.evm_mut().db_mut();
+        assert_eq!(
+            db.basic(L2_MESSAGE_QUEUE_ADDRESS)
+                .unwrap()
+                .unwrap()
+                .code_hash,
+            code_hash
+        );
+        assert_eq!(
+            db.storage(L2_MESSAGE_QUEUE_ADDRESS, WITHDRAW_TRIE_ROOT_SLOT)
+                .unwrap(),
+            root
+        );
     }
 
     #[test]
