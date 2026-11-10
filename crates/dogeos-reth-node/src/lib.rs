@@ -113,6 +113,7 @@ impl DogeosNodeTypes {
             >,
         DogeosEthApi<DogeosNodeAdapter<Node>>: reth_rpc_eth_api::helpers::EthTransactions<Error = reth_rpc_eth_types::EthApiError>
             + reth_rpc_eth_api::helpers::TraceExt
+            + reth_rpc_eth_api::EthApiTypes<NetworkTypes = dogeos_rpc_types::Scroll>
             + reth_rpc_eth_api::RpcNodeCore<Provider = Node::Provider>,
         <DogeosEthApi<DogeosNodeAdapter<Node>> as reth_rpc_eth_api::RpcNodeCore>::Provider:
             reth_chainspec::ChainSpecProvider<ChainSpec = DogeosChainSpec>,
@@ -147,6 +148,7 @@ impl DogeosNodeTypes {
             >,
         DogeosEthApi<DogeosNodeAdapter<Node>>: reth_rpc_eth_api::helpers::EthTransactions<Error = reth_rpc_eth_types::EthApiError>
             + reth_rpc_eth_api::helpers::TraceExt
+            + reth_rpc_eth_api::EthApiTypes<NetworkTypes = dogeos_rpc_types::Scroll>
             + reth_rpc_eth_api::RpcNodeCore<Provider = Node::Provider>,
         <DogeosEthApi<DogeosNodeAdapter<Node>> as reth_rpc_eth_api::RpcNodeCore>::Provider:
             reth_chainspec::ChainSpecProvider<ChainSpec = DogeosChainSpec>,
@@ -171,6 +173,10 @@ impl DogeosNodeTypes {
                 min_suggested_priority_fee,
                 payload_size_limit,
             );
+            ctx.modules.add_or_replace_if_module_configured(
+                RethRpcModule::Eth,
+                dogeos_reth_rpc::DogeosEstimateFeeApi::new(priority_fee_api.clone()).into_rpc()?,
+            )?;
             ctx.modules.add_or_replace_if_module_configured(
                 RethRpcModule::Eth,
                 priority_fee_api.into_rpc()?,
@@ -258,6 +264,7 @@ where
         >,
     DogeosEthApi<DogeosNodeAdapter<N>>: reth_rpc_eth_api::helpers::EthTransactions<Error = reth_rpc_eth_types::EthApiError>
         + reth_rpc_eth_api::helpers::TraceExt
+        + reth_rpc_eth_api::EthApiTypes<NetworkTypes = dogeos_rpc_types::Scroll>
         + reth_rpc_eth_api::RpcNodeCore<Provider = N::Provider>,
     <DogeosEthApi<DogeosNodeAdapter<N>> as reth_rpc_eth_api::RpcNodeCore>::Provider:
         reth_chainspec::ChainSpecProvider<ChainSpec = DogeosChainSpec>,
