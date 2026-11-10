@@ -41,45 +41,32 @@ is not gated. Before TsukiV2 the formula clamps every base fee, overhead include
 
 # Withdrawal queue upgrade
 
-A network upgraded from a drained checkpoint replaces the old withdrawal queue (the
-append-only Merkle tree at `0x5300000000000000000000000000000000000000`) with the hash-chain
-queue once, at a fixed block. Set `withdrawalQueueUpgrade` under the genesis JSON's
-`config.scroll`, with all four values taken from the network's frozen checkpoint:
+The withdrawal queue code swap is part of TsukiV2, using the same `tsukiV2Time`
+as the fee and EVM rules above. At the first executed block whose timestamp is at
+or after activation, the executor replaces the legacy Merkle-tree L2MessageQueue
+at `0x5300000000000000000000000000000000000000` with the hash-chain queue.
+There is no separate block-number schedule or checkpoint setting.
 
-```json
-{
-  "config": {
-    "scroll": {
-      "withdrawalQueueUpgrade": {
-        "block": 1000,
-        "legacyCodeHash": "0x…",
-        "seedRoot": "0x…",
-        "nextMessageIndex": 42
-      }
-    }
-  }
-}
-```
+Like the Feynman oracle transition, the transition is called on every active block
+and uses on-chain state to make the change idempotent. Only the exact legacy code
+hash from the Chikyu genesis (`0xdc3a5ee2e8f8bcfd3a6ae7d2b5f38c8bf5c77b9a3fad31aa5dfe1ffed7aad50c`)
+is replaced. The hash-chain queue, other code, and a missing account are left alone.
+Mainnet already has the hash-chain code in genesis. If TsukiV2 is active at genesis,
+the transition runs on the first executed block; genesis itself is not executed.
 
-This is a configuration excerpt; retain the other `scroll` fields.
+Only code changes: balance, nonce, withdrawal root (slot 0), next index (slot 1),
+owner, messenger, and all other storage are preserved. The old root seeds the new
+hash chain. Subsequent blocks keep the new code and the evolving queue state.
 
-| Field | Value |
-| --- | --- |
-| `block` | Block at which the code is replaced; at least 1, since genesis is never executed |
-| `legacyCodeHash` | Code hash of the old queue at the checkpoint |
-| `seedRoot` | Withdrawal root in the queue's slot 0 at the checkpoint |
-| `nextMessageIndex` | Next withdrawal index in the queue's slot 1 at the checkpoint |
+Before scheduling activation on an existing network, operators must verify the
+live queue's legacy code hash and complete the bridge drain and checkpoint
+conversion for that same cutover. Root and index are taken from the parent state;
+they are no longer checked against values supplied in genesis. Activating this
+rule retroactively on a chain that ran TsukiV2 with the legacy queue changes its
+historical state roots.
 
-- At `block`, TsukiV2 must be active and the queue must still hold the old code, root and
-  index; only its code is replaced, so the root seeds the new hash chain. Any mismatch fails
-  the block, and so does a later block that still runs the old code. If the queue already
-  runs the hash-chain code, nothing is checked or changed.
-- The root and index must be the queue's state at the parent of `block`, so no withdrawal may
-  be appended to the old queue between the checkpoint and `block`.
-- All four fields are required, `block` and `nextMessageIndex` are JSON numbers, and
-  `block: 0` and unknown fields are rejected. Binaries that predate this setting reject a
-  genesis that carries it.
-- All sequencers, followers, RPC nodes and the stateless verifier's chain settings must use
-  the same values. The setting does not change the genesis block hash or the fork ID.
-
-Mainnet and Chikyu do not set it; mainnet's genesis already holds the hash-chain queue.
+Remove `config.scroll.withdrawalQueueUpgrade` from configurations made for the old
+block-based mechanism: it is rejected as an unknown field, including `null`.
+Sequencers, followers, RPC nodes, and proving programs must agree on the TsukiV2
+schedule and execution code. Update the stateless verifier/prover pins with the
+upgrade-support release and validate a proof across the cutover before rollout.
