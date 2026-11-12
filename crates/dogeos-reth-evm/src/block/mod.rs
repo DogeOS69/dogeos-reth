@@ -476,7 +476,9 @@ mod tests {
     };
     use alloy_evm::{EvmEnv, block::StateChangePreBlockSource};
     use alloy_primitives::{Address, Bytes, keccak256};
-    use dogeos_chainspec::{DOGEOS_CHIKYU, DOGEOS_MAINNET};
+    use dogeos_chainspec::{
+        DOGEOS_CHIKYU, DOGEOS_MAINNET, DogeosChainSpec, DogeosChainSpecBuilder,
+    };
     use reth_revm::witness::ExecutionWitnessRecord;
     use revm::{
         Database,
@@ -681,7 +683,7 @@ mod tests {
             ..Default::default()
         };
         let root = U256::from(0x51ec);
-        let execute = |timestamp: u64| {
+        let execute = |timestamp: u64, spec: Arc<DogeosChainSpec>| {
             // Seed the backing database, so only the executor's reads fill the witness cache.
             let mut db = CacheDB::new(EmptyDB::default());
             db.insert_account_info(L2_MESSAGE_QUEUE_ADDRESS, legacy_info.clone());
@@ -708,7 +710,7 @@ mod tests {
             let mut executor = ScrollBlockExecutor::new(
                 evm,
                 ScrollBlockExecutionCtx::default(),
-                Arc::clone(&DOGEOS_CHIKYU),
+                spec,
                 ScrollRethReceiptBuilder,
             );
             let (updates, hook) = recording_hook();
@@ -723,13 +725,43 @@ mod tests {
         };
 
         let tsuki_v2 = dogeos_hardforks::CHIKYU_TSUKI_V2_TIMESTAMP;
-        let (touched, mut executor) = execute(tsuki_v2 - 1);
-        assert!(!touched);
-        let db = executor.evm_mut().db_mut();
-        let info = db.basic(L2_MESSAGE_QUEUE_ADDRESS).unwrap().unwrap();
-        assert_eq!(info.code_hash, legacy_info.code_hash);
+        let mainnet_queue_hash = keccak256(
+            DOGEOS_MAINNET.genesis.alloc[&L2_MESSAGE_QUEUE_ADDRESS]
+                .code
+                .as_ref()
+                .unwrap(),
+        );
+        // Executes the block's pre-execution changes; returns whether the queue was touched and
+        // its code hash afterwards.
+        let swap = |timestamp: u64, spec: Arc<DogeosChainSpec>| {
+            let (touched, mut executor) = execute(timestamp, spec);
+            let db = executor.evm_mut().db_mut();
+            let info = db.basic(L2_MESSAGE_QUEUE_ADDRESS).unwrap().unwrap();
+            (touched, info.code_hash)
+        };
+        let chikyu = || Arc::clone(&DOGEOS_CHIKYU);
+        assert_eq!(swap(tsuki_v2 - 1, chikyu()), (false, legacy_info.code_hash));
+        // The swap is keyed on the queue's code, so it also happens when the first TsukiV2 block
+        // lands after the activation time.
+        assert_eq!(swap(tsuki_v2 + 12, chikyu()), (true, mainnet_queue_hash));
+        // It follows the network's TsukiV2 schedule: never without it, from genesis with it.
+        for (condition, expected) in [
+            (
+                dogeos_hardforks::ForkCondition::Never,
+                (false, legacy_info.code_hash),
+            ),
+            (
+                dogeos_hardforks::ForkCondition::Timestamp(0),
+                (true, mainnet_queue_hash),
+            ),
+        ] {
+            let spec = DogeosChainSpecBuilder::dogeos_chikyu()
+                .with_fork(dogeos_hardforks::DogeosHardfork::TsukiV2, condition)
+                .build(DOGEOS_CHIKYU.config);
+            assert_eq!(swap(tsuki_v2 + 12, Arc::new(spec)), expected);
+        }
 
-        let (touched, mut executor) = execute(tsuki_v2);
+        let (touched, mut executor) = execute(tsuki_v2, chikyu());
         assert!(touched);
         let mainnet_queue = DOGEOS_MAINNET.genesis.alloc[&L2_MESSAGE_QUEUE_ADDRESS]
             .code

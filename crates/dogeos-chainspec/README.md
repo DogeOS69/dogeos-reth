@@ -45,3 +45,9 @@ mainnet genesis; its storage is kept, so the legacy withdrawal root seeds the ha
 code is left alone, so mainnet is unaffected. On a network with the legacy queue, TsukiV2 is
 therefore also the withdrawal-queue cutover: drain withdrawals before it, and move the bridge,
 the provers and the L1 withdrawal verification to the hash chain at the same time.
+
+The swap checks nothing but the code hash. The hash chain is seeded by whatever the queue holds
+at the parent of the first TsukiV2 block (root in slot 0, next index in slot 1), so before that
+block an operator must confirm with `eth_getCode` that the queue has the legacy code
+(`0xdc3a5ee2…d50c`), and after it that slots 0 and 1 at its parent match the frozen snapshot
+the converted bridge was built from.

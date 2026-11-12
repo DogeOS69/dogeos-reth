@@ -50,7 +50,8 @@ where
     DB: Database + DatabaseCommit,
 {
     // Only the code hash is compared, so the legacy code is never loaded and the read needs
-    // nothing beyond the queue account, which the witness carries for the withdrawal root.
+    // nothing beyond the queue account, which the witness carries for the withdrawal root
+    // (`crate::witness_state`).
     let Some(old_info) = db.basic(L2_MESSAGE_QUEUE_ADDRESS)? else {
         return Ok(EvmState::default());
     };
@@ -153,19 +154,16 @@ mod tests {
         assert!(apply_tsuki_v2_hard_fork(&mut db).unwrap().is_empty());
     }
 
-    /// The messenger kept in storage appends the next withdrawal on top of the legacy root.
-    #[test]
-    fn the_replaced_queue_continues_the_legacy_root() {
-        let mut db = queue_with(legacy_code());
-        apply_tsuki_v2_hard_fork(&mut db).unwrap();
-
-        let message_hash = B256::repeat_byte(0xab);
+    /// Sends `appendMessage(message_hash)` from the messenger and returns the call's output.
+    fn append(db: &mut CacheDB<EmptyDB>, message_hash: B256) -> Bytes {
         // appendMessage(bytes32)
         let mut data = vec![0x60, 0x0a, 0x2e, 0x77];
         data.extend_from_slice(message_hash.as_slice());
+        let nonce = db.basic(MESSENGER).unwrap().map_or(0, |info| info.nonce);
         let tx = ScrollTransactionIntoTxEnv::new(
             TxEnv {
                 caller: MESSENGER,
+                nonce,
                 kind: TxKind::Call(L2_MESSAGE_QUEUE_ADDRESS),
                 gas_limit: 1_000_000,
                 data: data.into(),
@@ -180,29 +178,56 @@ mod tests {
             BlockEnv::default(),
         );
         let evm_factory: ScrollEvmFactory = ScrollEvmFactory::default();
-        let mut evm = evm_factory.create_evm(&mut db, env);
-        let result = evm.transact_commit(tx).unwrap();
-
-        let root = keccak256([ROOT.as_slice(), message_hash.as_slice()].concat());
-        match result {
+        let mut evm = evm_factory.create_evm(db, env);
+        match evm.transact_commit(tx).unwrap() {
             ExecutionResult::Success {
                 output: Output::Call(output),
                 ..
-            } => assert_eq!(output.as_ref(), root.as_slice()),
+            } => output,
             result => panic!("appendMessage failed: {result:?}"),
         }
-        let mut queue_slot = |slot| {
-            evm.db_mut()
-                .storage(L2_MESSAGE_QUEUE_ADDRESS, slot)
-                .unwrap()
-        };
+    }
+
+    /// The messenger appends through the legacy code, then, after the swap, appends the next
+    /// withdrawal on top of the legacy root through the hash-chain code. This also checks that
+    /// both codes keep the messenger in the same slot.
+    #[test]
+    fn the_replaced_queue_continues_the_legacy_root() {
+        let mut db = queue_with(legacy_code());
+        // The legacy tree's zero-subtree hashes, as its initializer stores them in slots 2..42.
+        let mut zero_hash = B256::ZERO;
+        for slot in 2..42 {
+            db.insert_account_storage(
+                L2_MESSAGE_QUEUE_ADDRESS,
+                U256::from(slot),
+                U256::from_be_bytes(zero_hash.0),
+            )
+            .unwrap();
+            zero_hash = keccak256([zero_hash.as_slice(), zero_hash.as_slice()].concat());
+        }
+        append(&mut db, B256::repeat_byte(0xaa));
+        let queue_slot =
+            |db: &mut CacheDB<EmptyDB>, slot| db.storage(L2_MESSAGE_QUEUE_ADDRESS, slot).unwrap();
+        let legacy_root = B256::from(queue_slot(&mut db, WITHDRAW_TRIE_ROOT_SLOT));
+        assert_ne!(legacy_root, ROOT);
         assert_eq!(
-            queue_slot(WITHDRAW_TRIE_ROOT_SLOT),
+            queue_slot(&mut db, NEXT_MESSAGE_INDEX_SLOT),
+            U256::from(NEXT_INDEX + 1)
+        );
+
+        apply_tsuki_v2_hard_fork(&mut db).unwrap();
+
+        let message_hash = B256::repeat_byte(0xab);
+        let output = append(&mut db, message_hash);
+        let root = keccak256([legacy_root.as_slice(), message_hash.as_slice()].concat());
+        assert_eq!(output.as_ref(), root.as_slice());
+        assert_eq!(
+            queue_slot(&mut db, WITHDRAW_TRIE_ROOT_SLOT),
             U256::from_be_bytes(root.0)
         );
         assert_eq!(
-            queue_slot(NEXT_MESSAGE_INDEX_SLOT),
-            U256::from(NEXT_INDEX + 1)
+            queue_slot(&mut db, NEXT_MESSAGE_INDEX_SLOT),
+            U256::from(NEXT_INDEX + 2)
         );
     }
 
