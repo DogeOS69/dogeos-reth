@@ -176,7 +176,7 @@ mod tests {
             Some(0),
         );
         let env = EvmEnv::new(
-            CfgEnv::new_with_spec(ScrollSpecId::TSUKI),
+            CfgEnv::new_with_spec(ScrollSpecId::TSUKI_V2),
             BlockEnv::default(),
         );
         let evm_factory: ScrollEvmFactory = ScrollEvmFactory::default();
