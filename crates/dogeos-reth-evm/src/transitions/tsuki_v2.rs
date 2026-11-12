@@ -194,7 +194,7 @@ mod tests {
     #[test]
     fn the_replaced_queue_continues_the_legacy_root() {
         let mut db = queue_with(legacy_code());
-        // The legacy tree's zero-subtree hashes, as its initializer stores them in slots 2..42.
+        // The legacy tree's zero-subtree hashes, as its initializer stores them in slots 2 through 41.
         let mut zero_hash = B256::ZERO;
         for slot in 2..42 {
             db.insert_account_storage(
