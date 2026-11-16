@@ -21,7 +21,7 @@ production dependency.
 - Upstream source commit: `3a136fc8c38221e060cbc31ef5c5fa345cf0e17a`
 - DogeOS backport commit: `90e08ba40` in `DogeOS69/reth`
 - Stack base revision: `5235056be94c584edce6ba7900f163aaa9b8cda0`
-- Selected stack: rev `b4a77efea79928b82712669ac71eee0e5f878db5` (`tsuki-v0.13` plus DogeOS69/reth#22; tag pending)
+- Selected stack: rev `cd3eb46b454925d6d86955f34ad7aacd71b56f5b` (`tsuki-v0.13` plus DogeOS69/reth#22, #23 and #24; tag pending)
 - Generic rationale: successful RocksDB transactions and batch commits must enable WAL sync so
   acknowledged writes survive a host crash. The patch contains no DogeOS protocol behavior and
   does not change storage encodings.
@@ -62,7 +62,7 @@ scripts/audit-rocksdb-durability.sh
 - Upstream merge commit: `62808bd060e4c7398e3fb6df93881950b1433b18`
 - DogeOS patch PR: `DogeOS69/reth#5`
 - DogeOS behavior commit: `04e5c6ff415a3e8d1e299d6419b3b31ac88f3a8e`
-- Selected stack: rev `b4a77efea79928b82712669ac71eee0e5f878db5` (`tsuki-v0.13` plus DogeOS69/reth#22; tag pending)
+- Selected stack: rev `cd3eb46b454925d6d86955f34ad7aacd71b56f5b` (`tsuki-v0.13` plus DogeOS69/reth#22, #23 and #24; tag pending)
 - Generic rationale: EIP-3607 rejects a sender only when the account contains nonempty code.
   Native Storage V2 represents an explicitly empty genesis `code` value as
   `Some(KECCAK_EMPTY)`, which must remain eligible to send transactions. The change preserves
@@ -77,7 +77,7 @@ scripts/audit-rocksdb-durability.sh
 
 ## Devnet P2P, RPC and reorg hardening
 
-- Selected stack: rev `b4a77efea79928b82712669ac71eee0e5f878db5` (`tsuki-v0.13` plus DogeOS69/reth#22; tag pending).
+- Selected stack: rev `cd3eb46b454925d6d86955f34ad7aacd71b56f5b` (`tsuki-v0.13` plus DogeOS69/reth#22, #23 and #24; tag pending).
 - Generic rationale: bound peer/RPC resource use and preserve canonical-state and
   trie correctness during reorgs. These backports add no DogeOS protocol rules.
 - Coverage: the linked PRs record the focused regression tests and upstream-port
@@ -95,6 +95,8 @@ scripts/audit-rocksdb-durability.sh
 | [#18](https://github.com/DogeOS69/reth/pull/18) | Reject stale persisted forkchoice hashes | `reth-engine-tree` |
 | [#19](https://github.com/DogeOS69/reth/pull/19) | Compute trie reverts before unwinding hashed state | `reth-provider` |
 | [#22](https://github.com/DogeOS69/reth/pull/22) (`b4a77efea`, upstream #28264, tag pending) | Seek hashed entries unless the walker is at the exact prefix | `reth-trie` |
+| [#23](https://github.com/DogeOS69/reth/pull/23) (upstream #27247) | Validate safe and finalized hashes against the proposed chain before applying a forkchoice update | `reth-engine-tree`, `reth-node-ethereum` (e2e) |
+| [#24](https://github.com/DogeOS69/reth/pull/24) (`cd3eb46b4`, tag pending) | Prepare canonical rewinds before updating the tree head, so a failed rewind leaves the head unchanged | `reth-engine-tree` |
 
 - Removal condition: select an upstream Reth base with equivalent fixes, retaining
   the regressions and DogeOS integration checks. The bounded-session-queue follow-up

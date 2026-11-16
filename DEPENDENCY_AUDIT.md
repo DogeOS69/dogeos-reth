@@ -10,7 +10,7 @@ no copied upstream Reth crate and no production dependency on the legacy `scroll
 
 | Component | Locked selection |
 | --- | --- |
-| Reth | rev `b4a77efea79928b82712669ac71eee0e5f878db5` (`tsuki-v0.13` + upstream #28264 via DogeOS69/reth #22; tag pending) |
+| Reth | rev `cd3eb46b454925d6d86955f34ad7aacd71b56f5b` (`tsuki-v0.13` + DogeOS69/reth #22, #23, #24; tag pending) |
 | REVM | `36.0.0` |
 | `revm-scroll` | `tsuki-v0.13` / `516ff663b2fb2503dba8ef6b0d667f16334ac05a` |
 | Alloy API family | `alloy-consensus 1.8.2` |
