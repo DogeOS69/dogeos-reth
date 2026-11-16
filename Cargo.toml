@@ -12,8 +12,10 @@ repository = "https://github.com/DogeOS69/dogeos-reth"
 [workspace.dependencies]
 # Official Reth v2.0.0 plus the reviewed DogeOS compatibility and devnet hardening
 # backports. revm-scroll uses the tsuki-v0.13 release tag. Reth is temporarily pinned
-# by rev to tsuki-v0.13 plus the upstream trie seek-boundary fix (#28264) until that
-# commit is tagged; Cargo.lock and scripts/verify-dependency-graph.sh pin both commits.
+# by rev to tsuki-v0.13 plus the upstream trie seek-boundary fix (#28264), atomic
+# forkchoice validation (#27247) and rewind preparation before the head update
+# (DogeOS69/reth #22, #23, #24) until that commit is tagged; Cargo.lock and
+# scripts/verify-dependency-graph.sh pin both commits.
 reth-ethereum = { git = "https://github.com/DogeOS69/reth.git", rev = "cd3eb46b454925d6d86955f34ad7aacd71b56f5b", default-features = false }
 reth-ethereum-cli = { git = "https://github.com/DogeOS69/reth.git", rev = "cd3eb46b454925d6d86955f34ad7aacd71b56f5b", default-features = false }
 reth-cli = { git = "https://github.com/DogeOS69/reth.git", rev = "cd3eb46b454925d6d86955f34ad7aacd71b56f5b", default-features = false }

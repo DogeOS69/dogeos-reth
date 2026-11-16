@@ -95,7 +95,7 @@ scripts/audit-rocksdb-durability.sh
 | [#18](https://github.com/DogeOS69/reth/pull/18) | Reject stale persisted forkchoice hashes | `reth-engine-tree` |
 | [#19](https://github.com/DogeOS69/reth/pull/19) | Compute trie reverts before unwinding hashed state | `reth-provider` |
 | [#22](https://github.com/DogeOS69/reth/pull/22) (`b4a77efea`, upstream #28264, tag pending) | Seek hashed entries unless the walker is at the exact prefix | `reth-trie` |
-| [#23](https://github.com/DogeOS69/reth/pull/23) (upstream #27247) | Validate safe and finalized hashes against the proposed chain before applying a forkchoice update | `reth-engine-tree`, `reth-node-ethereum` (e2e) |
+| [#23](https://github.com/DogeOS69/reth/pull/23) (upstream #27247) | Validate safe and finalized hashes against the proposed chain before applying a forkchoice update | `reth-engine-tree`, `reth-chain-state`, `reth-node-ethereum` (e2e) |
 | [#24](https://github.com/DogeOS69/reth/pull/24) (`cd3eb46b4`, tag pending) | Prepare canonical rewinds (ancestor rebuild, disk-removal target) before updating the tree head, so a failed preparation leaves the head unchanged; a failure after the removal is issued is not rolled back | `reth-engine-tree` |
 
 - Removal condition: select an upstream Reth base with equivalent fixes, retaining
