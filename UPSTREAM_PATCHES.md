@@ -21,7 +21,7 @@ production dependency.
 - Upstream source commit: `3a136fc8c38221e060cbc31ef5c5fa345cf0e17a`
 - DogeOS backport commit: `90e08ba40` in `DogeOS69/reth`
 - Stack base revision: `5235056be94c584edce6ba7900f163aaa9b8cda0`
-- Selected stack: rev `b4a77efea79928b82712669ac71eee0e5f878db5` (`tsuki-v0.13` plus DogeOS69/reth#22; tag pending)
+- Selected stack: `tsuki-v0.14` / `005acc083ccad7c6d76b28e2da8cbe7593cc3a14`
 - Generic rationale: successful RocksDB transactions and batch commits must enable WAL sync so
   acknowledged writes survive a host crash. The patch contains no DogeOS protocol behavior and
   does not change storage encodings.
@@ -62,7 +62,7 @@ scripts/audit-rocksdb-durability.sh
 - Upstream merge commit: `62808bd060e4c7398e3fb6df93881950b1433b18`
 - DogeOS patch PR: `DogeOS69/reth#5`
 - DogeOS behavior commit: `04e5c6ff415a3e8d1e299d6419b3b31ac88f3a8e`
-- Selected stack: rev `b4a77efea79928b82712669ac71eee0e5f878db5` (`tsuki-v0.13` plus DogeOS69/reth#22; tag pending)
+- Selected stack: `tsuki-v0.14` / `005acc083ccad7c6d76b28e2da8cbe7593cc3a14`
 - Generic rationale: EIP-3607 rejects a sender only when the account contains nonempty code.
   Native Storage V2 represents an explicitly empty genesis `code` value as
   `Some(KECCAK_EMPTY)`, which must remain eligible to send transactions. The change preserves
@@ -77,7 +77,7 @@ scripts/audit-rocksdb-durability.sh
 
 ## Devnet P2P, RPC and reorg hardening
 
-- Selected stack: rev `b4a77efea79928b82712669ac71eee0e5f878db5` (`tsuki-v0.13` plus DogeOS69/reth#22; tag pending).
+- Selected stack: `tsuki-v0.14` / `005acc083ccad7c6d76b28e2da8cbe7593cc3a14`.
 - Generic rationale: bound peer/RPC resource use and preserve canonical-state and
   trie correctness during reorgs. These backports add no DogeOS protocol rules.
 - Coverage: the linked PRs record the focused regression tests and upstream-port
@@ -94,11 +94,29 @@ scripts/audit-rocksdb-durability.sh
 | [#17](https://github.com/DogeOS69/reth/pull/17) | Bound blocking RPC work and retain worker permits | `reth-rpc-eth-api`, `reth-rpc` |
 | [#18](https://github.com/DogeOS69/reth/pull/18) | Reject stale persisted forkchoice hashes | `reth-engine-tree` |
 | [#19](https://github.com/DogeOS69/reth/pull/19) | Compute trie reverts before unwinding hashed state | `reth-provider` |
-| [#22](https://github.com/DogeOS69/reth/pull/22) (`b4a77efea`, upstream #28264, tag pending) | Seek hashed entries unless the walker is at the exact prefix | `reth-trie` |
+| [#22](https://github.com/DogeOS69/reth/pull/22) (`b4a77efea`, upstream #28264) | Seek hashed entries unless the walker is at the exact prefix | `reth-trie` |
+| [#23](https://github.com/DogeOS69/reth/pull/23) (upstream #27247) | Validate safe and finalized hashes against the proposed chain before applying a forkchoice update | `reth-engine-tree`, `reth-chain-state`, `reth-node-ethereum` (e2e) |
+| [#24](https://github.com/DogeOS69/reth/pull/24) (`cd3eb46b4`) | Prepare canonical rewinds (ancestor rebuild, disk-removal target) before updating the tree head, so a failed preparation leaves the head unchanged; a failure after the removal is issued is not rolled back | `reth-engine-tree` |
 
 - Removal condition: select an upstream Reth base with equivalent fixes, retaining
   the regressions and DogeOS integration checks. The bounded-session-queue follow-up
-  (#20) is not part of this tag.
+  (#21, superseding #20) is included in this tag.
+
+## CA trust update
+
+- Patch PR: [DogeOS69/reth#8](https://github.com/DogeOS69/reth/pull/8)
+- Selected stack: `tsuki-v0.14` / `005acc083ccad7c6d76b28e2da8cbe7593cc3a14`.
+- Generic rationale: update certificate trust for the eMudhra compromise.
+  The patch changes Reth's lockfile and Dockerfile, not its manifest; dependency
+  lockfiles do not control this workspace's resolution.
+- Consumer lock: already at the reviewed patched levels before this repin:
+  `aws-lc-rs` 1.18.2, `aws-lc-sys` 0.46.0, `rustls-webpki` 0.103.16,
+  `webpki-root-certs` 1.0.10, and `webpki-roots` 1.0.10. No registry package
+  versions change.
+- Coverage: compare the consumer lock entries with the selected Reth lockfile;
+  reproduce the source graph with `scripts/verify-dependency-graph.sh`.
+- Removal condition: retain the patched trust versions or newer security updates
+  when moving to a later upstream release.
 
 ## Composite RPC add-on handles — retired, not selected
 
