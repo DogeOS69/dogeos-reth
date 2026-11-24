@@ -920,82 +920,62 @@ mod tests {
         );
     }
 
-    /// Mainnet and dev schedule Tsuki at or before genesis, so the post-Tsuki cutoff excludes
-    /// nothing and their fork IDs follow EIP-6122: every timestamp fork after genesis is counted.
-    /// The future fork stands in for the next scheduled upgrade.
+    /// Mainnet and dev schedule Tsuki at or before genesis, so the post-Tsuki cutoff excludes no
+    /// timestamp that EIP-6122 counts. Their fork IDs and filters must equal those of reth's
+    /// EIP-6122 `ChainSpec`, including for a fork one second after genesis, the earliest
+    /// timestamp EIP-6122 counts.
     #[test]
-    fn genesis_tsuki_networks_follow_eip6122_fork_ids() {
-        const FUTURE_FORK: u64 = 2_000_000_000;
-
-        for network in [&**DOGEOS_MAINNET, &**DOGEOS_DEV] {
-            let mut with_future_fork = network.clone();
-            with_future_fork.inner.hardforks.insert(
-                EthereumHardfork::Osaka,
-                ForkCondition::Timestamp(FUTURE_FORK),
+    fn tsuki_at_or_before_genesis_matches_reth_eip6122_fork_ids() {
+        for (name, network) in [("mainnet", &**DOGEOS_MAINNET), ("dev", &**DOGEOS_DEV)] {
+            assert!(
+                network
+                    .fork(DogeosHardfork::Tsuki)
+                    .as_timestamp()
+                    .is_some_and(|tsuki| tsuki <= network.genesis_timestamp()),
+                "{name} must schedule Tsuki at or before genesis"
             );
+            let next_fork = network.genesis_timestamp() + 1;
+            let mut with_next_fork = network.clone();
+            with_next_fork
+                .inner
+                .hardforks
+                .insert(EthereumHardfork::Osaka, ForkCondition::Timestamp(next_fork));
 
-            for spec in [network, &with_future_fork] {
-                assert!(
-                    spec.fork(DogeosHardfork::Tsuki)
-                        .as_timestamp()
-                        .is_some_and(|tsuki| tsuki <= spec.genesis_timestamp())
-                );
-                // EIP-6122 keys as reth's `ChainSpec::fork_filter` builds them, with no Tsuki
-                // cutoff.
-                let eip6122_keys = || {
-                    spec.forks_iter()
-                        .filter_map(|(_, condition)| match condition {
-                            ForkCondition::Block(block)
-                            | ForkCondition::TTD {
-                                fork_block: Some(block),
-                                ..
-                            } => Some(ForkFilterKey::Block(block)),
-                            ForkCondition::Timestamp(time) => Some(ForkFilterKey::Time(time)),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                };
-                for timestamp in [
-                    spec.genesis_timestamp(),
-                    FUTURE_FORK - 1,
-                    FUTURE_FORK,
-                    u64::MAX,
-                ] {
+            for spec in [network, &with_next_fork] {
+                for timestamp in [network.genesis_timestamp(), next_fork, u64::MAX] {
                     let head = Head {
                         number: 1,
                         timestamp,
                         ..Default::default()
                     };
-                    let eip6122 = ForkFilter::new(
-                        head,
-                        spec.genesis_hash(),
-                        spec.genesis_timestamp(),
-                        eip6122_keys(),
-                    )
-                    .current();
-                    assert_eq!(spec.fork_id(&head), eip6122);
-                    assert_eq!(spec.fork_filter(head).current(), eip6122);
+                    assert_eq!(spec.fork_id(&head), spec.inner.fork_id(&head), "{name}");
+                    assert_eq!(
+                        spec.fork_filter(head),
+                        spec.inner.fork_filter(head),
+                        "{name}"
+                    );
                 }
+                assert_eq!(spec.latest_fork_id(), spec.inner.latest_fork_id(), "{name}");
             }
 
-            // The future fork is announced before activation and changes the hash at it.
+            // The next fork is announced before activation and changes the hash at it.
             let base = ForkHash::from(network.genesis_hash());
             let before = Head {
                 number: 1,
-                timestamp: FUTURE_FORK - 1,
+                timestamp: network.genesis_timestamp(),
                 ..Default::default()
             };
             assert_eq!(
-                with_future_fork.fork_id(&before),
+                with_next_fork.fork_id(&before),
                 ForkId {
                     hash: base,
-                    next: FUTURE_FORK
+                    next: next_fork
                 }
             );
             assert_eq!(
-                with_future_fork.latest_fork_id(),
+                with_next_fork.latest_fork_id(),
                 ForkId {
-                    hash: base + FUTURE_FORK,
+                    hash: base + next_fork,
                     next: 0
                 }
             );
