@@ -288,9 +288,24 @@ mod tests {
             state.storage(L1_GAS_PRICE_ORACLE_ADDRESS, GPO_IS_FEYNMAN_SLOT)?,
             IS_FEYNMAN
         );
+        let code_hash = state
+            .basic(L1_GAS_PRICE_ORACLE_ADDRESS)?
+            .expect("oracle account")
+            .code_hash;
         assert!(apply_feynman_hard_fork(&mut state)?.is_empty());
+        assert_eq!(
+            state
+                .basic(L1_GAS_PRICE_ORACLE_ADDRESS)?
+                .expect("oracle account")
+                .code_hash,
+            code_hash
+        );
 
-        let mut info = L1BlockInfo::try_fetch(&mut state, ScrollSpecId::TSUKI_V2)?;
+        // Mainnet's first block executes at TsukiV2, so the Galileo fee formula applies.
+        let spec = crate::ScrollEvmConfig::dogeos(DOGEOS_MAINNET.clone())
+            .spec_id_at_timestamp_and_number(DOGEOS_MAINNET.genesis_timestamp() + 1, 1);
+        assert_eq!(spec, ScrollSpecId::TSUKI_V2);
+        let mut info = L1BlockInfo::try_fetch(&mut state, spec)?;
         assert_eq!(info.l1_commit_scalar, Some(U256::from(600_000_000u64)));
         assert_eq!(info.l1_blob_scalar, Some(U256::from(7_400_000_000u64)));
         assert_eq!(info.penalty_factor, Some(U256::from(10_000u64)));
@@ -302,21 +317,31 @@ mod tests {
         info.l1_blob_base_fee = Some(U256::from(1_000_000_000u64));
         let input = [0xffu8; 200];
         let fee = |info: &L1BlockInfo| {
-            info.try_calculate_tx_l1_cost(&input, ScrollSpecId::TSUKI_V2, None, Some(150))
+            info.try_calculate_tx_l1_cost(&input, spec, None, Some(150))
                 .unwrap()
         };
-        let with_genesis_threshold = fee(&info);
-        assert!(with_genesis_threshold > U256::ZERO);
-        info.penalty_threshold = Some(INITIAL_PENALTY_THRESHOLD);
-        assert_eq!(fee(&info), with_genesis_threshold);
+        let with_genesis_slots = fee(&info);
+        assert!(with_genesis_slots > U256::ZERO);
+        let mut transition_threshold = info.clone();
+        transition_threshold.penalty_threshold = Some(INITIAL_PENALTY_THRESHOLD);
+        assert_eq!(fee(&transition_threshold), with_genesis_slots);
+        // The factor is read: the transition's 1e9 would price the fee differently from the
+        // configured 10000.
+        let mut transition_factor = info.clone();
+        transition_factor.penalty_factor = Some(INITIAL_PENALTY_FACTOR);
+        assert_ne!(fee(&transition_factor), with_genesis_slots);
         Ok(())
     }
 
     /// The testnet genesis also marks the oracle as past Feynman and leaves both penalty slots at
-    /// zero. Under the Feynman fee formula a zero threshold never applies the penalty, so the fee
-    /// equals the one under the values the transition would have written (both 1.0).
+    /// zero. Under revm-scroll's Feynman fee formula, which execution and the pool use, a zero
+    /// threshold never applies the penalty, so the fee equals the one under the values the
+    /// transition would have written (both 1.0). This covers the native fee only: the Feynman
+    /// oracle contract's `getL1Fee` multiplies by the penalty factor itself, so it returns zero
+    /// while slot 10 is zero.
     #[test]
-    fn chikyu_genesis_penalty_slots_price_feynman_fees_like_the_transition() -> eyre::Result<()> {
+    fn chikyu_genesis_penalty_slots_give_native_feynman_fees_like_the_transition()
+    -> eyre::Result<()> {
         use dogeos_chainspec::DOGEOS_CHIKYU;
         use revm_scroll::{ScrollSpecId, l1block::L1BlockInfo};
 
@@ -349,22 +374,25 @@ mod tests {
         info.l1_commit_scalar = Some(U256::from(600_000_000u64));
         info.l1_blob_scalar = Some(U256::from(7_400_000_000u64));
         let input = [0xffu8; 200];
-        // Every compression ratio the formula accepts is at least 1.0 (1e9).
-        for ratio in [1_000_000_000u64, 1_500_000_000, 10_000_000_000] {
-            let fee = |info: &L1BlockInfo| {
-                info.try_calculate_tx_l1_cost(
-                    &input,
-                    ScrollSpecId::FEYNMAN,
-                    Some(U256::from(ratio)),
-                    None,
-                )
-                .unwrap()
-            };
-            let mut transition = info.clone();
-            transition.penalty_threshold = Some(INITIAL_PENALTY_THRESHOLD);
-            transition.penalty_factor = Some(INITIAL_PENALTY_FACTOR);
-            assert!(fee(&info) > U256::ZERO);
-            assert_eq!(fee(&info), fee(&transition));
+        let fee = |info: &L1BlockInfo, ratio: U256| {
+            info.try_calculate_tx_l1_cost(&input, ScrollSpecId::FEYNMAN, Some(ratio), None)
+        };
+        let mut transition = info.clone();
+        transition.penalty_threshold = Some(INITIAL_PENALTY_THRESHOLD);
+        transition.penalty_factor = Some(INITIAL_PENALTY_FACTOR);
+        // The formula rejects compression ratios below 1.0 (1e9) ...
+        let below_one = INITIAL_PENALTY_THRESHOLD - U256::from(1);
+        assert!(fee(&info, below_one).is_err());
+        assert!(fee(&transition, below_one).is_err());
+        // ... and at or above it, both thresholds select the neutral penalty.
+        for ratio in [
+            INITIAL_PENALTY_THRESHOLD,
+            U256::from(1_500_000_000u64),
+            U256::MAX,
+        ] {
+            let genesis_fee = fee(&info, ratio).unwrap();
+            assert!(genesis_fee > U256::ZERO);
+            assert_eq!(genesis_fee, fee(&transition, ratio).unwrap());
         }
         Ok(())
     }
