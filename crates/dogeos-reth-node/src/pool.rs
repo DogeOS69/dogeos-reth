@@ -1036,9 +1036,9 @@ mod tests {
     }
 
     #[test]
-    fn pool_applies_execution_rules_for_eip7702_and_calldata_floor() {
+    fn pool_matches_execution_transaction_rules() {
         // Chikyu's genesis head executes at Feynman, the oldest spec DogeOS runs.
-        assert_pool_matches_execution_for_eip7702_and_calldata_floor(
+        assert_pool_matches_execution_transaction_rules(
             &DOGEOS_CHIKYU,
             DogeosChainSpecBuilder::dogeos_chikyu(),
             ScrollSpecId::FEYNMAN,
@@ -1046,9 +1046,9 @@ mod tests {
     }
 
     #[test]
-    fn mainnet_pool_applies_execution_rules_for_eip7702_and_calldata_floor() {
+    fn mainnet_pool_matches_execution_transaction_rules() {
         // Mainnet executes every block at TsukiV2.
-        assert_pool_matches_execution_for_eip7702_and_calldata_floor(
+        assert_pool_matches_execution_transaction_rules(
             &DOGEOS_MAINNET,
             DogeosChainSpecBuilder::dogeos_mainnet(),
             ScrollSpecId::TSUKI_V2,
@@ -1057,9 +1057,9 @@ mod tests {
 
     /// On `base`'s genesis head, whose next block executes at `spec`, checks that the pool and
     /// the EVM draw the same lines for EIP-7702 admission and intrinsic gas, delegated senders,
-    /// the EIP-7623 floor, the EIP-7825 gas-limit cap (from Tsuki) and the EIP-3860 initcode
-    /// limit.
-    fn assert_pool_matches_execution_for_eip7702_and_calldata_floor(
+    /// the EIP-7623 floor, the EIP-7825 gas-limit cap (only from Tsuki) and the EIP-3860
+    /// initcode limit.
+    fn assert_pool_matches_execution_transaction_rules(
         base: &DogeosChainSpec,
         builder: DogeosChainSpecBuilder,
         spec: ScrollSpecId,
@@ -1080,6 +1080,8 @@ mod tests {
             ..Default::default()
         };
         let mut genesis = base.genesis().clone();
+        // Keep the block gas limit above the EIP-7825 cap so it does not mask the cap checks.
+        genesis.gas_limit = genesis.gas_limit.max(30_000_000);
         genesis.alloc.extend([
             (sender, funded(None)),
             (
@@ -1130,6 +1132,15 @@ mod tests {
             let encoded_length = signed.encode_2718_len();
             DogeosPooledTransaction::new(Recovered::new_unchecked(signed, sender), encoded_length)
         };
+        // EVM simulation of the next block, independent of the pool's own checks.
+        let execute = |transaction| {
+            validate_code_witness(
+                &execution_client,
+                &ScrollEvmConfig::dogeos(Arc::clone(&chain_spec)),
+                &transaction,
+                Default::default(),
+            )
+        };
 
         let authorization = SignedAuthorization::new_unchecked(
             Authorization {
@@ -1163,9 +1174,29 @@ mod tests {
         let outcome = validate(set_code(46_000, vec![authorization.clone()], 0x30));
         assert!(outcome.is_valid(), "{outcome:?}");
         assert!(matches!(
-            validate(set_code(45_999, vec![authorization], 0x31)).as_invalid(),
+            validate(set_code(45_999, vec![authorization.clone()], 0x31)).as_invalid(),
             Some(InvalidPoolTransactionError::IntrinsicGasTooLow)
         ));
+        // Execution charges the same per-authorization gas and also requires authorizations.
+        assert!(execute(set_code(46_000, vec![authorization.clone()], 0x50)).is_ok());
+        let error = execute(set_code(45_999, vec![authorization], 0x51)).unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                dogeos_reth_txpool::CodeWitnessValidationError::Indeterminate(message)
+                    if message.contains("call gas cost (46000)")
+            ),
+            "{error:?}"
+        );
+        let error = execute(set_code(46_000, vec![], 0x52)).unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                dogeos_reth_txpool::CodeWitnessValidationError::Indeterminate(message)
+                    if message.contains("empty authorization list")
+            ),
+            "{error:?}"
+        );
         assert!(matches!(
             validate(set_code(46_000, vec![], 0x32)).as_invalid(),
             Some(InvalidPoolTransactionError::Eip7702(
@@ -1212,14 +1243,6 @@ mod tests {
         assert!(outcome.is_valid(), "{outcome:?}");
 
         // Execution draws the calldata-floor line at the same gas limit.
-        let execute = |transaction| {
-            validate_code_witness(
-                &execution_client,
-                &ScrollEvmConfig::dogeos(Arc::clone(&chain_spec)),
-                &transaction,
-                Default::default(),
-            )
-        };
         let error = execute(calldata(24_999, 0x37)).unwrap_err();
         assert!(
             matches!(
@@ -1232,36 +1255,41 @@ mod tests {
         assert!(execute(calldata(25_000, 0x38)).is_ok());
 
         // EIP-7825 gas-limit cap: applied by execution from Tsuki, and by the pool through the
-        // same EVM configuration. Before Tsuki only the block gas limit bounds a transaction.
-        if spec.is_enabled_in(ScrollSpecId::TSUKI) {
-            let cap = revm::primitives::eip7825::TX_GAS_LIMIT_CAP;
-            let with_gas_limit = |gas_limit, hash_byte| {
-                pooled(
-                    Signed::new_unchecked(
-                        TxLegacy {
-                            chain_id: Some(chain_id),
-                            gas_price: 1,
-                            gas_limit,
-                            to: TxKind::Call(Address::ZERO),
-                            ..Default::default()
-                        },
-                        Signature::test_signature(),
-                        B256::repeat_byte(hash_byte),
-                    )
-                    .into(),
-                    sender,
+        // same EVM configuration. Before Tsuki neither side caps a transaction's gas limit.
+        let cap = revm::primitives::eip7825::TX_GAS_LIMIT_CAP;
+        let with_gas_limit = |gas_limit, hash_byte| {
+            pooled(
+                Signed::new_unchecked(
+                    TxLegacy {
+                        chain_id: Some(chain_id),
+                        gas_price: 1,
+                        gas_limit,
+                        to: TxKind::Call(Address::ZERO),
+                        ..Default::default()
+                    },
+                    Signature::test_signature(),
+                    B256::repeat_byte(hash_byte),
                 )
-            };
-            let outcome = validate(with_gas_limit(cap, 0x40));
-            assert!(outcome.is_valid(), "{outcome:?}");
-            assert!(execute(with_gas_limit(cap, 0x41)).is_ok());
-            assert!(matches!(
-                validate(with_gas_limit(cap + 1, 0x42)).as_invalid(),
-                Some(InvalidPoolTransactionError::Consensus(
-                    InvalidTransactionError::GasLimitTooHigh
-                ))
-            ));
-            let error = execute(with_gas_limit(cap + 1, 0x43)).unwrap_err();
+                .into(),
+                sender,
+            )
+        };
+        let outcome = validate(with_gas_limit(cap, 0x40));
+        assert!(outcome.is_valid(), "{outcome:?}");
+        assert!(execute(with_gas_limit(cap, 0x41)).is_ok());
+        let outcome = validate(with_gas_limit(cap + 1, 0x42));
+        let executed = execute(with_gas_limit(cap + 1, 0x43));
+        if spec.is_enabled_in(ScrollSpecId::TSUKI) {
+            assert!(
+                matches!(
+                    outcome.as_invalid(),
+                    Some(InvalidPoolTransactionError::Consensus(
+                        InvalidTransactionError::GasLimitTooHigh
+                    ))
+                ),
+                "{outcome:?}"
+            );
+            let error = executed.unwrap_err();
             assert!(
                 matches!(
                     &error,
@@ -1270,6 +1298,9 @@ mod tests {
                 ),
                 "{error:?}"
             );
+        } else {
+            assert!(outcome.is_valid(), "{outcome:?}");
+            assert!(executed.is_ok(), "{executed:?}");
         }
 
         // EIP-3860 initcode limit, from the Shanghai baseline on both sides.
