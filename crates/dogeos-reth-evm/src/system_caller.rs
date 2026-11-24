@@ -235,6 +235,56 @@ mod tests {
         assert_eq!(updates[0].1, [HISTORY_STORAGE_ADDRESS]);
     }
 
+    /// Runs block 1's EIP-2935 call against the history account as the mainnet genesis
+    /// allocates it, not a test-injected copy, so a missing or wrong account fails here.
+    #[test]
+    fn mainnet_genesis_history_account_stores_genesis_hash_at_block_one() {
+        use dogeos_chainspec::DOGEOS_MAINNET;
+
+        let genesis_account = DOGEOS_MAINNET
+            .genesis()
+            .alloc
+            .get(&HISTORY_STORAGE_ADDRESS)
+            .expect("mainnet genesis allocates the EIP-2935 history account");
+        let code = Bytecode::new_raw(genesis_account.code.clone().unwrap_or_default());
+        let mut state = State::builder()
+            .with_database(EmptyDB::default())
+            .with_bundle_update()
+            .build();
+        state.insert_account(
+            HISTORY_STORAGE_ADDRESS,
+            AccountInfo {
+                balance: genesis_account.balance,
+                nonce: genesis_account.nonce.unwrap_or_default(),
+                code_hash: code.hash_slow(),
+                code: Some(code),
+                ..Default::default()
+            },
+        );
+        let mut caller = ScrollSystemCaller::new(DOGEOS_MAINNET.clone());
+        let mut evm = ScrollEvmFactory::<ScrollDefaultPrecompilesFactory>::default().create_evm(
+            state,
+            EvmEnv::new(
+                CfgEnv::new_with_spec(ScrollSpecId::TSUKI_V2),
+                block_env(1, DOGEOS_MAINNET.genesis_timestamp() + 1),
+            ),
+        );
+
+        caller
+            .apply_blockhashes_contract_call(DOGEOS_MAINNET.genesis_hash(), &mut evm)
+            .unwrap();
+
+        // Block 1 writes its parent (genesis) hash to slot (1 - 1) % 8191 = 0.
+        assert_eq!(
+            B256::from(
+                evm.db_mut()
+                    .storage(HISTORY_STORAGE_ADDRESS, U256::ZERO)
+                    .unwrap()
+            ),
+            DOGEOS_MAINNET.genesis_hash()
+        );
+    }
+
     #[test]
     fn skips_blockhash_call_at_genesis() {
         let mut caller = ScrollSystemCaller::new(DogeosChainHardforks::mainnet());
