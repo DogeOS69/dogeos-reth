@@ -1055,8 +1055,10 @@ mod tests {
         );
     }
 
-    /// Admits EIP-7702 transactions and applies the EIP-7623 floor on `base`'s genesis head,
-    /// whose next block executes at `spec`, drawing the same lines as execution.
+    /// On `base`'s genesis head, whose next block executes at `spec`, checks that the pool and
+    /// the EVM draw the same lines for EIP-7702 admission and intrinsic gas, delegated senders,
+    /// the EIP-7623 floor, the EIP-7825 gas-limit cap (from Tsuki) and the EIP-3860 initcode
+    /// limit.
     fn assert_pool_matches_execution_for_eip7702_and_calldata_floor(
         base: &DogeosChainSpec,
         builder: DogeosChainSpecBuilder,
@@ -1209,7 +1211,7 @@ mod tests {
         let outcome = validate(calldata(25_000, 0x36));
         assert!(outcome.is_valid(), "{outcome:?}");
 
-        // Execution draws the same lines, so the pool never rejects what the EVM accepts.
+        // Execution draws the calldata-floor line at the same gas limit.
         let execute = |transaction| {
             validate_code_witness(
                 &execution_client,
@@ -1228,6 +1230,84 @@ mod tests {
             "{error:?}"
         );
         assert!(execute(calldata(25_000, 0x38)).is_ok());
+
+        // EIP-7825 gas-limit cap: applied by execution from Tsuki, and by the pool through the
+        // same EVM configuration. Before Tsuki only the block gas limit bounds a transaction.
+        if spec.is_enabled_in(ScrollSpecId::TSUKI) {
+            let cap = revm::primitives::eip7825::TX_GAS_LIMIT_CAP;
+            let with_gas_limit = |gas_limit, hash_byte| {
+                pooled(
+                    Signed::new_unchecked(
+                        TxLegacy {
+                            chain_id: Some(chain_id),
+                            gas_price: 1,
+                            gas_limit,
+                            to: TxKind::Call(Address::ZERO),
+                            ..Default::default()
+                        },
+                        Signature::test_signature(),
+                        B256::repeat_byte(hash_byte),
+                    )
+                    .into(),
+                    sender,
+                )
+            };
+            let outcome = validate(with_gas_limit(cap, 0x40));
+            assert!(outcome.is_valid(), "{outcome:?}");
+            assert!(execute(with_gas_limit(cap, 0x41)).is_ok());
+            assert!(matches!(
+                validate(with_gas_limit(cap + 1, 0x42)).as_invalid(),
+                Some(InvalidPoolTransactionError::Consensus(
+                    InvalidTransactionError::GasLimitTooHigh
+                ))
+            ));
+            let error = execute(with_gas_limit(cap + 1, 0x43)).unwrap_err();
+            assert!(
+                matches!(
+                    &error,
+                    dogeos_reth_txpool::CodeWitnessValidationError::Indeterminate(message)
+                        if message.contains("greater than the cap")
+                ),
+                "{error:?}"
+            );
+        }
+
+        // EIP-3860 initcode limit, from the Shanghai baseline on both sides.
+        let max_initcode = revm::primitives::eip3860::MAX_INITCODE_SIZE;
+        let create = |initcode_len, hash_byte| {
+            pooled(
+                Signed::new_unchecked(
+                    TxLegacy {
+                        chain_id: Some(chain_id),
+                        gas_price: 1,
+                        gas_limit: 2_000_000,
+                        to: TxKind::Create,
+                        input: Bytes::from(vec![0; initcode_len]),
+                        ..Default::default()
+                    },
+                    Signature::test_signature(),
+                    B256::repeat_byte(hash_byte),
+                )
+                .into(),
+                sender,
+            )
+        };
+        let outcome = validate(create(max_initcode, 0x44));
+        assert!(outcome.is_valid(), "{outcome:?}");
+        assert!(execute(create(max_initcode, 0x45)).is_ok());
+        assert!(matches!(
+            validate(create(max_initcode + 1, 0x46)).as_invalid(),
+            Some(InvalidPoolTransactionError::ExceedsMaxInitCodeSize(_, _))
+        ));
+        let error = execute(create(max_initcode + 1, 0x47)).unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                dogeos_reth_txpool::CodeWitnessValidationError::Indeterminate(message)
+                    if message.contains("initcode size limit")
+            ),
+            "{error:?}"
+        );
     }
 
     #[test]

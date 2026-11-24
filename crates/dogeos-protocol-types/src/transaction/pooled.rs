@@ -549,7 +549,8 @@ mod tests {
     /// transactions, so both fail to decode before validation.
     #[test]
     fn pooled_decoding_accepts_eip7702_and_rejects_blob_and_l1_message_types() {
-        use alloy_consensus::{TxEip4844, TxEip7702};
+        use crate::TxL1Message;
+        use alloy_consensus::{Sealed, TxEip4844, TxEip7702};
         use alloy_eips::eip2718::Encodable2718;
         use alloy_primitives::{B256, Signature};
 
@@ -572,9 +573,10 @@ mod tests {
         assert_eq!(blob[0], 0x03);
         assert!(ScrollPooledTransaction::decode_2718(&mut blob.as_slice()).is_err());
 
-        // A type-4 body under the L1-message type byte.
-        let mut l1_message = encoded;
-        l1_message[0] = 0x7e;
+        let l1_message =
+            ScrollTxEnvelope::L1Message(Sealed::new_unchecked(TxL1Message::default(), B256::ZERO))
+                .encoded_2718();
+        assert_eq!(l1_message[0], 0x7e);
         assert!(matches!(
             ScrollPooledTransaction::decode_2718(&mut l1_message.as_slice()),
             Err(Eip2718Error::UnexpectedType(0x7e))
