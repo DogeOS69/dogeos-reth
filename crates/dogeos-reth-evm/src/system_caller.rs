@@ -235,10 +235,13 @@ mod tests {
         assert_eq!(updates[0].1, [HISTORY_STORAGE_ADDRESS]);
     }
 
-    /// Runs block 1's EIP-2935 call against the history account as the mainnet genesis
-    /// allocates it, not a test-injected copy, so a missing or wrong account fails here.
+    /// Runs the EIP-2935 pre-block calls of blocks 1 and 2 against the history account loaded
+    /// from the mainnet genesis allocation rather than a test-injected copy, so a missing account
+    /// or history code that does not store parent hashes by block number fails here. The exact
+    /// code is pinned by `mainnet_genesis_contains_canonical_history_account` in
+    /// `dogeos-chainspec`.
     #[test]
-    fn mainnet_genesis_history_account_stores_genesis_hash_at_block_one() {
+    fn mainnet_genesis_history_account_stores_parent_hashes() {
         use dogeos_chainspec::DOGEOS_MAINNET;
 
         let genesis_account = DOGEOS_MAINNET
@@ -246,12 +249,18 @@ mod tests {
             .alloc
             .get(&HISTORY_STORAGE_ADDRESS)
             .expect("mainnet genesis allocates the EIP-2935 history account");
-        let code = Bytecode::new_raw(genesis_account.code.clone().unwrap_or_default());
+        let code = Bytecode::new_raw_checked(
+            genesis_account
+                .code
+                .clone()
+                .expect("the mainnet history account has code"),
+        )
+        .expect("valid genesis bytecode");
         let mut state = State::builder()
             .with_database(EmptyDB::default())
             .with_bundle_update()
             .build();
-        state.insert_account(
+        state.insert_account_with_storage(
             HISTORY_STORAGE_ADDRESS,
             AccountInfo {
                 balance: genesis_account.balance,
@@ -260,29 +269,41 @@ mod tests {
                 code: Some(code),
                 ..Default::default()
             },
+            genesis_account
+                .storage_slots()
+                .map(|(slot, value)| (slot.into(), value))
+                .collect(),
         );
+
         let mut caller = ScrollSystemCaller::new(DOGEOS_MAINNET.clone());
-        let mut evm = ScrollEvmFactory::<ScrollDefaultPrecompilesFactory>::default().create_evm(
-            state,
-            EvmEnv::new(
-                CfgEnv::new_with_spec(ScrollSpecId::TSUKI_V2),
-                block_env(1, DOGEOS_MAINNET.genesis_timestamp() + 1),
-            ),
-        );
+        let block_one_parent = DOGEOS_MAINNET.genesis_hash();
+        let block_two_parent = B256::repeat_byte(0x55);
+        for (number, parent_hash) in [(1, block_one_parent), (2, block_two_parent)] {
+            let mut evm = ScrollEvmFactory::<ScrollDefaultPrecompilesFactory>::default()
+                .create_evm(
+                    state,
+                    EvmEnv::new(
+                        CfgEnv::new_with_spec(ScrollSpecId::TSUKI_V2),
+                        block_env(number, DOGEOS_MAINNET.genesis_timestamp() + number),
+                    ),
+                );
+            caller
+                .apply_blockhashes_contract_call(parent_hash, &mut evm)
+                .unwrap();
+            state = evm.into_db();
+        }
 
-        caller
-            .apply_blockhashes_contract_call(DOGEOS_MAINNET.genesis_hash(), &mut evm)
-            .unwrap();
-
-        // Block 1 writes its parent (genesis) hash to slot (1 - 1) % 8191 = 0.
-        assert_eq!(
-            B256::from(
-                evm.db_mut()
-                    .storage(HISTORY_STORAGE_ADDRESS, U256::ZERO)
-                    .unwrap()
-            ),
-            DOGEOS_MAINNET.genesis_hash()
-        );
+        // Block n stores its parent hash at slot (n - 1) % 8191.
+        for (slot, parent_hash) in [(0, block_one_parent), (1, block_two_parent)] {
+            assert_eq!(
+                B256::from(
+                    state
+                        .storage(HISTORY_STORAGE_ADDRESS, U256::from(slot))
+                        .unwrap()
+                ),
+                parent_hash
+            );
+        }
     }
 
     #[test]
