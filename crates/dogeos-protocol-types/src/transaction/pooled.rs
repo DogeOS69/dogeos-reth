@@ -545,6 +545,42 @@ mod tests {
         }
     }
 
+    /// The pool admits type-4 transactions but has no variant for EIP-4844 blob or L1-message
+    /// transactions, so both fail to decode before validation.
+    #[test]
+    fn pooled_decoding_accepts_eip7702_and_rejects_blob_and_l1_message_types() {
+        use alloy_consensus::{TxEip4844, TxEip7702};
+        use alloy_eips::eip2718::Encodable2718;
+        use alloy_primitives::{B256, Signature};
+
+        let signed_7702 = Signed::new_unchecked(
+            TxEip7702::default(),
+            Signature::test_signature(),
+            B256::ZERO,
+        );
+        let encoded = signed_7702.encoded_2718();
+        assert_eq!(encoded[0], 0x04);
+        let decoded = ScrollPooledTransaction::decode_2718(&mut encoded.as_slice()).unwrap();
+        assert!(matches!(decoded, ScrollPooledTransaction::Eip7702(_)));
+
+        let blob = Signed::new_unchecked(
+            TxEip4844::default(),
+            Signature::test_signature(),
+            B256::ZERO,
+        )
+        .encoded_2718();
+        assert_eq!(blob[0], 0x03);
+        assert!(ScrollPooledTransaction::decode_2718(&mut blob.as_slice()).is_err());
+
+        // A type-4 body under the L1-message type byte.
+        let mut l1_message = encoded;
+        l1_message[0] = 0x7e;
+        assert!(matches!(
+            ScrollPooledTransaction::decode_2718(&mut l1_message.as_slice()),
+            Err(Eip2718Error::UnexpectedType(0x7e))
+        ));
+    }
+
     // <https://holesky.etherscan.io/tx/0x7f60faf8a410a80d95f7ffda301d5ab983545913d3d789615df3346579f6c849>
     #[test]
     fn decode_eip1559_enveloped() {

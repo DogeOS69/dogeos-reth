@@ -324,7 +324,9 @@ mod tests {
     use alloy_primitives::{
         Address, B256, Bytes, Signature, TxKind, U256, keccak256, map::HashMap,
     };
-    use dogeos_chainspec::{DOGEOS_CHIKYU, DOGEOS_DEV, DogeosChainSpec, DogeosChainSpecBuilder};
+    use dogeos_chainspec::{
+        DOGEOS_CHIKYU, DOGEOS_DEV, DOGEOS_MAINNET, DogeosChainSpec, DogeosChainSpecBuilder,
+    };
     use dogeos_hardforks::{DogeosHardfork, ForkCondition};
     use dogeos_reth_evm::ScrollEvmConfig;
     use dogeos_reth_primitives::{DogeosBlock, DogeosPrimitives, ScrollTransactionSigned};
@@ -350,6 +352,7 @@ mod tests {
         validate::EthTransactionValidatorBuilder,
     };
     use reth_trie_common::KeccakKeyHasher;
+    use revm_scroll::ScrollSpecId;
     use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
     type NativeProvider = BlockchainProvider<
@@ -1034,6 +1037,31 @@ mod tests {
 
     #[test]
     fn pool_applies_execution_rules_for_eip7702_and_calldata_floor() {
+        // Chikyu's genesis head executes at Feynman, the oldest spec DogeOS runs.
+        assert_pool_matches_execution_for_eip7702_and_calldata_floor(
+            &DOGEOS_CHIKYU,
+            DogeosChainSpecBuilder::dogeos_chikyu(),
+            ScrollSpecId::FEYNMAN,
+        );
+    }
+
+    #[test]
+    fn mainnet_pool_applies_execution_rules_for_eip7702_and_calldata_floor() {
+        // Mainnet executes every block at TsukiV2.
+        assert_pool_matches_execution_for_eip7702_and_calldata_floor(
+            &DOGEOS_MAINNET,
+            DogeosChainSpecBuilder::dogeos_mainnet(),
+            ScrollSpecId::TSUKI_V2,
+        );
+    }
+
+    /// Admits EIP-7702 transactions and applies the EIP-7623 floor on `base`'s genesis head,
+    /// whose next block executes at `spec`, drawing the same lines as execution.
+    fn assert_pool_matches_execution_for_eip7702_and_calldata_floor(
+        base: &DogeosChainSpec,
+        builder: DogeosChainSpecBuilder,
+        spec: ScrollSpecId,
+    ) {
         use alloy_consensus::TxEip7702;
         use alloy_eips::eip7702::{Authorization, SignedAuthorization};
         use reth_chainspec::EthereumHardforks;
@@ -1049,7 +1077,7 @@ mod tests {
             code,
             ..Default::default()
         };
-        let mut genesis = DOGEOS_CHIKYU.genesis().clone();
+        let mut genesis = base.genesis().clone();
         genesis.alloc.extend([
             (sender, funded(None)),
             (
@@ -1062,13 +1090,14 @@ mod tests {
                 funded(Some(Bytes::from_static(&[0x60, 0x00]))),
             ),
         ]);
-        let chain_spec = Arc::new(
-            DogeosChainSpecBuilder::dogeos_chikyu()
-                .genesis(genesis)
-                .build(DOGEOS_CHIKYU.config),
-        );
+        let chain_spec = Arc::new(builder.genesis(genesis).build(base.config));
         // The pool enables these rules itself; Ethereum Prague stays unscheduled.
         assert!(!chain_spec.is_prague_active_at_timestamp(u64::MAX));
+        assert_eq!(
+            ScrollEvmConfig::dogeos(Arc::clone(&chain_spec))
+                .spec_id_at_timestamp_and_number(chain_spec.genesis_timestamp() + 1, 1),
+            spec
+        );
         let chain_id = chain_spec.chain().id();
         let provider = initialize_native_v2(Arc::clone(&chain_spec));
         let snapshot = DogeosL1FeeSnapshot::load_latest(&provider).unwrap();
