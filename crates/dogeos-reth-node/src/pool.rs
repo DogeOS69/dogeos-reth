@@ -1213,6 +1213,16 @@ mod tests {
                 InvalidTransactionError::SignerAccountHasBytecode
             ))
         ));
+        assert!(execute(transaction(delegated_sender, chain_id, 0x53)).is_ok());
+        let error = execute(transaction(contract_sender, chain_id, 0x54)).unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                dogeos_reth_txpool::CodeWitnessValidationError::Indeterminate(message)
+                    if message.contains("senders with deployed code")
+            ),
+            "{error:?}"
+        );
 
         // 100 nonzero bytes: 22,600 intrinsic gas, 25,000 EIP-7623 floor.
         let calldata = |gas_limit, hash_byte| {
