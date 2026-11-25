@@ -920,6 +920,68 @@ mod tests {
         );
     }
 
+    /// Mainnet and dev schedule Tsuki at or before genesis, so the post-Tsuki cutoff excludes no
+    /// timestamp that EIP-6122 counts. Their fork IDs and filters must equal those of reth's
+    /// EIP-6122 `ChainSpec`, including for a fork one second after genesis, the earliest
+    /// timestamp EIP-6122 counts.
+    #[test]
+    fn tsuki_at_or_before_genesis_matches_reth_eip6122_fork_ids() {
+        for (name, network) in [("mainnet", &**DOGEOS_MAINNET), ("dev", &**DOGEOS_DEV)] {
+            assert!(
+                network
+                    .fork(DogeosHardfork::Tsuki)
+                    .as_timestamp()
+                    .is_some_and(|tsuki| tsuki <= network.genesis_timestamp()),
+                "{name} must schedule Tsuki at or before genesis"
+            );
+            let next_fork = network.genesis_timestamp() + 1;
+            let mut with_next_fork = network.clone();
+            with_next_fork
+                .inner
+                .hardforks
+                .insert(EthereumHardfork::Osaka, ForkCondition::Timestamp(next_fork));
+
+            for spec in [network, &with_next_fork] {
+                for timestamp in [network.genesis_timestamp(), next_fork, u64::MAX] {
+                    let head = Head {
+                        number: 1,
+                        timestamp,
+                        ..Default::default()
+                    };
+                    assert_eq!(spec.fork_id(&head), spec.inner.fork_id(&head), "{name}");
+                    assert_eq!(
+                        spec.fork_filter(head),
+                        spec.inner.fork_filter(head),
+                        "{name}"
+                    );
+                }
+                assert_eq!(spec.latest_fork_id(), spec.inner.latest_fork_id(), "{name}");
+            }
+
+            // The next fork is announced before activation and changes the hash at it.
+            let base = ForkHash::from(network.genesis_hash());
+            let before = Head {
+                number: 1,
+                timestamp: network.genesis_timestamp(),
+                ..Default::default()
+            };
+            assert_eq!(
+                with_next_fork.fork_id(&before),
+                ForkId {
+                    hash: base,
+                    next: next_fork
+                }
+            );
+            assert_eq!(
+                with_next_fork.latest_fork_id(),
+                ForkId {
+                    hash: base + next_fork,
+                    next: 0
+                }
+            );
+        }
+    }
+
     #[test]
     fn timestamp_forks_are_counted_strictly_after_tsuki_and_genesis() {
         for (genesis_time, tsuki_time, fork_time, counted) in [
