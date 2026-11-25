@@ -248,4 +248,152 @@ mod tests {
 
         Ok(())
     }
+
+    /// Mainnet genesis marks the oracle as already past Feynman, so the transition never writes
+    /// its penalty slots there. The fee formula mainnet runs (Galileo, from TsukiV2 at genesis)
+    /// reads the penalty factor, which genesis sets, and never the threshold, which it leaves at
+    /// zero.
+    #[test]
+    fn mainnet_genesis_oracle_skips_feynman_transition_and_sets_galileo_fee_inputs()
+    -> eyre::Result<()> {
+        use dogeos_chainspec::DOGEOS_MAINNET;
+        use revm_scroll::{ScrollSpecId, l1block::L1BlockInfo};
+
+        let genesis_oracle = DOGEOS_MAINNET
+            .genesis()
+            .alloc
+            .get(&L1_GAS_PRICE_ORACLE_ADDRESS)
+            .expect("mainnet genesis allocates the L1 gas price oracle");
+        let code = Bytecode::new_raw(genesis_oracle.code.clone().expect("oracle has code"));
+        let mut state = State::builder()
+            .with_database(EmptyDB::default())
+            .with_bundle_update()
+            .build();
+        state.insert_account_with_storage(
+            L1_GAS_PRICE_ORACLE_ADDRESS,
+            AccountInfo {
+                balance: genesis_oracle.balance,
+                nonce: genesis_oracle.nonce.unwrap_or_default(),
+                code_hash: code.hash_slow(),
+                code: Some(code),
+                ..Default::default()
+            },
+            genesis_oracle
+                .storage_slots()
+                .map(|(slot, value)| (slot.into(), value))
+                .collect(),
+        );
+
+        assert_eq!(
+            state.storage(L1_GAS_PRICE_ORACLE_ADDRESS, GPO_IS_FEYNMAN_SLOT)?,
+            IS_FEYNMAN
+        );
+        let code_hash = state
+            .basic(L1_GAS_PRICE_ORACLE_ADDRESS)?
+            .expect("oracle account")
+            .code_hash;
+        assert!(apply_feynman_hard_fork(&mut state)?.is_empty());
+        assert_eq!(
+            state
+                .basic(L1_GAS_PRICE_ORACLE_ADDRESS)?
+                .expect("oracle account")
+                .code_hash,
+            code_hash
+        );
+
+        // Mainnet's first block executes at TsukiV2, so the Galileo fee formula applies.
+        let spec = crate::ScrollEvmConfig::dogeos(DOGEOS_MAINNET.clone())
+            .spec_id_at_timestamp_and_number(DOGEOS_MAINNET.genesis_timestamp() + 1, 1);
+        assert_eq!(spec, ScrollSpecId::TSUKI_V2);
+        let mut info = L1BlockInfo::try_fetch(&mut state, spec)?;
+        assert_eq!(info.l1_commit_scalar, Some(U256::from(600_000_000u64)));
+        assert_eq!(info.l1_blob_scalar, Some(U256::from(7_400_000_000u64)));
+        assert_eq!(info.penalty_factor, Some(U256::from(10_000u64)));
+        assert_eq!(info.penalty_threshold, Some(U256::ZERO));
+
+        // With nonzero L1 prices, the TsukiV2 fee is the same whether the threshold is zero or
+        // the value the Feynman transition would have written.
+        info.l1_base_fee = U256::from(10_000_000_000u64);
+        info.l1_blob_base_fee = Some(U256::from(1_000_000_000u64));
+        let input = [0xffu8; 200];
+        let fee = |info: &L1BlockInfo| {
+            info.try_calculate_tx_l1_cost(&input, spec, None, Some(150))
+                .unwrap()
+        };
+        let with_genesis_slots = fee(&info);
+        assert!(with_genesis_slots > U256::ZERO);
+        let mut transition_threshold = info.clone();
+        transition_threshold.penalty_threshold = Some(INITIAL_PENALTY_THRESHOLD);
+        assert_eq!(fee(&transition_threshold), with_genesis_slots);
+        // The factor is read: the transition's 1e9 would price the fee differently from the
+        // configured 10000.
+        let mut transition_factor = info.clone();
+        transition_factor.penalty_factor = Some(INITIAL_PENALTY_FACTOR);
+        assert_ne!(fee(&transition_factor), with_genesis_slots);
+        Ok(())
+    }
+
+    /// The testnet genesis also marks the oracle as past Feynman and leaves both penalty slots at
+    /// zero. Under revm-scroll's Feynman fee formula, which execution and the pool use, a zero
+    /// threshold never applies the penalty, so the fee equals the one under the values the
+    /// transition would have written (both 1.0). This covers the native fee only: the Feynman
+    /// oracle contract's `getL1Fee` multiplies by the penalty factor itself, so it returns zero
+    /// while slot 10 is zero.
+    #[test]
+    fn chikyu_genesis_penalty_slots_give_native_feynman_fees_like_the_transition()
+    -> eyre::Result<()> {
+        use dogeos_chainspec::DOGEOS_CHIKYU;
+        use revm_scroll::{ScrollSpecId, l1block::L1BlockInfo};
+
+        let genesis_oracle = DOGEOS_CHIKYU
+            .genesis()
+            .alloc
+            .get(&L1_GAS_PRICE_ORACLE_ADDRESS)
+            .expect("testnet genesis allocates the L1 gas price oracle");
+        let mut state = State::builder()
+            .with_database(EmptyDB::default())
+            .with_bundle_update()
+            .build();
+        state.insert_account_with_storage(
+            L1_GAS_PRICE_ORACLE_ADDRESS,
+            AccountInfo::default(),
+            genesis_oracle
+                .storage_slots()
+                .map(|(slot, value)| (slot.into(), value))
+                .collect(),
+        );
+        assert!(apply_feynman_hard_fork(&mut state)?.is_empty());
+
+        let mut info = L1BlockInfo::try_fetch(&mut state, ScrollSpecId::FEYNMAN)?;
+        assert_eq!(info.penalty_threshold, Some(U256::ZERO));
+        assert_eq!(info.penalty_factor, Some(U256::ZERO));
+
+        // Scalars and prices are set by owner and relayer transactions after genesis.
+        info.l1_base_fee = U256::from(10_000_000_000u64);
+        info.l1_blob_base_fee = Some(U256::from(1_000_000_000u64));
+        info.l1_commit_scalar = Some(U256::from(600_000_000u64));
+        info.l1_blob_scalar = Some(U256::from(7_400_000_000u64));
+        let input = [0xffu8; 200];
+        let fee = |info: &L1BlockInfo, ratio: U256| {
+            info.try_calculate_tx_l1_cost(&input, ScrollSpecId::FEYNMAN, Some(ratio), None)
+        };
+        let mut transition = info.clone();
+        transition.penalty_threshold = Some(INITIAL_PENALTY_THRESHOLD);
+        transition.penalty_factor = Some(INITIAL_PENALTY_FACTOR);
+        // The formula rejects compression ratios below 1.0 (1e9) ...
+        let below_one = INITIAL_PENALTY_THRESHOLD - U256::from(1);
+        assert!(fee(&info, below_one).is_err());
+        assert!(fee(&transition, below_one).is_err());
+        // ... and at or above it, both thresholds select the neutral penalty.
+        for ratio in [
+            INITIAL_PENALTY_THRESHOLD,
+            U256::from(1_500_000_000u64),
+            U256::MAX,
+        ] {
+            let genesis_fee = fee(&info, ratio).unwrap();
+            assert!(genesis_fee > U256::ZERO);
+            assert_eq!(genesis_fee, fee(&transition, ratio).unwrap());
+        }
+        Ok(())
+    }
 }
