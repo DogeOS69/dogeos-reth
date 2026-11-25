@@ -545,6 +545,68 @@ mod tests {
         }
     }
 
+    /// The pool admits type-4 transactions but has no variant for EIP-4844 blob or L1-message
+    /// transactions, so both fail to decode before validation.
+    #[test]
+    fn pooled_decoding_accepts_eip7702_and_rejects_blob_and_l1_message_types() {
+        use crate::TxL1Message;
+        use alloy_consensus::{
+            Sealed, TxEip4844, TxEip4844WithSidecar, TxEip7702, transaction::PooledTransaction,
+        };
+        use alloy_eips::{
+            eip2718::Encodable2718,
+            eip4844::{Blob, BlobTransactionSidecar, Bytes48},
+        };
+        use alloy_primitives::{B256, Signature};
+
+        let signed_7702 = Signed::new_unchecked(
+            TxEip7702::default(),
+            Signature::test_signature(),
+            B256::ZERO,
+        );
+        let encoded = signed_7702.encoded_2718();
+        assert_eq!(encoded[0], 0x04);
+        let decoded = ScrollPooledTransaction::decode_2718(&mut encoded.as_slice()).unwrap();
+        assert!(matches!(decoded, ScrollPooledTransaction::Eip7702(_)));
+
+        // Coherent wire-format sidecar; KZG proof verification is outside this decoding test.
+        let sidecar = BlobTransactionSidecar {
+            blobs: vec![Blob::ZERO],
+            commitments: vec![Bytes48::ZERO],
+            proofs: vec![Bytes48::ZERO],
+        };
+        let blob_tx = TxEip4844 {
+            blob_versioned_hashes: sidecar.versioned_hashes().collect(),
+            ..Default::default()
+        };
+        let blob = Signed::new_unchecked(
+            TxEip4844WithSidecar::from_tx_and_sidecar(blob_tx, sidecar),
+            Signature::test_signature(),
+            B256::ZERO,
+        )
+        .encoded_2718();
+        assert_eq!(blob[0], 0x03);
+        let mut input = blob.as_slice();
+        let decoded = PooledTransaction::decode_2718(&mut input).unwrap();
+        assert!(matches!(decoded, PooledTransaction::Eip4844(_)));
+        assert!(input.is_empty());
+        assert!(matches!(
+            ScrollPooledTransaction::decode_2718(&mut blob.as_slice()),
+            Err(Eip2718Error::RlpError(alloy_rlp::Error::Custom(
+                "unexpected tx type"
+            )))
+        ));
+
+        let l1_message =
+            ScrollTxEnvelope::L1Message(Sealed::new_unchecked(TxL1Message::default(), B256::ZERO))
+                .encoded_2718();
+        assert_eq!(l1_message[0], 0x7e);
+        assert!(matches!(
+            ScrollPooledTransaction::decode_2718(&mut l1_message.as_slice()),
+            Err(Eip2718Error::UnexpectedType(0x7e))
+        ));
+    }
+
     // <https://holesky.etherscan.io/tx/0x7f60faf8a410a80d95f7ffda301d5ab983545913d3d789615df3346579f6c849>
     #[test]
     fn decode_eip1559_enveloped() {
