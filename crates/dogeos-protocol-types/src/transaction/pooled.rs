@@ -550,8 +550,13 @@ mod tests {
     #[test]
     fn pooled_decoding_accepts_eip7702_and_rejects_blob_and_l1_message_types() {
         use crate::TxL1Message;
-        use alloy_consensus::{Sealed, TxEip4844, TxEip7702};
-        use alloy_eips::eip2718::Encodable2718;
+        use alloy_consensus::{
+            Sealed, TxEip4844, TxEip4844WithSidecar, TxEip7702, transaction::PooledTransaction,
+        };
+        use alloy_eips::{
+            eip2718::Encodable2718,
+            eip4844::{Blob, BlobTransactionSidecar, Bytes48},
+        };
         use alloy_primitives::{B256, Signature};
 
         let signed_7702 = Signed::new_unchecked(
@@ -564,14 +569,33 @@ mod tests {
         let decoded = ScrollPooledTransaction::decode_2718(&mut encoded.as_slice()).unwrap();
         assert!(matches!(decoded, ScrollPooledTransaction::Eip7702(_)));
 
+        // Coherent wire-format sidecar; KZG proof verification is outside this decoding test.
+        let sidecar = BlobTransactionSidecar {
+            blobs: vec![Blob::ZERO],
+            commitments: vec![Bytes48::ZERO],
+            proofs: vec![Bytes48::ZERO],
+        };
+        let blob_tx = TxEip4844 {
+            blob_versioned_hashes: sidecar.versioned_hashes().collect(),
+            ..Default::default()
+        };
         let blob = Signed::new_unchecked(
-            TxEip4844::default(),
+            TxEip4844WithSidecar::from_tx_and_sidecar(blob_tx, sidecar),
             Signature::test_signature(),
             B256::ZERO,
         )
         .encoded_2718();
         assert_eq!(blob[0], 0x03);
-        assert!(ScrollPooledTransaction::decode_2718(&mut blob.as_slice()).is_err());
+        let mut input = blob.as_slice();
+        let decoded = PooledTransaction::decode_2718(&mut input).unwrap();
+        assert!(matches!(decoded, PooledTransaction::Eip4844(_)));
+        assert!(input.is_empty());
+        assert!(matches!(
+            ScrollPooledTransaction::decode_2718(&mut blob.as_slice()),
+            Err(Eip2718Error::RlpError(alloy_rlp::Error::Custom(
+                "unexpected tx type"
+            )))
+        ));
 
         let l1_message =
             ScrollTxEnvelope::L1Message(Sealed::new_unchecked(TxL1Message::default(), B256::ZERO))
