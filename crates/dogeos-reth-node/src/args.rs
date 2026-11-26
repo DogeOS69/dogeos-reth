@@ -23,6 +23,9 @@ pub struct DogeosRollupArgs {
     pub min_suggested_priority_fee: u64,
 
     /// Maximum encoded transaction bytes selected for one payload.
+    ///
+    /// This local payload-builder limit can cause a pool-admitted transaction to be skipped if
+    /// including it would exceed the payload limit.
     #[arg(
         long = "scroll.payload-size-limit",
         default_value_t = DOGEOS_DEFAULT_PAYLOAD_SIZE_LIMIT
