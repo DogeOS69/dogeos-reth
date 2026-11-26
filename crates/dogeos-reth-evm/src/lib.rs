@@ -1,4 +1,23 @@
 //! DogeOS EVM factory and transaction adapters.
+//!
+//! # Reproducing the `L1GasPriceOracle` runtimes
+//!
+//! Two oracle runtimes are pinned by tests: the one the `GalileoV2` transition installs (the
+//! testnet's canonical runtime, built from upstream scroll-contracts
+//! `dfffa0f04bbd1de31ef342e1642a2f9ad9a620fe`) and the one in the mainnet genesis (built from the
+//! DogeOS release branch `dogeos-v0.3.0-develop`). Both commits pin solc 0.8.24, the optimizer
+//! with 200 runs, EVM version `cancun`, `bytecode_hash = "none"` and no via-IR in
+//! `foundry.toml`. To rebuild either one, in a scroll-contracts checkout:
+//!
+//! ```text
+//! REF=dfffa0f04bbd1de31ef342e1642a2f9ad9a620fe   # or the release commit
+//! DIR=$(mktemp -d) && git archive "$REF" src foundry.toml | tar -x -C "$DIR" && cd "$DIR"
+//! forge build src/L2/predeploys/L1GasPriceOracle.sol
+//! jq -r .deployedBytecode.object artifacts/src/L1GasPriceOracle.sol/L1GasPriceOracle.json
+//! ```
+//!
+//! The upstream build is 3,782 bytes, and the release build is 3,834 bytes. The release source
+//! adds an explicit revert when `penaltyFactor` is zero in the Galileo fee getter.
 
 #![cfg_attr(not(test), warn(unused_crate_dependencies))]
 #![cfg_attr(docsrs, feature(doc_cfg))]
