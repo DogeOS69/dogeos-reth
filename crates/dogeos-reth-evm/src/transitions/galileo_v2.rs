@@ -207,9 +207,10 @@ mod tests {
     }
 
     /// Mainnet genesis carries the oracle runtime built from the DogeOS release source
-    /// (scroll-contracts `dogeos-v0.3.0-develop`, which adds an explicit zero-`penaltyFactor`
-    /// revert to the Galileo fee getter) and already sets `isGalileo`. The `GalileoV2` transition
-    /// is therefore a no-op there, and the constant above never reaches mainnet.
+    /// (scroll-contracts `6d3f02f6e672d0dd38e9f32938ac6b1139f01959`, tag `dogeos-v0.3.0-rc.12`,
+    /// which adds an explicit zero-`penaltyFactor` revert to the Galileo fee getter) and already
+    /// sets `isGalileo`. The `GalileoV2` transition is therefore a no-op there, and the constant
+    /// above never reaches mainnet.
     #[test]
     fn mainnet_genesis_oracle_matches_release_build_and_skips_galileo_v2_transition()
     -> eyre::Result<()> {

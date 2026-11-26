@@ -5,12 +5,13 @@
 //! Two oracle runtimes are pinned by tests: the one the `GalileoV2` transition installs (the
 //! testnet's canonical runtime, built from upstream scroll-contracts
 //! `dfffa0f04bbd1de31ef342e1642a2f9ad9a620fe`) and the one in the mainnet genesis (built from the
-//! DogeOS release branch `dogeos-v0.3.0-develop`). Both commits pin solc 0.8.24, the optimizer
-//! with 200 runs, EVM version `cancun`, `bytecode_hash = "none"` and no via-IR in
-//! `foundry.toml`. To rebuild either one, in a scroll-contracts checkout:
+//! DogeOS release commit `6d3f02f6e672d0dd38e9f32938ac6b1139f01959`, tag `dogeos-v0.3.0-rc.12`).
+//! Both commits pin solc 0.8.24, the optimizer with 200 runs, EVM version `cancun`,
+//! `bytecode_hash = "none"` and no via-IR in `foundry.toml`. To rebuild either one, in a
+//! scroll-contracts checkout:
 //!
 //! ```text
-//! REF=dfffa0f04bbd1de31ef342e1642a2f9ad9a620fe   # or the release commit
+//! REF=dfffa0f04bbd1de31ef342e1642a2f9ad9a620fe   # or 6d3f02f6e672d0dd38e9f32938ac6b1139f01959
 //! DIR=$(mktemp -d) && git archive "$REF" src foundry.toml | tar -x -C "$DIR" && cd "$DIR"
 //! forge build src/L2/predeploys/L1GasPriceOracle.sol
 //! jq -r .deployedBytecode.object artifacts/src/L1GasPriceOracle.sol/L1GasPriceOracle.json
